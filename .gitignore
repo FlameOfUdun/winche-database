@@ -14,8 +14,9 @@
 *.userosscache
 *.sln.docstates
 
-## NuGet
+## NuGet / pack output
 **/packages/
+/packages/
 *.nupkg
 **/project.nuget.cache
 
