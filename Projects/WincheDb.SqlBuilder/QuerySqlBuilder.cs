@@ -13,15 +13,25 @@ public sealed class QuerySqlBuilder(string table = "documents")
         var bag = new ParameterBag();
         var sb = new StringBuilder();
 
+        // Includes (LATERAL JOINs)
+        var includeBuilder = new IncludeSqlBuilder(table, bag);
+        var (dataExpr, lateralJoins) = includeBuilder.Build(q.Include, Alias);
+
         // SELECT
-        sb.AppendLine($"SELECT *");
+        if (q.Include.Count > 0)
+            sb.AppendLine($"SELECT {Alias}.id, {Alias}.path, {Alias}.collection, {Alias}.created_at, {Alias}.updated_at, {Alias}.version, {dataExpr} as data");
+        else
+            sb.AppendLine($"SELECT *");
 
         // FROM
         sb.AppendLine($"FROM {table} {Alias}");
 
+        // LATERAL JOINs for includes
+        if (lateralJoins.Length > 0)
+            sb.Append(lateralJoins);
+
         // WHERE
-        sb.AppendLine($"WHERE {Alias}.collection = $1");
-        bag.Add(q.Collection);
+        sb.AppendLine($"WHERE {Alias}.collection = {bag.Add(q.Collection)}");
 
         var (startCursor, endCursor) = BuildCursors(q, bag);
         if (startCursor is not null)

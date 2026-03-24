@@ -1,4 +1,4 @@
-namespace WincheDb.DocumentStore.Abstraction;
+namespace WincheDb.DocumentStore.Models;
 
 public static class CallerContext
 {

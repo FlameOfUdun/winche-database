@@ -1,7 +1,8 @@
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using WincheDb.DocumentStore.Abstraction;
+using WincheDb.DocumentStore.Models;
+using WincheDb.JsonSerialization.Converters;
 using WincheDb.Realtime.Handlers;
 using WincheDb.Realtime.Messages;
 using WincheDb.Realtime.Operands;
@@ -33,10 +34,16 @@ public sealed class MessageRouter(
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
+        ReadCommentHandling = JsonCommentHandling.Skip,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        AllowTrailingCommas = true,
+        ReferenceHandler = ReferenceHandler.IgnoreCycles,
         Converters =
         {
-            new JsonStringEnumConverter(JsonNamingPolicy.CamelCase)
+            new JsonStringEnumConverter(JsonNamingPolicy.CamelCase),
+            new OrderByListConverter(),
+            new WhereNodeConverter(),
+            new CursorListConverter(),
         }
     };
 

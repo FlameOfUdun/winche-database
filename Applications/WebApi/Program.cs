@@ -4,6 +4,7 @@ using WincheDb.JsonSerialization.Converters;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using WincheDb.Realtime.DependencyInjection;
+using WincheDb.DocumentStore.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -11,35 +12,13 @@ var connString = "Host=127.0.0.1;Port=5432;Username=postgres;Password=Ehsan1371;
 builder.Services.AddNpgsqlDataSource(connString);
 builder.Services.AddWincheDbStore(options =>
 {
-    options.AccessRules =
+    options.AccessRules = 
     [
         new AccessRule
         {
-            Path = "users/{userId}",
-            Operations = new HashSet<AccessOperation> 
-            { 
-                AccessOperation.Get,
-                AccessOperation.Set,
-                AccessOperation.Update,
-                AccessOperation.Query,
-            },
-            Evaluate = (ctx, ct) =>
-            {
-                var allowed = ctx.Claims.TryGetValue("uid", out var uid)
-                    && ctx.PathParams.TryGetValue("userId", out var userId)
-                    && uid?.ToString() == userId;
-                return Task.FromResult(allowed);
-            }
-        },
-        new AccessRule
-        {
-            Path = "public/**",
-            Operations = new HashSet<AccessOperation> 
-            { 
-                AccessOperation.Get, 
-                AccessOperation.Query 
-            },
-            Evaluate = (_, _) => Task.FromResult(true)
+            Path = "users/*/orders/*/transactions",
+            Operations = new HashSet<AccessOperation>() {AccessOperation.Get, AccessOperation.Query},
+            Evaluate = async (context, ct) => false,
         }
     ];
     return options;

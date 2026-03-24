@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\WincheDb.DocumentStore\WincheDb.DocumentStore.csproj" />
+    <ProjectReference Include="..\WincheDb.JsonSerialization\WincheDb.JsonSerialization.csproj" />
   </ItemGroup>
 
 </Project>

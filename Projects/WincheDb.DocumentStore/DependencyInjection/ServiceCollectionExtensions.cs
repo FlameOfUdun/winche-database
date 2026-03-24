@@ -1,6 +1,5 @@
 ﻿using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
-using WincheDb.DocumentStore.Abstraction;
 using WincheDb.DocumentStore.BackgroundServices;
 using WincheDb.DocumentStore.Models;
 using WincheDb.DocumentStore.Services;
@@ -17,14 +16,11 @@ public static class ServiceCollectionExtensions
 
     public static IServiceCollection AddWincheDbStore(this IServiceCollection services, Func<StoreOptions, StoreOptions> builder)
     {
+        // Options
         var options = builder(new StoreOptions());
-
-        if (options.AccessRule is not null && options.AccessRules is { Count: > 0 })
-            throw new InvalidOperationException(
-                "Cannot set both AccessRule and AccessRules. Use AccessRules for pattern-based rules.");
-
         services.AddSingleton(options);
 
+        // Channel for subscription events.
         var channel = Channel.CreateBounded<List<SubscriptionEvent>>(new BoundedChannelOptions(256)
         {
             FullMode = BoundedChannelFullMode.Wait,
@@ -34,15 +30,18 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(channel.Reader);
         services.AddSingleton(channel.Writer);
 
+        // Stores
         services.AddSingleton<SubscriptionRegistry>();
         services.AddSingleton<TransactionRegistry>();
 
+        // Services
         services.AddSingleton<DocumentManager>();
         services.AddSingleton<SchemaManager>();
         services.AddSingleton<ChangeProcessor>();
         services.AddSingleton<SubscriptionManager>();
         services.AddSingleton<TransactionManager>();
 
+        // Workers
         services.AddHostedService<ChangeNotifier>();
         services.AddHostedService<TransactionInvalidator>();
         services.AddHostedService<EventNotifier>();

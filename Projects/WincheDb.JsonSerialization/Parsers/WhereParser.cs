@@ -91,13 +91,13 @@ internal static class WhereParser
             ?? throw new ArgumentException("'compare' requires 'left'");
         var right = obj["right"]?.GetValue<string>()
             ?? throw new ArgumentException("'compare' requires 'right'");
-        var opStr = obj["op"]?.GetValue<string>()
-            ?? throw new ArgumentException("'compare' requires 'op'");
+        var opStr = obj["operator"]?.GetValue<string>()
+            ?? throw new ArgumentException("'compare' requires 'operator'");
 
         if (!OpMap.TryGetValue(opStr, out var op))
-            throw new ArgumentException($"Unknown compare op: '{opStr}'");
+            throw new ArgumentException($"Unknown compare operator: '{opStr}'");
 
-        var cast = obj["cast"]?.GetValue<string>() is { Length: > 0 } c
+        var cast = obj["type"]?.GetValue<string>() is { Length: > 0 } c
             ? Enum.Parse<FieldType>(c, ignoreCase: true)
             : (FieldType?)null;
 

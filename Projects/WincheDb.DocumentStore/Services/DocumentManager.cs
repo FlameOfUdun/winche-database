@@ -4,7 +4,7 @@ using System.Text.Json.Nodes;
 using WincheDb.DocumentStore.Models;
 using WincheDb.Core.Models;
 using WincheDb.Core.Ast;
-using WincheDb.DocumentStore.Abstraction;
+using WincheDb.DocumentStore.Infrastructure;
 
 namespace WincheDb.DocumentStore.Services;
 
@@ -15,8 +15,9 @@ public sealed class DocumentManager(
 {
     public async Task<Document?> GetAsync(string path, CancellationToken ct = default)
     {
-        await AuthorizeAsync(AccessOperation.Get, path: path, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
-        return await GetUnprotectedAsync(path, ct);
+        var document = await GetUnprotectedAsync(path, ct);
+        await AuthorizeAsync(AccessOperation.Get, path: path, getExisting: _ => Task.FromResult(document), ct: ct);
+        return document;
     }
 
     public async Task<Document> SetAsync(string path, JsonObject data, CancellationToken ct = default)

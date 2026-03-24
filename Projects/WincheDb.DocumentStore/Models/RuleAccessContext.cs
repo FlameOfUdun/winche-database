@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 using WincheDb.Core.Ast;
 using WincheDb.Core.Models;
 
-namespace WincheDb.DocumentStore.Abstraction;
+namespace WincheDb.DocumentStore.Models;
 
 public sealed record RuleAccessContext
 {

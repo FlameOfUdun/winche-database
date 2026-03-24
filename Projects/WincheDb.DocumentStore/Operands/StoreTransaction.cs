@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using WincheDb.DocumentStore.Models;
 using WincheDb.Core.Models;
 using WincheDb.Core.Ast;
+using WincheDb.DocumentStore.Infrastructure;
 
 namespace WincheDb.DocumentStore.Operands;
 
@@ -18,7 +19,7 @@ public class StoreTransaction : IAsyncDisposable
     private bool _isCompleted;
 
     public DateTime CreatedAt => _createdAt;
-    public DateTime LastActivityAt => new DateTime(Interlocked.Read(ref _lastActivityAtTicks), DateTimeKind.Utc);
+    public DateTime LastActivityAt => new(Interlocked.Read(ref _lastActivityAtTicks), DateTimeKind.Utc);
     public bool IsCompleted => _isCompleted;
 
     internal StoreTransaction(string id, StoreOptions options, NpgsqlConnection connection, NpgsqlTransaction transaction)
@@ -36,45 +37,77 @@ public class StoreTransaction : IAsyncDisposable
         Interlocked.Exchange(ref _lastActivityAtTicks, DateTime.UtcNow.Ticks);
     }
 
-    #region Read Operations
+    public async Task<Document?> GetAsync(string path, CancellationToken ct = default)
+    {
+        Touch();
+        var document = await GetUnprotectedAsync(path, ct);
+        await AuthorizeAsync(AccessOperation.Get, path: path, getExisting: _ => Task.FromResult(document), ct: ct);
+        return document;
+    }
 
-    public Task<Document?> GetAsync(string path, CancellationToken ct = default)
+    public async Task<Document> SetAsync(string path, JsonObject data, CancellationToken ct = default)
+    {
+        Touch();
+        await AuthorizeAsync(AccessOperation.Set, path: path, incomingData: data, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
+        return await SetUnprotectedAsync(path, data, ct);
+    }
+
+    public async Task<Document?> UpdateAsync(string path, JsonObject data, CancellationToken ct = default)
+    {
+        Touch();
+        await AuthorizeAsync(AccessOperation.Update, path: path, incomingData: data, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
+        return await UpdateUnprotectedAsync(path, data, ct);
+    }
+
+    public async Task<bool> DeleteAsync(string path, CancellationToken ct = default)
+    {
+        Touch();
+        await AuthorizeAsync(AccessOperation.Delete, path: path, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
+        return await DeleteUnprotectedAsync(path, ct);
+    }
+
+    public async Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default)
+    {
+        Touch();
+        await AuthorizeAsync(AccessOperation.Query, query: query, ct: ct);
+        return await QueryUnprotectedAsync(query, ct);
+    }
+
+    #region Unprotected — bypass access rules
+
+    public Task<Document?> GetUnprotectedAsync(string path, CancellationToken ct = default)
     {
         Touch();
         return new GetOperation(_connection, _transaction, _options.TableName)
             .ExecuteAsync(path, ct);
     }
 
-    public Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default)
-    {
-        Touch();
-        return new QueryOperation(_connection, _transaction, _options.TableName)
-            .ExecuteAsync(query, ct);
-    }
-
-    #endregion
-
-    #region Write Operations
-
-    public Task<Document> SetAsync(string path, JsonObject data, CancellationToken ct = default)
+    public Task<Document> SetUnprotectedAsync(string path, JsonObject data, CancellationToken ct = default)
     {
         Touch();
         return new SetOperation(_connection, _transaction, _options.TableName)
             .ExecuteAsync(path, data, ct);
     }
 
-    public Task<Document?> UpdateAsync(string path, JsonObject data, CancellationToken ct = default)
+    public Task<Document?> UpdateUnprotectedAsync(string path, JsonObject data, CancellationToken ct = default)
     {
         Touch();
         return new UpdateOperation(_connection, _transaction, _options.TableName)
             .ExecuteAsync(path, data, ct);
     }
 
-    public Task<bool> DeleteAsync(string path, CancellationToken ct = default)
+    public Task<bool> DeleteUnprotectedAsync(string path, CancellationToken ct = default)
     {
         Touch();
         return new DeleteOperation(_connection, _transaction, _options.TableName)
             .ExecuteAsync(path, ct);
+    }
+
+    public Task<QueryResult> QueryUnprotectedAsync(Query query, CancellationToken ct = default)
+    {
+        Touch();
+        return new QueryOperation(_connection, _transaction, _options.TableName)
+            .ExecuteAsync(query, ct);
     }
 
     #endregion
@@ -102,6 +135,11 @@ public class StoreTransaction : IAsyncDisposable
     }
 
     #endregion
+
+    private async Task AuthorizeAsync(AccessOperation operation, string? path = null, Query? query = null, JsonObject? incomingData = null, Func<string, Task<Document?>>? getExisting = null, CancellationToken ct = default)
+    {
+        await AccessRuleEvaluator.EvaluateAsync(_options, operation, path, query, incomingData, getExisting, ct);
+    }
 
     #region Dispose
 
