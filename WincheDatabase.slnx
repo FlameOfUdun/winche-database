@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/Applications/">
+    <Project Path="Applications/WebApi/WebApi.csproj" />
+  </Folder>
+  <Folder Name="/Projects/">
+    <Project Path="Projects/WincheDb.Core/WincheDb.Core.csproj" Id="e0be79df-565e-42ac-863d-9254eb38acf0" />
+    <Project Path="Projects/WincheDb.DocumentStore/WincheDb.DocumentStore.csproj" />
+    <Project Path="Projects/WincheDb.JsonSerialization/WincheDb.JsonSerialization.csproj" />
+    <Project Path="Projects/WincheDb.Realtime/WincheDb.Realtime.csproj" />
+    <Project Path="Projects/WincheDb.SqlBuilder/WincheDb.SqlBuilder.csproj" />
+  </Folder>
+</Solution>
