@@ -16,19 +16,19 @@ public sealed class DocumentManager(
     public async Task<Document?> GetAsync(string path, CancellationToken ct = default)
     {
         var document = await GetUnprotectedAsync(path, ct);
-        await AuthorizeAsync(AccessOperation.Get, path: path, getExisting: _ => Task.FromResult(document), ct: ct);
+        await AuthorizeAsync(AccessOperation.Read, path: path, getExisting: _ => Task.FromResult(document), ct: ct);
         return document;
     }
 
     public async Task<Document> SetAsync(string path, JsonObject data, CancellationToken ct = default)
     {
-        await AuthorizeAsync(AccessOperation.Set, path: path, incomingData: data, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
+        await AuthorizeAsync(AccessOperation.Write, path: path, incomingData: data, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
         return await SetUnprotectedAsync(path, data, ct);
     }
 
     public async Task<Document?> UpdateAsync(string path, JsonObject patch, CancellationToken ct = default)
     {
-        await AuthorizeAsync(AccessOperation.Update, path: path, incomingData: patch, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
+        await AuthorizeAsync(AccessOperation.Write, path: path, incomingData: patch, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
         return await UpdateUnprotectedAsync(path, patch, ct);
     }
 
@@ -40,7 +40,7 @@ public sealed class DocumentManager(
 
     public async Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default)
     {
-        await AuthorizeAsync(AccessOperation.Query, query: query, ct: ct);
+        await AuthorizeAsync(AccessOperation.Read, query: query, ct: ct);
         return await QueryUnprotectedAsync(query, ct);
     }
 

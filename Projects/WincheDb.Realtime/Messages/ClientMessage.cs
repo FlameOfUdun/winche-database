@@ -23,6 +23,8 @@ namespace WincheDb.Realtime.Messages;
 [JsonDerivedType(typeof(TransactionQueryRequest), "transaction:query")]
 [JsonDerivedType(typeof(TransactionCommitRequest), "transaction:commit")]
 [JsonDerivedType(typeof(TransactionRollbackRequest), "transaction:rollback")]
+[JsonDerivedType(typeof(BatchCommitRequest), "batch:commit")]
+[JsonDerivedType(typeof(SyncPushRequest), "sync:push")]
 public abstract record ClientMessage
 {
     [Required]
@@ -123,4 +125,43 @@ public record TransactionQueryRequest : ClientMessage
     public required string TransactionId { get; init; }
     [Required]
     public Query Query { get; init; } = null!;
+}
+
+public record BatchCommitRequest : ClientMessage
+{
+    [Required]
+    public required List<BatchWriteOperation> Operations { get; init; }
+}
+
+public record SyncPushRequest : ClientMessage
+{
+    [Required]
+    public required string Path { get; init; }
+
+    [Required]
+    public required List<SyncMutation> Mutations { get; init; }
+}
+
+public record SyncMutation
+{
+    [Required]
+    public required string Type { get; init; }
+
+    public JsonObject? Data { get; init; }
+
+    public long? BaseVersion { get; init; }
+}
+
+public record BatchWriteOperation
+{
+    [Required]
+    public required string Type { get; init; }
+
+    [Required]
+    public required string Collection { get; init; }
+
+    [Required]
+    public required string DocumentId { get; init; }
+
+    public JsonObject? Data { get; init; }
 }

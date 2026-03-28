@@ -39,11 +39,11 @@ public static class QuerySerializer
         FieldFilter f =>
             $"f:{Escape(f.Field)}:{f.Operator}:{SerializeValue(f.Value)}",
 
-        FieldCompare c when c.Cast is null =>
+        FieldCompare c when c.Type is null =>
             $"fc:{Escape(c.Left)}:{c.Operator}:{Escape(c.Right)}",
 
         FieldCompare c =>
-            $"fc:{Escape(c.Left)}:{c.Operator}:{Escape(c.Right)}:{c.Cast}",
+            $"fc:{Escape(c.Left)}:{c.Operator}:{Escape(c.Right)}:{c.Type}",
 
         // Not is unary — no sorting needed
         LogicGroup { Operator: LogicalOperator.Not } g =>

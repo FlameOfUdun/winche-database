@@ -8,7 +8,7 @@ using WincheDb.DocumentStore.Infrastructure;
 
 namespace WincheDb.DocumentStore.Operands;
 
-public class StoreTransaction : IAsyncDisposable
+public class Transaction : IAsyncDisposable
 {
     public readonly string Id;
     private readonly StoreOptions _options;
@@ -22,7 +22,7 @@ public class StoreTransaction : IAsyncDisposable
     public DateTime LastActivityAt => new(Interlocked.Read(ref _lastActivityAtTicks), DateTimeKind.Utc);
     public bool IsCompleted => _isCompleted;
 
-    internal StoreTransaction(string id, StoreOptions options, NpgsqlConnection connection, NpgsqlTransaction transaction)
+    internal Transaction(string id, StoreOptions options, NpgsqlConnection connection, NpgsqlTransaction transaction)
     {
         Id = id;
         _options = options;
@@ -41,21 +41,21 @@ public class StoreTransaction : IAsyncDisposable
     {
         Touch();
         var document = await GetUnprotectedAsync(path, ct);
-        await AuthorizeAsync(AccessOperation.Get, path: path, getExisting: _ => Task.FromResult(document), ct: ct);
+        await AuthorizeAsync(AccessOperation.Read, path: path, getExisting: _ => Task.FromResult(document), ct: ct);
         return document;
     }
 
     public async Task<Document> SetAsync(string path, JsonObject data, CancellationToken ct = default)
     {
         Touch();
-        await AuthorizeAsync(AccessOperation.Set, path: path, incomingData: data, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
+        await AuthorizeAsync(AccessOperation.Write, path: path, incomingData: data, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
         return await SetUnprotectedAsync(path, data, ct);
     }
 
     public async Task<Document?> UpdateAsync(string path, JsonObject data, CancellationToken ct = default)
     {
         Touch();
-        await AuthorizeAsync(AccessOperation.Update, path: path, incomingData: data, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
+        await AuthorizeAsync(AccessOperation.Write, path: path, incomingData: data, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
         return await UpdateUnprotectedAsync(path, data, ct);
     }
 
@@ -69,7 +69,7 @@ public class StoreTransaction : IAsyncDisposable
     public async Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default)
     {
         Touch();
-        await AuthorizeAsync(AccessOperation.Query, query: query, ct: ct);
+        await AuthorizeAsync(AccessOperation.Read, query: query, ct: ct);
         return await QueryUnprotectedAsync(query, ct);
     }
 

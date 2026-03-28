@@ -10,7 +10,7 @@ internal sealed class IncludeSqlBuilder(string table, ParameterBag bag)
     internal (string dataExpr, string lateralJoins) Build(List<IncludeQuery> includes, string parentAlias)
     {
         if (includes.Count == 0)
-            return (FullDocumentExpr(parentAlias, $"{parentAlias}.data"), "");
+            return ($"{parentAlias}.data", "");
 
         var laterals = new StringBuilder();
         var mergeArgs = new List<string>();
@@ -22,11 +22,8 @@ internal sealed class IncludeSqlBuilder(string table, ParameterBag bag)
             mergeArgs.Add($"'{include.Field}', COALESCE({aggAlias}.items, '[]'::jsonb)");
         }
 
-        // Include fields are merged into .data, not the root
         var enrichedData = $"{parentAlias}.data || jsonb_build_object({string.Join(", ", mergeArgs)})";
-        var dataExpr = FullDocumentExpr(parentAlias, enrichedData);
-
-        return (dataExpr, laterals.ToString());
+        return (enrichedData, laterals.ToString());
     }
 
     private (string aggAlias, string lateralSql) BuildInclude(IncludeQuery include, string parentAlias)
@@ -40,9 +37,11 @@ internal sealed class IncludeSqlBuilder(string table, ParameterBag bag)
 
         var (nestedDataExpr, nestedLaterals) = Build(include.Include, innerAlias);
 
+        var fullDocExpr = FullDocumentExpr(innerAlias, nestedDataExpr);
+
         var sb = new StringBuilder();
         sb.AppendLine($"LEFT JOIN LATERAL (");
-        sb.AppendLine($"  SELECT jsonb_agg({nestedDataExpr}) as items");
+        sb.AppendLine($"  SELECT jsonb_agg({fullDocExpr}) as items");
         sb.AppendLine($"  FROM ({innerSql}) {innerAlias}");
         sb.Append(nestedLaterals);
         sb.AppendLine($") {aggAlias} ON true");

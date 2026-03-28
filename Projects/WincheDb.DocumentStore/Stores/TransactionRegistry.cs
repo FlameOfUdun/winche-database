@@ -5,18 +5,18 @@ namespace WincheDb.DocumentStore.Stores;
 
 public sealed class TransactionRegistry : IAsyncDisposable
 {
-    private readonly ConcurrentDictionary<string, StoreTransaction> _transactions = new(StringComparer.Ordinal);
-    public bool TryAdd(string id, StoreTransaction tx)
+    private readonly ConcurrentDictionary<string, Transaction> _transactions = new(StringComparer.Ordinal);
+    public bool TryAdd(string id, Transaction tx)
     {
         return _transactions.TryAdd(id, tx);
     }
 
-    public bool TryGet(string id, out StoreTransaction? tx)
+    public bool TryGet(string id, out Transaction? tx)
     {
         return _transactions.TryGetValue(id, out tx);
     }
 
-    public bool TryRemove(string id, out StoreTransaction? tx)
+    public bool TryRemove(string id, out Transaction? tx)
     {
         return _transactions.TryRemove(id, out tx);
     }
@@ -43,7 +43,7 @@ public sealed class TransactionRegistry : IAsyncDisposable
 
     public int Count => _transactions.Count;
 
-    private static async Task RollbackAndDisposeAsync(StoreTransaction tx, CancellationToken ct)
+    private static async Task RollbackAndDisposeAsync(Transaction tx, CancellationToken ct)
     {
         if (!tx.IsCompleted)
         {

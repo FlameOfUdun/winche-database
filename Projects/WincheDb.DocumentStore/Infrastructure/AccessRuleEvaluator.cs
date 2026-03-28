@@ -43,7 +43,7 @@ internal static class AccessRuleEvaluator
 
                 await EvaluateCoreAsync(
                     options,
-                    AccessOperation.Query,
+                    AccessOperation.Read,
                     path: null,
                     query: include,
                     incomingData: null,
@@ -62,7 +62,7 @@ internal static class AccessRuleEvaluator
         string? effectiveCollection,
         CancellationToken ct)
     {
-        var matchPath = operation == AccessOperation.Query ? effectiveCollection : path;
+        var matchPath = operation == AccessOperation.Read ? effectiveCollection : path;
 
         foreach (var rule in rules)
         {

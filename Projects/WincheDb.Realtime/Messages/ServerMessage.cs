@@ -144,3 +144,28 @@ public record TransactionRollbackResponse : ServerMessage
 }
 
 #endregion
+
+#region Batch Responses
+
+public record BatchCommitResponse : ServerMessage
+{
+    public override string Type => "batch:commit";
+    public required string RequestId { get; init; }
+    public required List<Document?> Documents { get; init; }
+}
+
+#endregion
+
+#region Sync Responses
+
+public record SyncPushResponse : ServerMessage
+{
+    public override string Type => "sync:push";
+    public required string RequestId { get; init; }
+    public required string Path { get; init; }
+    public Document? Document { get; init; }
+    public required int AppliedCount { get; init; }
+    public required bool HasConflict { get; init; }
+}
+
+#endregion

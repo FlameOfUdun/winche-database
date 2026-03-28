@@ -104,7 +104,7 @@ internal class FilterSqlBuilder(string alias = "d", ParameterBag? bag = null)
 
     private string BuildFieldCompare(FieldCompare cm)
     {
-        var castType = cm.Cast ?? FieldType.Text;
+        var castType = cm.Type ?? FieldType.Text;
         var left = FieldExpressionBuilder.CastExpression(FieldResolver.Resolve(cm.Left, castType, _alias));
         var right = FieldExpressionBuilder.CastExpression(FieldResolver.Resolve(cm.Right, castType, _alias));
         var op = ToSqlOp(cm.Operator);

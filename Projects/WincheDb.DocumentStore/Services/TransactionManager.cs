@@ -10,12 +10,12 @@ public sealed class TransactionManager(
     TransactionRegistry registry
 )
 {
-    public async Task<StoreTransaction> BeginAsync(CancellationToken ct = default)
+    public async Task<Transaction> BeginAsync(CancellationToken ct = default)
     {
         var id = Guid.NewGuid().ToString();
         var connection = await source.OpenConnectionAsync(ct);
         var transaction = await connection.BeginTransactionAsync(ct);
-        var tx = new StoreTransaction(id, options, connection, transaction);
+        var tx = new Transaction(id, options, connection, transaction);
         if (!registry.TryAdd(id, tx))
         {
             await tx.DisposeAsync();
@@ -24,7 +24,7 @@ public sealed class TransactionManager(
         return tx;
     }
 
-    public bool TryGet(string id, out StoreTransaction? tx)
+    public bool TryGet(string id, out Transaction? tx)
     {
         return registry.TryGet(id, out tx);
     }

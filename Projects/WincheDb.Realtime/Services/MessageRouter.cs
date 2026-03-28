@@ -27,6 +27,8 @@ public sealed class MessageRouter(
     IMessageHandler<TransactionSetRequest> transactionSetHandler,
     IMessageHandler<TransactionUpdateRequest> transactionUpdateHandler,
     IMessageHandler<TransactionDeleteRequest> transactionDeleteHandler,
+    IMessageHandler<BatchCommitRequest> batchCommitHandler,
+    IMessageHandler<SyncPushRequest> syncPushHandler,
     ILogger<MessageRouter> logger
 )
 {
@@ -96,6 +98,8 @@ public sealed class MessageRouter(
                 TransactionSetRequest request => await transactionSetHandler.HandleAsync(connectionId, request, ct),
                 TransactionUpdateRequest request => await transactionUpdateHandler.HandleAsync(connectionId, request, ct),
                 TransactionDeleteRequest request => await transactionDeleteHandler.HandleAsync(connectionId, request, ct),
+                BatchCommitRequest request => await batchCommitHandler.HandleAsync(connectionId, request, ct),
+                SyncPushRequest request => await syncPushHandler.HandleAsync(connectionId, request, ct),
                 _ => new SystemErrorResponse
                 {
                     RequestId = message.Id,

@@ -6,11 +6,9 @@ using WincheDb.Core.Models;
 namespace WincheDb.DocumentStore.Models;
 
 public enum AccessOperation {
-    Get,
-    Set,
-    Update,
+    Read,
+    Write, 
     Delete,
-    Query,
 }
 
 public sealed record AccessContext
