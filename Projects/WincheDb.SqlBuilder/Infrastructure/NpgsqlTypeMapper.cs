@@ -1,7 +1,7 @@
 ﻿using System.Collections;
 using NpgsqlTypes;
 
-namespace WincheDb.SqlBuilder;
+namespace WincheDb.SqlBuilder.Infrastructure;
 
 internal static class NpgsqlTypeMapper
 {

@@ -41,35 +41,35 @@ public class Transaction : IAsyncDisposable
     {
         Touch();
         var document = await GetUnprotectedAsync(path, ct);
-        await AuthorizeAsync(AccessOperation.Read, path: path, getExisting: _ => Task.FromResult(document), ct: ct);
+        await AuthorizeAsync(AccessOperation.Read, path, getExisting: _ => Task.FromResult(document), ct: ct);
         return document;
     }
 
     public async Task<Document> SetAsync(string path, JsonObject data, CancellationToken ct = default)
     {
         Touch();
-        await AuthorizeAsync(AccessOperation.Write, path: path, incomingData: data, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
+        await AuthorizeAsync(AccessOperation.Write, path, incomingData: data, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
         return await SetUnprotectedAsync(path, data, ct);
     }
 
     public async Task<Document?> UpdateAsync(string path, JsonObject data, CancellationToken ct = default)
     {
         Touch();
-        await AuthorizeAsync(AccessOperation.Write, path: path, incomingData: data, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
+        await AuthorizeAsync(AccessOperation.Write, path, incomingData: data, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
         return await UpdateUnprotectedAsync(path, data, ct);
     }
 
     public async Task<bool> DeleteAsync(string path, CancellationToken ct = default)
     {
         Touch();
-        await AuthorizeAsync(AccessOperation.Delete, path: path, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
+        await AuthorizeAsync(AccessOperation.Delete, path, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
         return await DeleteUnprotectedAsync(path, ct);
     }
 
     public async Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default)
     {
         Touch();
-        await AuthorizeAsync(AccessOperation.Read, query: query, ct: ct);
+        await AuthorizeAsync(AccessOperation.Read, query.Collection, ct: ct);
         return await QueryUnprotectedAsync(query, ct);
     }
 
@@ -136,9 +136,9 @@ public class Transaction : IAsyncDisposable
 
     #endregion
 
-    private async Task AuthorizeAsync(AccessOperation operation, string? path = null, Query? query = null, JsonObject? incomingData = null, Func<string, Task<Document?>>? getExisting = null, CancellationToken ct = default)
+    private async Task AuthorizeAsync(AccessOperation operation, string path, JsonObject? incomingData = null, Func<string, Task<Document?>>? getExisting = null, CancellationToken ct = default)
     {
-        await AccessRuleEvaluator.EvaluateAsync(_options, operation, path, query, incomingData, getExisting, ct);
+        await AccessRuleEvaluator.EvaluateAsync(_options, operation, path, incomingData, getExisting, ct);
     }
 
     #region Dispose

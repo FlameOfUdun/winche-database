@@ -2,7 +2,7 @@
 using WincheDb.Core.Infrastructure;
 using WincheDb.Core.Models;
 using WincheDb.DocumentStore.Infrastructure;
-using WincheDb.SqlBuilder;
+using WincheDb.SqlBuilder.OperationBuilders;
 
 namespace WincheDb.DocumentStore.Operations;
 

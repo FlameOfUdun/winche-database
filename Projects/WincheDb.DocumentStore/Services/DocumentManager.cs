@@ -1,10 +1,11 @@
-using WincheDb.DocumentStore.Operations;
 using Npgsql;
+using System.Collections;
 using System.Text.Json.Nodes;
-using WincheDb.DocumentStore.Models;
-using WincheDb.Core.Models;
 using WincheDb.Core.Ast;
+using WincheDb.Core.Models;
 using WincheDb.DocumentStore.Infrastructure;
+using WincheDb.DocumentStore.Models;
+using WincheDb.DocumentStore.Operations;
 
 namespace WincheDb.DocumentStore.Services;
 
@@ -40,8 +41,26 @@ public sealed class DocumentManager(
 
     public async Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default)
     {
-        await AuthorizeAsync(AccessOperation.Read, query: query, ct: ct);
+        await AuthorizeAsync(AccessOperation.Read, query.Collection, ct: ct);
         return await QueryUnprotectedAsync(query, ct);
+    }
+
+    public async Task<AggregateResult> AggregateAsync(List<PipelineStage> pipeline, CancellationToken ct = default)
+    {
+        foreach (PipelineStage pipelineStage in pipeline) 
+        { 
+            if (pipelineStage is MatchStage matchStage)
+            {
+                await AuthorizeAsync(AccessOperation.Read, matchStage.Collection, ct: ct);
+                continue;
+            }
+            if (pipelineStage is LookupStage lookupStage)
+            {
+                await AuthorizeAsync(AccessOperation.Read, lookupStage.Collection, ct: ct);
+                continue;
+            }
+        }
+        return await AggregateUnprotectedAsync(pipeline, ct);
     }
 
     #region Unprotected — bypass access rules
@@ -81,10 +100,18 @@ public sealed class DocumentManager(
             .ExecuteAsync(query, ct);
     }
 
+    public async Task<AggregateResult> AggregateUnprotectedAsync(List<PipelineStage> pipeline, CancellationToken ct = default)
+    {
+        await using var conn = await source.OpenConnectionAsync(ct);
+        Console.WriteLine("Executing aggregate operation on table: " + options.TableName);
+        return await new AggregateOperation(conn, null, options.TableName)
+            .ExecuteAsync(pipeline, ct);
+    }
+
     #endregion
 
-    private async Task AuthorizeAsync(AccessOperation operation, string? path = null, Query? query = null, JsonObject? incomingData = null, Func<string, Task<Document?>>? getExisting = null, CancellationToken ct = default)
+    private async Task AuthorizeAsync(AccessOperation operation, string path, JsonObject? incomingData = null, Func<string, Task<Document?>>? getExisting = null, CancellationToken ct = default)
     {
-        await AccessRuleEvaluator.EvaluateAsync(options, operation, path, query, incomingData, getExisting, ct);
+        await AccessRuleEvaluator.EvaluateAsync(options, operation, path, incomingData, getExisting, ct);
     }
 }

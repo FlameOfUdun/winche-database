@@ -25,6 +25,7 @@ namespace WincheDb.Realtime.Messages;
 [JsonDerivedType(typeof(TransactionRollbackRequest), "transaction:rollback")]
 [JsonDerivedType(typeof(BatchCommitRequest), "batch:commit")]
 [JsonDerivedType(typeof(SyncPushRequest), "sync:push")]
+[JsonDerivedType(typeof(AggregateExecuteRequest), "aggregate:execute")]
 public abstract record ClientMessage
 {
     [Required]
@@ -164,4 +165,10 @@ public record BatchWriteOperation
     public required string DocumentId { get; init; }
 
     public JsonObject? Data { get; init; }
+}
+
+public record AggregateExecuteRequest : ClientMessage
+{
+    [Required]
+    public List<PipelineStage> Pipeline { get; init; } = [];
 }

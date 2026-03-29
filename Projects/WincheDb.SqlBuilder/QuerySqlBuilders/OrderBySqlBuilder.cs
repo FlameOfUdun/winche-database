@@ -1,7 +1,7 @@
 ﻿using WincheDb.Core.Ast;
 using WincheDb.SqlBuilder.FieldMapping;
 
-namespace WincheDb.SqlBuilder;
+namespace WincheDb.SqlBuilder.QuerySqlBuilders;
 
 internal class OrderBySqlBuilder
 {

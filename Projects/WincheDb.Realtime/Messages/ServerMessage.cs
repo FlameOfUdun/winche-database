@@ -169,3 +169,10 @@ public record SyncPushResponse : ServerMessage
 }
 
 #endregion
+
+public record AggregateExecuteResponse : ServerMessage
+{
+    public override string Type => "aggregate:execute";
+    public required string RequestId { get; init; }
+    public required AggregateResult Result { get; init; }
+}

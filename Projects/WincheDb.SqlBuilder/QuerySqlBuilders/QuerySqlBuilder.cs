@@ -2,7 +2,7 @@
 using WincheDb.Core.Ast;
 using WincheDb.SqlBuilder.Infrastructure;
 
-namespace WincheDb.SqlBuilder;
+namespace WincheDb.SqlBuilder.QuerySqlBuilders;
 
 public sealed class QuerySqlBuilder(string table = "documents")
 {
@@ -13,22 +13,11 @@ public sealed class QuerySqlBuilder(string table = "documents")
         var bag = new ParameterBag();
         var sb = new StringBuilder();
 
-        // Includes (LATERAL JOINs)
-        var includeBuilder = new IncludeSqlBuilder(table, bag);
-        var (dataExpr, lateralJoins) = includeBuilder.Build(q.Include, Alias);
-
         // SELECT
-        if (q.Include.Count > 0)
-            sb.AppendLine($"SELECT {Alias}.id, {Alias}.path, {Alias}.collection, {Alias}.created_at, {Alias}.updated_at, {Alias}.version, {dataExpr} as data");
-        else
-            sb.AppendLine($"SELECT *");
+        sb.AppendLine($"SELECT *");
 
         // FROM
         sb.AppendLine($"FROM {table} {Alias}");
-
-        // LATERAL JOINs for includes
-        if (lateralJoins.Length > 0)
-            sb.Append(lateralJoins);
 
         // WHERE
         sb.AppendLine($"WHERE {Alias}.collection = {bag.Add(q.Collection)}");
@@ -49,7 +38,7 @@ public sealed class QuerySqlBuilder(string table = "documents")
         if (q.OrderBy.Count > 0)
             sb.AppendLine($"ORDER BY {OrderBySqlBuilder.Build(q.OrderBy, Alias)}");
 
-        // LIMIT / OFFSET — fetch one extra row to detect if more results exist
+        // LIMIT — fetch one extra row to detect if more results exist
         sb.AppendLine($"LIMIT {bag.Add(q.Limit + 1)}");
 
         return new SqlBuildResult(sb.ToString().Trim(), bag.ToArray());

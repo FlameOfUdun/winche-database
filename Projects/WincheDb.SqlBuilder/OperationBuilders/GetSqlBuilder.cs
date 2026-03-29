@@ -1,8 +1,8 @@
 ﻿using WincheDb.SqlBuilder.Infrastructure;
 
-namespace WincheDb.SqlBuilder
+namespace WincheDb.SqlBuilder.OperationBuilders
 {
-    public sealed class DeleteSqlBuilder(string table = "documents")
+    public sealed class GetSqlBuilder(string table = "documents")
     {
         public SqlBuildResult Build(string path)
         {
@@ -10,9 +10,9 @@ namespace WincheDb.SqlBuilder
             bag.Add(path);
 
             var sql = $"""
-                DELETE FROM {table}
+                SELECT path, id, collection, data, created_at, updated_at, version
+                FROM {table}
                 WHERE path = $1
-                RETURNING path
                 """;
 
             return new SqlBuildResult(sql, bag.ToArray());

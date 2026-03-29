@@ -1,7 +1,7 @@
 ﻿using System.Text.Json.Nodes;
 using WincheDb.SqlBuilder.Infrastructure;
 
-namespace WincheDb.SqlBuilder
+namespace WincheDb.SqlBuilder.OperationBuilders
 {
     public sealed class UpdateSqlBuilder(string table = "documents")
     {

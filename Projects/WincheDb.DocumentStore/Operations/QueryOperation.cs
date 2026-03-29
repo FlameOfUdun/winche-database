@@ -3,7 +3,7 @@ using WincheDb.Core.Ast;
 using WincheDb.Core.Infrastructure;
 using WincheDb.DocumentStore.Infrastructure;
 using WincheDb.DocumentStore.Models;
-using WincheDb.SqlBuilder;
+using WincheDb.SqlBuilder.QuerySqlBuilders;
 
 namespace WincheDb.DocumentStore.Operations;
 

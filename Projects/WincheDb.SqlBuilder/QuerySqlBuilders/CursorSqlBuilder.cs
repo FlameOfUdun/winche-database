@@ -2,7 +2,7 @@
 using WincheDb.SqlBuilder.FieldMapping;
 using WincheDb.SqlBuilder.Infrastructure;
 
-namespace WincheDb.SqlBuilder;
+namespace WincheDb.SqlBuilder.QuerySqlBuilders;
 
 internal sealed class CursorSqlBuilder(string alias, ParameterBag bag)
 {

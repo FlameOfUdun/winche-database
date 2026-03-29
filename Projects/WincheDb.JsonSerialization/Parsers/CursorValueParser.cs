@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 
 namespace WincheDb.JsonSerialization.Parsers;
 
-internal static class CursorParser
+internal static class CursorValueParser
 {
     public static List<object?> Parse(JsonArray? arr)
     {

@@ -29,6 +29,7 @@ public sealed class MessageRouter(
     IMessageHandler<TransactionDeleteRequest> transactionDeleteHandler,
     IMessageHandler<BatchCommitRequest> batchCommitHandler,
     IMessageHandler<SyncPushRequest> syncPushHandler,
+    IMessageHandler<AggregateExecuteRequest> aggregateExecuteHandler,
     ILogger<MessageRouter> logger
 )
 {
@@ -43,9 +44,10 @@ public sealed class MessageRouter(
         Converters =
         {
             new JsonStringEnumConverter(JsonNamingPolicy.CamelCase),
-            new OrderByListConverter(),
+            new SortNodeListConverter(),
             new WhereNodeConverter(),
-            new CursorListConverter(),
+            new CursorValueListConverter(),
+            new PipelineStageListConverter(),
         }
     };
 
@@ -100,6 +102,7 @@ public sealed class MessageRouter(
                 TransactionDeleteRequest request => await transactionDeleteHandler.HandleAsync(connectionId, request, ct),
                 BatchCommitRequest request => await batchCommitHandler.HandleAsync(connectionId, request, ct),
                 SyncPushRequest request => await syncPushHandler.HandleAsync(connectionId, request, ct),
+                AggregateExecuteRequest request => await aggregateExecuteHandler.HandleAsync(connectionId, request, ct),
                 _ => new SystemErrorResponse
                 {
                     RequestId = message.Id,

@@ -4,7 +4,7 @@ using WincheDb.Core.Ast;
 
 namespace WincheDb.JsonSerialization.Parsers;
 
-internal static class WhereParser
+internal static class WhereNodeParser
 {
     private static readonly Dictionary<string, ConditionalOperator> OpMap =
         new(StringComparer.OrdinalIgnoreCase)

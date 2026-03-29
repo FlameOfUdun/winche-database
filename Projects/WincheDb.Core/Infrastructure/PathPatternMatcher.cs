@@ -35,26 +35,21 @@ public static class PathPatternMatcher
         {
             var seg = patternSegments[i];
 
-            // ** — match one or more remaining segments (must be last)
             if (seg == "**")
             {
                 if (i != patternSegments.Length - 1)
                     throw new ArgumentException("'**' must be the last segment in the pattern.");
 
-                return pi < pathSegments.Length
-                    ? PathMatchResult.Match(captured)
-                    : PathMatchResult.NoMatch;
+                return PathMatchResult.Match(captured);
             }
 
             if (pi >= pathSegments.Length)
                 return PathMatchResult.NoMatch;
 
-            // {name} — named single-segment capture
             if (seg.Length > 2 && seg[0] == '{' && seg[^1] == '}')
             {
                 captured[seg[1..^1]] = pathSegments[pi];
             }
-            // * — anonymous single-segment match
             else if (seg != "*" && !string.Equals(seg, pathSegments[pi], StringComparison.Ordinal))
             {
                 return PathMatchResult.NoMatch;

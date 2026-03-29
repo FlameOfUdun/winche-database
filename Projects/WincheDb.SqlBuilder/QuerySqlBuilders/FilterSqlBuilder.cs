@@ -2,7 +2,7 @@
 using WincheDb.SqlBuilder.FieldMapping;
 using WincheDb.SqlBuilder.Infrastructure;
 
-namespace WincheDb.SqlBuilder;
+namespace WincheDb.SqlBuilder.QuerySqlBuilders;
 
 internal class FilterSqlBuilder(string alias = "d", ParameterBag? bag = null)
 {

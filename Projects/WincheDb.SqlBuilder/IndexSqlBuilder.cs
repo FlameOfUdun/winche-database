@@ -2,6 +2,7 @@
 using System.Text;
 using WincheDb.Core.Ast;
 using WincheDb.SqlBuilder.Infrastructure;
+using WincheDb.SqlBuilder.QuerySqlBuilders;
 
 namespace WincheDb.SqlBuilder;
 

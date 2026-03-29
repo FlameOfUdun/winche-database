@@ -36,9 +36,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IMessageHandler<TransactionQueryRequest>, TransactionQueryHandler>();
         services.AddSingleton<IMessageHandler<TransactionCommitRequest>, TransactionCommitHandler>();
         services.AddSingleton<IMessageHandler<TransactionRollbackRequest>, TransactionRollbackHandler>();
-
         services.AddSingleton<IMessageHandler<BatchCommitRequest>, BatchCommitHandler>();
         services.AddSingleton<IMessageHandler<SyncPushRequest>, SyncPushHandler>();
+        services.AddSingleton<IMessageHandler<AggregateExecuteRequest>, AggregateExecuteHandler>();
 
         return services;
     }

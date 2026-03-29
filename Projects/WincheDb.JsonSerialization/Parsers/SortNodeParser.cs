@@ -3,17 +3,17 @@ using WincheDb.Core.Ast;
 
 namespace WincheDb.JsonSerialization.Parsers
 {
-    internal static class OrderByParser
+    internal static class SortNodeParser
     {
-        public static List<SortNode> Parse(JsonArray? arr)
+        public static List<SortNode> ParseArray(JsonArray? arr)
         {
             if (arr is null) 
                 return [];
 
-            return [.. arr.OfType<JsonObject>().Select(ParseOne)];
+            return [.. arr.OfType<JsonObject>().Select(ParseObject)];
         }
 
-        private static SortNode ParseOne(JsonObject obj)
+        private static SortNode ParseObject(JsonObject obj)
         {
             var field = obj["field"]?.GetValue<string>()
                 ?? throw new ArgumentException("OrderBy entry requires 'field'");
