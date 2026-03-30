@@ -9,15 +9,14 @@ namespace WincheDb.DocumentStore.DependencyInjection;
 
 public static class ServiceCollectionExtensions
 {
-    public static IServiceCollection AddWincheDbStore(this IServiceCollection services)
+    public static IServiceCollection AddWincheDbStore(this IServiceCollection services, string connectionString, Action<StoreOptions>? builder = null)
     {
-        return AddWincheDbStore(services, options => options);
-    }
+        // Data Source
+        services.AddNpgsqlDataSource(connectionString);
 
-    public static IServiceCollection AddWincheDbStore(this IServiceCollection services, Func<StoreOptions, StoreOptions> builder)
-    {
         // Options
-        var options = builder(new StoreOptions());
+        var options = new StoreOptions();
+        builder?.Invoke(options);
         services.AddSingleton(options);
 
         // Channel for subscription events.
