@@ -1,0 +1,9 @@
+<Project>
+  <PropertyGroup>
+    <Version>0.2.2</Version>
+    <Authors>Ehsan Rashidi</Authors>
+    <PackageProjectUrl>https://github.com/FlameOfUdun/WincheDB</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/FlameOfUdun/WincheDB</RepositoryUrl>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+</Project>
