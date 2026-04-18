@@ -16,15 +16,17 @@ public static class ServiceCollectionExtensions
     {
         services.Configure<StoreOptions>(configuration.GetSection(ServiceKeys.CONFIG_SECTION_KEY));
 
+        var contextAccessor = new CallerContextAccessor();
+
         services.AddWincheSentinel<Document>()
             .AddResourceObjectAccessor<DocumentObjectAccessor>()
-            .AddCallerContextAccessor<CallerContextAccessor>();
+            .AddCallerContextAccessor(contextAccessor);
 
         configure?.Invoke(new DependencyConfigurator(services));
 
         services.AddNpgsqlDataSource(connectionString, serviceKey: ServiceKeys.DATA_SOURCE_KEY);
 
-        services.AddSingleton<CallerContextAccessor>();
+        services.AddSingleton(contextAccessor);
         services.AddSingleton<IEventChannel, EventChannel>();
         services.AddSingleton<ISubscriptionRegistry, SubscriptionRegistry>();
         services.AddSingleton<ITransactionRegistry, TransactionRegistry>();
