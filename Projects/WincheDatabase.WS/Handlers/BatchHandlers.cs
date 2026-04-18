@@ -1,9 +1,11 @@
-using WincheDatabase.Store.Services;
+using WincheDatabase.Store.Abstraction;
 using WincheDatabase.WS.Messages;
 
 namespace WincheDatabase.WS.Handlers;
 
-internal sealed class BatchCommitHandler(DocumentManager documentManager) : IMessageHandler<BatchCommitRequest>
+internal sealed class BatchCommitHandler(
+    IDocumentManager documentManager
+) : IMessageHandler<BatchCommitRequest>
 {
     public async Task<ServerMessage> HandleAsync(string connectionId, BatchCommitRequest request, CancellationToken ct)
     {

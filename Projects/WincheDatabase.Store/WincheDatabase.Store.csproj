@@ -11,6 +11,7 @@
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.6" />
     <PackageReference Include="Npgsql" Version="10.0.2" />
     <PackageReference Include="Npgsql.DependencyInjection" Version="10.0.2" />
+    <PackageReference Include="WincheSentinel.Core" Version="1.1.3" />
   </ItemGroup>
 
   <ItemGroup>

@@ -2,16 +2,14 @@ using System.Buffers;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace WincheDatabase.WS.Operands;
 
-public sealed class WebSocketConnection(WebSocket socket, JsonSerializerOptions jsonOptions) : IAsyncDisposable
+public sealed class WebSocketConnection(WebSocket socket) : IAsyncDisposable
 {
     private const int ReceiveBufferSize = 4096;
     private const int SendBufferSize = 8192;
 
-    private readonly JsonSerializerOptions _jsonOptions = jsonOptions;
     private readonly WebSocket _socket = socket;
     private readonly CancellationTokenSource _cts = new();
     private readonly SemaphoreSlim _sendLock = new(1, 1);
@@ -22,7 +20,6 @@ public sealed class WebSocketConnection(WebSocket socket, JsonSerializerOptions 
     public CancellationToken CancellationToken => _cts.Token;
     public event Func<Task>? OnClosed;
 
-
     public async Task SendAsync<T>(T message, CancellationToken ct = default) where T : class
     {
         if (!IsOpen) return;
@@ -30,7 +27,7 @@ public sealed class WebSocketConnection(WebSocket socket, JsonSerializerOptions 
         await _sendLock.WaitAsync(ct);
         try
         {
-            var json = JsonSerializer.Serialize(message, message.GetType(), _jsonOptions);
+            var json = JsonSerializer.Serialize(message, message.GetType());
             var byteCount = Encoding.UTF8.GetByteCount(json);
             var buffer = ArrayPool<byte>.Shared.Rent(byteCount);
             try
@@ -64,7 +61,7 @@ public sealed class WebSocketConnection(WebSocket socket, JsonSerializerOptions 
             foreach (var message in messages)
             {
                 if (!IsOpen) break;
-                var json = JsonSerializer.Serialize(message, message.GetType(), _jsonOptions);
+                var json = JsonSerializer.Serialize(message, message.GetType());
                 var byteCount = Encoding.UTF8.GetByteCount(json);
 
                 // Resize buffer if needed

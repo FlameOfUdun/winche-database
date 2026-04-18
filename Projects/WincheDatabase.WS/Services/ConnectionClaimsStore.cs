@@ -1,9 +1,10 @@
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
+using WincheDatabase.WS.Abstraction;
 
-namespace WincheDatabase.WS.Stores;
+namespace WincheDatabase.WS.Services;
 
-public sealed class ConnectionClaimsStore
+public sealed class ConnectionClaimsStore : IConnectionClaimsStore
 {
     private readonly ConcurrentDictionary<string, IReadOnlyDictionary<string, object?>> _claims = new(StringComparer.Ordinal);
 

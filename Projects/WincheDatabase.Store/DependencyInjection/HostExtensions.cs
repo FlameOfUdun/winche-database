@@ -1,6 +1,6 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using WincheDatabase.Store.Services;
+using WincheDatabase.Store.Abstraction;
 
 namespace WincheDatabase.Store.DependencyInjection
 {
@@ -9,7 +9,7 @@ namespace WincheDatabase.Store.DependencyInjection
         public static IHost UseWincheDatabaseDocumentStore(this IHost host)
         {
             using var scope = host.Services.CreateScope();
-            var service = scope.ServiceProvider.GetService<SchemaManager>()!;
+            var service = scope.ServiceProvider.GetRequiredService<ISchemaManager>()!;
             service.EnsureCreatedAsync().GetAwaiter().GetResult();
 
             return host;

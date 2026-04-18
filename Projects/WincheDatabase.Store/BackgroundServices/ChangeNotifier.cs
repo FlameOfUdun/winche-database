@@ -1,16 +1,18 @@
-using System.Collections.Concurrent;
-using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using System.Collections.Concurrent;
+using System.Text.Json;
+using WincheDatabase.Store.Abstraction;
+using WincheDatabase.Store.Constants;
 using WincheDatabase.Store.Models;
-using WincheDatabase.Store.Services;
 
 namespace WincheDatabase.Store.BackgroundServices;
 
 public class ChangeNotifier(
-    NpgsqlDataSource source,
-    ChangeProcessor changeProcessor,
+    [FromKeyedServices(ServiceKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source,
+    IChangeProcessor changeProcessor,
     ILogger<ChangeNotifier> logger
 ) : BackgroundService
 {

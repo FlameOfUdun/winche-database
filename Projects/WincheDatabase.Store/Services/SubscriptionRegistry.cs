@@ -1,22 +1,16 @@
 using System.Collections.Concurrent;
 using WincheDatabase.AST.Models;
 using WincheDatabase.Core.Infrastructure;
+using WincheDatabase.Store.Abstraction;
 using WincheDatabase.Store.Models;
 
-namespace WincheDatabase.Store.Stores;
+namespace WincheDatabase.Store.Services;
 
-public sealed class SubscriptionRegistry
+public sealed class SubscriptionRegistry : ISubscriptionRegistry
 {
-    // group key → group data (query, shared snapshot)
     private readonly ConcurrentDictionary<string, QueryGroup> _groups = new(StringComparer.Ordinal);
-
-    // collection → group keys
     private readonly SecondaryIndexMap<string> _byCollection = new(StringComparer.OrdinalIgnoreCase);
-
-    // group key → subscription IDs
     private readonly SecondaryIndexMap<string> _byGroup = new(StringComparer.Ordinal);
-
-    // subscription ID → group key (reverse lookup)
     private readonly ConcurrentDictionary<string, string> _subscriptionToGroup = new(StringComparer.Ordinal);
 
     public QueryGroup AddSubscription(string subscriptionId, Query query, QuerySnapshot snapshot, string groupKey)
@@ -46,7 +40,6 @@ public sealed class SubscriptionRegistry
 
         _byGroup.Remove(groupKey, subscriptionId);
 
-        // If group is now empty, clean it up
         if (_byGroup.Count(groupKey) == 0)
         {
             if (_groups.TryRemove(groupKey, out var group))
@@ -80,7 +73,6 @@ public sealed class SubscriptionRegistry
         if (!_groups.TryGetValue(groupKey, out var group))
             return false;
 
-        // CAS on snapshot reference
         return Interlocked.CompareExchange(ref group.Snapshot, newSnapshot, expected) == expected;
     }
 

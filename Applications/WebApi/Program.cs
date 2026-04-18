@@ -1,34 +1,47 @@
 using WincheDatabase.REST.DependencyInjection;
+using WincheDatabase.REST.Services;
 using WincheDatabase.Store.DependencyInjection;
 using WincheDatabase.Store.Models;
 using WincheDatabase.WS.DependencyInjection;
+using WincheDatabase.WS.Services;
+using WincheSentinel.Core.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
 var connString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new ArgumentNullException(nameof(args));
 
-static void AddRules(List<AccessRule> rules)
+builder.Services.AddWincheDatabaseDocumentStore(connString, builder.Configuration, (config) =>
 {
-    rules.Add(new AccessRule
+    //config.AddDocumentAccessRule(new DocumentAccessRule(
+    //    path: "patients",
+    //    operations: [AccessOperation.Read],
+    //    evaluate: async (context, ct) => true
+    //));
+});
+builder.Services.AddWincheDatabaseRestApi((config) =>
+{
+    config.AddClaimsMapper(new RestClaimsMapper((context) => 
     {
-        Path = "patients",
-        Operations = new HashSet<AccessOperation>() { AccessOperation.Read },
-        Evaluate = async (context, ct) => true,
-    });
-}
+        return new Dictionary<string, object?>
+        {
+            ["uid"] = "123"
+        };
+    }));
+});
+builder.Services.AddWincheDatabaseWsApi((config) =>
+{
+    config.AddClaimsMapper(new WsClaimsMapper((context) => 
+    {
+        return new Dictionary<string, object?>
+        {
+            ["uid"] = "123"
+        };
+    }));
+});
 
-builder.Services.AddWincheDatabaseDocumentStore(connString, builder.Configuration, AddRules);
-builder.Services.AddWincheDatabaseWs();
+builder.Services.AddWincheDatabaseWsApi();
 builder.Services.AddOpenApi();
-
-static async Task<Dictionary<string, object?>> MapClaims(HttpContext context)
-{
-    return new Dictionary<string, object?>
-    {
-        ["uid"] = "123"
-    };
-}
 
 var app = builder.Build();
 if (app.Environment.IsDevelopment())
@@ -40,6 +53,6 @@ else
     app.UseHttpsRedirection();
 }
 app.UseWincheDatabaseDocumentStore();
-app.UseWincheDatabaseWsApi(mapClaims: MapClaims);
-app.UseWincheDatabaseRestApi(mapClaims: MapClaims);
+app.UseWincheDatabaseWsApi();
+app.UseWincheDatabaseRestApi();
 app.Run();

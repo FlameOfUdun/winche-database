@@ -1,13 +1,14 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using WincheDatabase.Store.Stores;
+using WincheDatabase.Store.Models;
+using WincheDatabase.Store.Abstraction;
 
 namespace WincheDatabase.Store.BackgroundServices;
 
 public sealed class TransactionInvalidator(
     IOptions<StoreOptions> options,
-    TransactionRegistry registry,
+    ITransactionRegistry registry,
     ILogger<TransactionInvalidator> logger
 ) : BackgroundService
 {

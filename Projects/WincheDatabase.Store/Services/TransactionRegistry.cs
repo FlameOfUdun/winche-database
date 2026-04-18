@@ -1,11 +1,13 @@
 using System.Collections.Concurrent;
+using WincheDatabase.Store.Abstraction;
 using WincheDatabase.Store.Operands;
 
-namespace WincheDatabase.Store.Stores;
+namespace WincheDatabase.Store.Services;
 
-public sealed class TransactionRegistry : IAsyncDisposable
+public sealed class TransactionRegistry : ITransactionRegistry, IAsyncDisposable
 {
     private readonly ConcurrentDictionary<string, Transaction> _transactions = new(StringComparer.Ordinal);
+
     public bool TryAdd(string id, Transaction tx)
     {
         return _transactions.TryAdd(id, tx);

@@ -1,10 +1,12 @@
-using WincheDatabase.Store.Services;
+using WincheDatabase.Store.Abstraction;
+using WincheDatabase.WS.Abstraction;
 using WincheDatabase.WS.Messages;
-using WincheDatabase.WS.Stores;
 
 namespace WincheDatabase.WS.Handlers;
 
-internal sealed class QueryExecuteHandler(DocumentManager documentManager) : IMessageHandler<QueryExecuteRequest>
+internal sealed class QueryExecuteHandler(
+    IDocumentManager documentManager
+) : IMessageHandler<QueryExecuteRequest>
 {
     public async Task<ServerMessage> HandleAsync(string connectionId, QueryExecuteRequest request, CancellationToken ct)
     {
@@ -19,8 +21,8 @@ internal sealed class QueryExecuteHandler(DocumentManager documentManager) : IMe
 }
 
 internal sealed class QuerySubscribeHandler(
-    SubscriptionManager subscriptionManager,
-    SubscriptionConnectionMap subscriptionConnectionMap
+    ISubscriptionManager subscriptionManager,
+    ISubscriptionConnectionMap subscriptionConnectionMap
 ) : IMessageHandler<QuerySubscribeRequest>
 {
     public async Task<ServerMessage> HandleAsync(string connectionId, QuerySubscribeRequest request, CancellationToken ct)
@@ -38,8 +40,8 @@ internal sealed class QuerySubscribeHandler(
 }
 
 public sealed class QueryUnsubscribeHandler(
-    SubscriptionManager subscriptionManager,
-    SubscriptionConnectionMap subscriptionConnectionMap
+    ISubscriptionManager subscriptionManager,
+    ISubscriptionConnectionMap subscriptionConnectionMap
 ) : IMessageHandler<QueryUnsubscribeRequest>
 {
     public Task<ServerMessage> HandleAsync(string connectionId, QueryUnsubscribeRequest request, CancellationToken ct)

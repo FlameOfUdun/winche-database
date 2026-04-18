@@ -1,10 +1,11 @@
 using System.Collections.Concurrent;
+using WincheDatabase.WS.Abstraction;
 using WincheDatabase.WS.Messages;
 using WincheDatabase.WS.Operands;
 
-namespace WincheDatabase.WS.Stores;
+namespace WincheDatabase.WS.Services;
 
-public sealed class ConnectionRegistry
+public sealed class ConnectionRegistry : IConnectionRegistry
 {
     private readonly ConcurrentDictionary<string, WebSocketConnection> _connections = new(StringComparer.Ordinal);
 
@@ -25,8 +26,7 @@ public sealed class ConnectionRegistry
 
     public int Count => _connections.Count;
 
-    public async Task SendAsync<T>(string connectionId, T message, CancellationToken ct = default)
-        where T : ServerMessage
+    public async Task SendAsync<T>(string connectionId, T message, CancellationToken ct = default) where T : ServerMessage
     {
         if (!_connections.TryGetValue(connectionId, out var connection))
             return;
@@ -47,12 +47,7 @@ public sealed class ConnectionRegistry
         }
     }
 
-    /// <summary>
-    /// Sends multiple messages to a connection in a single batch operation.
-    /// More efficient than multiple individual SendAsync calls.
-    /// </summary>
-    public async Task SendBatchAsync<T>(string connectionId, IReadOnlyList<T> messages, CancellationToken ct = default)
-        where T : ServerMessage
+    public async Task SendBatchAsync<T>(string connectionId, IReadOnlyList<T> messages, CancellationToken ct = default) where T : ServerMessage
     {
         if (messages.Count == 0)
             return;
@@ -76,8 +71,7 @@ public sealed class ConnectionRegistry
         }
     }
 
-    public async Task BroadcastAsync<T>(T message, CancellationToken ct = default)
-        where T : ServerMessage
+    public async Task BroadcastAsync<T>(T message, CancellationToken ct = default) where T : ServerMessage
     {
         var tasks = _connections.Values
             .Where(c => c.IsOpen)

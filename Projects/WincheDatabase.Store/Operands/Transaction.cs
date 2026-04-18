@@ -4,8 +4,9 @@ using WincheDatabase.Core.Models;
 using WincheDatabase.AST.Models;
 using Microsoft.Extensions.Options;
 using WincheDatabase.Store.Models;
-using WincheDatabase.Store.Services;
 using WincheDatabase.Store.Operations;
+using WincheSentinel.Core.Models;
+using WincheSentinel.Core.Abstraction;
 
 namespace WincheDatabase.Store.Operands;
 
@@ -13,7 +14,7 @@ public class Transaction : IAsyncDisposable
 {
     public readonly string Id;
     private readonly string _table;
-    private readonly AccessRuleEvaluator _evaluator;
+    private readonly IAccessRuleEvaluator<Document> _evaluator;
     private readonly NpgsqlConnection _connection;
     private readonly NpgsqlTransaction _transaction;
     private readonly DateTime _createdAt;
@@ -24,7 +25,7 @@ public class Transaction : IAsyncDisposable
     public DateTime LastActivityAt => new(Interlocked.Read(ref _lastActivityAtTicks), DateTimeKind.Utc);
     public bool IsCompleted => _isCompleted;
 
-    internal Transaction(string id, IOptions<StoreOptions> options, AccessRuleEvaluator evaluator, NpgsqlConnection connection, NpgsqlTransaction transaction)
+    internal Transaction(string id, IOptions<StoreOptions> options, IAccessRuleEvaluator<Document> evaluator, NpgsqlConnection connection, NpgsqlTransaction transaction)
     {
         Id = id;
         _table = options.Value.TableName;
@@ -43,36 +44,35 @@ public class Transaction : IAsyncDisposable
     public async Task<Document?> GetAsync(string path, CancellationToken ct = default)
     {
         Touch();
-        var document = await GetUnprotectedAsync(path, ct);
-        await AuthorizeAsync(AccessOperation.Read, path, getExisting: _ => Task.FromResult(document), ct: ct);
-        return document;
+        await _evaluator.EvaluateAsync(AccessOperation.Read, path, null, ct);
+        return await GetUnprotectedAsync(path, ct); ;
     }
 
     public async Task<Document> SetAsync(string path, JsonObject data, CancellationToken ct = default)
     {
         Touch();
-        await AuthorizeAsync(AccessOperation.Write, path, incomingData: data, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
+        await _evaluator.EvaluateAsync(AccessOperation.Write, path, data, ct);
         return await SetUnprotectedAsync(path, data, ct);
     }
 
     public async Task<Document?> UpdateAsync(string path, JsonObject data, CancellationToken ct = default)
     {
         Touch();
-        await AuthorizeAsync(AccessOperation.Write, path, incomingData: data, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
+        await _evaluator.EvaluateAsync(AccessOperation.Write, path, data, ct);
         return await UpdateUnprotectedAsync(path, data, ct);
     }
 
     public async Task<bool> DeleteAsync(string path, CancellationToken ct = default)
     {
         Touch();
-        await AuthorizeAsync(AccessOperation.Delete, path, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
+        await _evaluator.EvaluateAsync(AccessOperation.Delete, path, null, ct);
         return await DeleteUnprotectedAsync(path, ct);
     }
 
     public async Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default)
     {
         Touch();
-        await AuthorizeAsync(AccessOperation.Read, query.Collection, ct: ct);
+        await _evaluator.EvaluateAsync(AccessOperation.Read, query.Collection, null, ct);
         return await QueryUnprotectedAsync(query, ct);
     }
 
@@ -133,11 +133,6 @@ public class Transaction : IAsyncDisposable
     }
 
     #endregion
-
-    private async Task AuthorizeAsync(AccessOperation operation, string path, JsonObject? incomingData = null, Func<string, Task<Document?>>? getExisting = null, CancellationToken ct = default)
-    {
-        await _evaluator.EvaluateAsync(operation, path, incomingData, getExisting, ct);
-    }
 
     #region Dispose
 

@@ -1,9 +1,11 @@
-using WincheDatabase.Store.Services;
+using WincheDatabase.Store.Abstraction;
 using WincheDatabase.WS.Messages;
 
 namespace WincheDatabase.WS.Handlers;
 
-internal sealed class AggregateExecuteHandler(DocumentManager documentManager) : IMessageHandler<AggregateExecuteRequest>
+internal sealed class AggregateExecuteHandler(
+    IDocumentManager documentManager
+) : IMessageHandler<AggregateExecuteRequest>
 {
     public async Task<ServerMessage> HandleAsync(string connectionId, AggregateExecuteRequest request, CancellationToken ct)
     {

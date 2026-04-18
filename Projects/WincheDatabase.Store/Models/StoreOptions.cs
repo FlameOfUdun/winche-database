@@ -1,7 +1,6 @@
 ﻿using WincheDatabase.SQL;
-using WincheDatabase.Store.Models;
 
-namespace WincheDatabase.Store
+namespace WincheDatabase.Store.Models
 {
     public sealed record StoreOptions
     {
@@ -10,7 +9,6 @@ namespace WincheDatabase.Store
         public bool EnsureCreated { get; set; } = true;
         public List<IndexDefinition> Indexes { get; set; } = [];
         public TransactionConfig TransactionConfig { get; set; } = new();
-        public List<AccessRule> AccessRules { get; set; } = [];
     }
 
     public sealed record TransactionConfig

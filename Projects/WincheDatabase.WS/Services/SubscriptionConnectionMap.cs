@@ -1,9 +1,10 @@
 using System.Collections.Concurrent;
 using WincheDatabase.Core.Infrastructure;
+using WincheDatabase.WS.Abstraction;
 
-namespace WincheDatabase.WS.Stores;
+namespace WincheDatabase.WS.Services;
 
-public sealed class SubscriptionConnectionMap
+public sealed class SubscriptionConnectionMap: ISubscriptionConnectionMap
 {
     private readonly ConcurrentDictionary<string, string> _ownerBySubscription = new(StringComparer.Ordinal);
     private readonly SecondaryIndexMap<string> _subscriptionsByConnection = new(StringComparer.Ordinal);

@@ -1,20 +1,18 @@
-using System.Threading.Channels;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using WincheDatabase.Store.Abstraction;
-using WincheDatabase.Store.Models;
 
 namespace WincheDatabase.Store.BackgroundServices;
 
 public sealed class EventNotifier(
-    ChannelReader<List<SubscriptionEvent>> eventReader,
+    IEventChannel channel,
     IEnumerable<ISubscriptionEventHandler> handlers,
     ILogger<EventNotifier> logger
 ) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await foreach (var events in eventReader.ReadAllAsync(stoppingToken))
+        await foreach (var events in channel.ReadAsync(stoppingToken))
         {
             foreach (var handler in handlers)
             {

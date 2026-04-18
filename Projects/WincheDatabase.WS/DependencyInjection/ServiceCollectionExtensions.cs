@@ -1,24 +1,27 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using WincheDatabase.Store.Abstraction;
+using WincheDatabase.Ws.DependencyInjection;
+using WincheDatabase.WS.Abstraction;
 using WincheDatabase.WS.Handlers;
 using WincheDatabase.WS.Messages;
 using WincheDatabase.WS.Services;
-using WincheDatabase.WS.Stores;
 
 namespace WincheDatabase.WS.DependencyInjection;
 
 public static class ServiceCollectionExtensions
 {
-    public static IServiceCollection AddWincheDatabaseWs(this IServiceCollection services)
+    public static IServiceCollection AddWincheDatabaseWsApi(this IServiceCollection services, Action<DependencyConfigurator>? configure = null)
     {
-        services.AddSingleton<ConnectionRegistry>();
-        services.AddSingleton<ConnectionClaimsStore>();
-        services.AddSingleton<ConnectionManager>();
-        services.AddSingleton<MessageRouter>();
-        services.AddSingleton<ISubscriptionEventHandler, EventDispatcher>();
+        var configurator = new DependencyConfigurator(services);
+        configure?.Invoke(configurator);
 
-        services.AddSingleton<SubscriptionConnectionMap>();
-        services.AddSingleton<TransactionConnectionMap>();
+        services.AddSingleton<IConnectionRegistry, ConnectionRegistry>();
+        services.AddSingleton<IConnectionClaimsStore, ConnectionClaimsStore>();
+        services.AddSingleton<IConnectionManager, ConnectionManager>();
+        services.AddSingleton<IMessageRouter, MessageRouter>();
+        services.AddSingleton<ISubscriptionEventHandler, EventDispatcher>();
+        services.AddSingleton<ISubscriptionConnectionMap, SubscriptionConnectionMap>();
+        services.AddSingleton<ITransactionConnectionMap, TransactionConnectionMap>();
 
         services.AddSingleton<IMessageHandler<SystemPingRequest>, SystemPingHandler>();
         services.AddSingleton<IMessageHandler<DocumentGetRequest>, DocumentGetHandler>();

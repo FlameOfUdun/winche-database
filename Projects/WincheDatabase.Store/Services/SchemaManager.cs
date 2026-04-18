@@ -1,14 +1,17 @@
-﻿using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using WincheDatabase.SQL;
-using WincheDatabase.Store;
+using WincheDatabase.Store.Abstraction;
+using WincheDatabase.Store.Constants;
+using WincheDatabase.Store.Models;
 
 namespace WincheDatabase.Store.Services;
 
 public sealed class SchemaManager(
-    NpgsqlDataSource source, 
+    [FromKeyedServices(ServiceKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source,
     IOptions<StoreOptions> options
-)
+) : ISchemaManager
 {
     private readonly string _table = options.Value.TableName;
     private readonly string _schema = options.Value.Schema;

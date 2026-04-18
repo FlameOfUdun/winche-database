@@ -1,13 +1,13 @@
 using WincheDatabase.Store.Abstraction;
 using WincheDatabase.Store.Models;
+using WincheDatabase.WS.Abstraction;
 using WincheDatabase.WS.Messages;
-using WincheDatabase.WS.Stores;
 
 namespace WincheDatabase.WS.Services;
 
-internal sealed class EventDispatcher(
-    SubscriptionConnectionMap subscriptionConnectionMap,
-    ConnectionRegistry connectionRegistry
+public sealed class EventDispatcher(
+    ISubscriptionConnectionMap subscriptionConnectionMap,
+    IConnectionRegistry connectionRegistry
 ) : ISubscriptionEventHandler
 {
     public async Task HandleAsync(List<SubscriptionEvent> events, CancellationToken ct)

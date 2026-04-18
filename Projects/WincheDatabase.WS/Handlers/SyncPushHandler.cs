@@ -1,10 +1,12 @@
+using WincheDatabase.Store.Abstraction;
 using WincheDatabase.Store.Models;
-using WincheDatabase.Store.Services;
 using WincheDatabase.WS.Messages;
 
 namespace WincheDatabase.WS.Handlers;
 
-internal sealed class SyncPushHandler(DocumentManager documentManager) : IMessageHandler<SyncPushRequest>
+internal sealed class SyncPushHandler(
+    IDocumentManager documentManager
+) : IMessageHandler<SyncPushRequest>
 {
     public async Task<ServerMessage> HandleAsync(string connectionId, SyncPushRequest request, CancellationToken ct)
     {

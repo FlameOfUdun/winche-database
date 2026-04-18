@@ -1,33 +1,28 @@
-using Microsoft.AspNetCore.Http.Json;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using System.Net.WebSockets;
-using WincheDatabase.Store.Services;
-using WincheDatabase.Store.Stores;
+using WincheDatabase.Store.Abstraction;
+using WincheDatabase.WS.Abstraction;
 using WincheDatabase.WS.Operands;
-using WincheDatabase.WS.Stores;
 
 namespace WincheDatabase.WS.Services;
 
 public sealed class ConnectionManager(
-    MessageRouter messageRouter,
-    ConnectionRegistry connectionRegistry,
-    ConnectionClaimsStore connectionClaimsStore,
-    SubscriptionConnectionMap subscriptionConnectionMap,
-    TransactionConnectionMap transactionConnectionMap,
-    SubscriptionManager subscriptionManager,
-    TransactionRegistry transactionRegistry,
-    IOptions<JsonOptions> jsonOptions,
+    IMessageRouter messageRouter,
+    IConnectionRegistry connectionRegistry,
+    IConnectionClaimsStore connectionClaimsStore,
+    ISubscriptionConnectionMap subscriptionConnectionMap,
+    ITransactionConnectionMap transactionConnectionMap,
+    ISubscriptionManager subscriptionManager,
+    ITransactionRegistry transactionRegistry,
     ILogger<ConnectionManager> logger
-)
+) : IConnectionManager
 {
     public async Task AcceptAsync(WebSocket socket, IReadOnlyDictionary<string, object?> claims)
     {
         var connectionId = Guid.NewGuid().ToString();
-        var connection = new WebSocketConnection(socket, jsonOptions.Value.SerializerOptions);
+        var connection = new WebSocketConnection(socket);
 
         connectionClaimsStore.SetClaims(connectionId, claims);
-
         connectionRegistry.Add(connectionId, connection);
 
         try

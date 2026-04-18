@@ -1,14 +1,12 @@
-using WincheDatabase.Store.Services;
-using WincheDatabase.Store.Stores;
+using WincheDatabase.Store.Abstraction;
+using WincheDatabase.WS.Abstraction;
 using WincheDatabase.WS.Messages;
-using WincheDatabase.WS.Stores;
 
 namespace WincheDatabase.WS.Handlers;
 
-
 public sealed class TransactionBeginHandler(
-    TransactionManager transactionManager,
-    TransactionConnectionMap transactionConnectionMap
+    ITransactionManager transactionManager,
+    ITransactionConnectionMap transactionConnectionMap
 ) : IMessageHandler<TransactionBeginRequest>
 {
     public async Task<ServerMessage> HandleAsync(string connectionId, TransactionBeginRequest request, CancellationToken ct)
@@ -25,14 +23,14 @@ public sealed class TransactionBeginHandler(
 }
 
 public sealed class TransactionGetHandler(
-    TransactionManager transactionManager,
-    TransactionConnectionMap transactionConnectionMap
+    ITransactionRegistry transactionRegistry,
+    ITransactionConnectionMap transactionConnectionMap
 ) : IMessageHandler<TransactionGetRequest>
 {
     public async Task<ServerMessage> HandleAsync(string connectionId, TransactionGetRequest request, CancellationToken ct)
     {
         if (!transactionConnectionMap.TryGetOwner(request.TransactionId, out var owner) || owner != connectionId ||
-            !transactionManager.TryGet(request.TransactionId, out var transaction) || transaction == null)
+            !transactionRegistry.TryGet(request.TransactionId, out var transaction) || transaction == null)
         {
             return new SystemErrorResponse
             {
@@ -54,14 +52,14 @@ public sealed class TransactionGetHandler(
 }
 
 public sealed class TransactionSetHandler(
-    TransactionManager transactionManager,
-    TransactionConnectionMap transactionConnectionMap
+    ITransactionRegistry transactionRegistry,
+    ITransactionConnectionMap transactionConnectionMap
 ) : IMessageHandler<TransactionSetRequest>
 {
     public async Task<ServerMessage> HandleAsync(string connectionId, TransactionSetRequest request, CancellationToken ct)
     {
         if (!transactionConnectionMap.TryGetOwner(request.TransactionId, out var owner) || owner != connectionId ||
-            !transactionManager.TryGet(request.TransactionId, out var transaction) || transaction == null)
+            !transactionRegistry.TryGet(request.TransactionId, out var transaction) || transaction == null)
         {
             return new SystemErrorResponse
             {
@@ -83,14 +81,14 @@ public sealed class TransactionSetHandler(
 }
 
 public sealed class TransactionUpdateHandler(
-    TransactionManager transactionManager,
-    TransactionConnectionMap transactionConnectionMap
+    ITransactionRegistry transactionRegistry,
+    ITransactionConnectionMap transactionConnectionMap
 ) : IMessageHandler<TransactionUpdateRequest>
 {
     public async Task<ServerMessage> HandleAsync(string connectionId, TransactionUpdateRequest request, CancellationToken ct)
     {
         if (!transactionConnectionMap.TryGetOwner(request.TransactionId, out var owner) || owner != connectionId ||
-            !transactionManager.TryGet(request.TransactionId, out var transaction) || transaction == null)
+            !transactionRegistry.TryGet(request.TransactionId, out var transaction) || transaction == null)
         {
             return new SystemErrorResponse
             {
@@ -112,14 +110,14 @@ public sealed class TransactionUpdateHandler(
 }
 
 public sealed class TransactionDeleteHandler(
-    TransactionManager transactionManager,
-    TransactionConnectionMap transactionConnectionMap
+    ITransactionRegistry transactionRegistry,
+    ITransactionConnectionMap transactionConnectionMap
 ) : IMessageHandler<TransactionDeleteRequest>
 {
     public async Task<ServerMessage> HandleAsync(string connectionId, TransactionDeleteRequest request, CancellationToken ct)
     {
         if (!transactionConnectionMap.TryGetOwner(request.TransactionId, out var owner) || owner != connectionId ||
-            !transactionManager.TryGet(request.TransactionId, out var transaction) || transaction == null)
+            !transactionRegistry.TryGet(request.TransactionId, out var transaction) || transaction == null)
         {
             return new SystemErrorResponse
             {
@@ -140,14 +138,14 @@ public sealed class TransactionDeleteHandler(
 }
 
 public sealed class TransactionQueryHandler(
-    TransactionManager transactionManager,
-    TransactionConnectionMap transactionConnectionMap
+    ITransactionRegistry transactionRegistry,
+    ITransactionConnectionMap transactionConnectionMap
 ) : IMessageHandler<TransactionQueryRequest>
 {
     public async Task<ServerMessage> HandleAsync(string connectionId, TransactionQueryRequest request, CancellationToken ct)
     {
         if (!transactionConnectionMap.TryGetOwner(request.TransactionId, out var owner) || owner != connectionId ||
-            !transactionManager.TryGet(request.TransactionId, out var transaction) || transaction == null)
+            !transactionRegistry.TryGet(request.TransactionId, out var transaction) || transaction == null)
         {
             return new SystemErrorResponse
             {
@@ -169,15 +167,14 @@ public sealed class TransactionQueryHandler(
 }
 
 public sealed class TransactionCommitHandler(
-    TransactionManager transactionManager,
-    TransactionConnectionMap transactionConnectionMap,
-    TransactionRegistry transactionRegistry
+    ITransactionConnectionMap transactionConnectionMap,
+    ITransactionRegistry transactionRegistry
 ) : IMessageHandler<TransactionCommitRequest>
 {
     public async Task<ServerMessage> HandleAsync(string connectionId, TransactionCommitRequest request, CancellationToken ct)
     {
         if (!transactionConnectionMap.TryGetOwner(request.TransactionId, out var owner) || owner != connectionId ||
-            !transactionManager.TryGet(request.TransactionId, out var transaction) || transaction == null)
+            !transactionRegistry.TryGet(request.TransactionId, out var transaction) || transaction == null)
         {
             return new SystemErrorResponse
             {
@@ -203,15 +200,14 @@ public sealed class TransactionCommitHandler(
 }
 
 public sealed class TransactionRollbackHandler(
-    TransactionManager transactionManager,
-    TransactionConnectionMap transactionConnectionMap,
-    TransactionRegistry transactionRegistry
+    ITransactionConnectionMap transactionConnectionMap,
+    ITransactionRegistry transactionRegistry
 ) : IMessageHandler<TransactionRollbackRequest>
 {
     public async Task<ServerMessage> HandleAsync(string connectionId, TransactionRollbackRequest request, CancellationToken ct)
     {
         if (!transactionConnectionMap.TryGetOwner(request.TransactionId, out var owner) || owner != connectionId ||
-            !transactionManager.TryGet(request.TransactionId, out var transaction) || transaction == null)
+            !transactionRegistry.TryGet(request.TransactionId, out var transaction) || transaction == null)
         {
             return new SystemErrorResponse
             {

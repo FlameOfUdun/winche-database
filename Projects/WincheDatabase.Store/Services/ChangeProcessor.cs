@@ -1,19 +1,18 @@
-using System.Collections.Immutable;
-using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
+using System.Collections.Immutable;
 using WincheDatabase.Core.Models;
+using WincheDatabase.Store.Abstraction;
 using WincheDatabase.Store.Infrastructure;
 using WincheDatabase.Store.Models;
-using WincheDatabase.Store.Stores;
 
 namespace WincheDatabase.Store.Services;
 
 public sealed class ChangeProcessor(
-    SubscriptionRegistry store,
-    DocumentManager manager,
-    ChannelWriter<List<SubscriptionEvent>> eventWriter,
+    ISubscriptionRegistry store,
+    IDocumentManager manager,
+    IEventChannel channel,
     ILogger<ChangeProcessor> logger
-)
+) : IChangeProcessor
 {
     private const int MaxParallelism = 4;
 
@@ -68,14 +67,13 @@ public sealed class ChangeProcessor(
                 continue;
             }
 
-            // Fan out events to all subscriptions in the group
             var subscriptionIds = store.GetSubscriptionIds(group.Key).ToList();
             foreach (var subId in subscriptionIds)
             {
                 var events = BuildEvents(subId, change, oldIds, newIds, result.Documents);
                 if (events.Count > 0)
                 {
-                    await eventWriter.WriteAsync(events, ct);
+                    await channel.WriteAsync(events, ct);
                 }
             }
 

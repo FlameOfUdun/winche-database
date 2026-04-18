@@ -1,14 +1,14 @@
 using WincheDatabase.AST.Models;
+using WincheDatabase.Store.Abstraction;
 using WincheDatabase.Store.Infrastructure;
 using WincheDatabase.Store.Models;
-using WincheDatabase.Store.Stores;
 
 namespace WincheDatabase.Store.Services;
 
 public sealed class SubscriptionManager(
-    SubscriptionRegistry registry,
-    DocumentManager manager
-)
+    ISubscriptionRegistry registry,
+    IDocumentManager manager
+) : ISubscriptionManager
 {
     public async Task<QuerySubscription> SubscribeAsync(Query query, CancellationToken ct = default)
     {

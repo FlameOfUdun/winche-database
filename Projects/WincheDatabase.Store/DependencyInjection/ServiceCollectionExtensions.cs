@@ -1,48 +1,38 @@
 ﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using System.Threading.Channels;
-using WincheDatabase.Store;
+using WincheDatabase.Core.Models;
 using WincheDatabase.Store.BackgroundServices;
 using WincheDatabase.Store.Models;
+using WincheDatabase.Store.Abstraction;
+using WincheSentinel.Core.DependencyInjection;
 using WincheDatabase.Store.Services;
-using WincheDatabase.Store.Stores;
+using WincheDatabase.Store.Constants;
 
 namespace WincheDatabase.Store.DependencyInjection;
 
 public static class ServiceCollectionExtensions
 {
-    public static IServiceCollection AddWincheDatabaseDocumentStore(this IServiceCollection services, string connectionString, IConfiguration configuration, Action<List<AccessRule>>? configureRules = null)
+    public static IServiceCollection AddWincheDatabaseDocumentStore(this IServiceCollection services, string connectionString, IConfiguration configuration, Action<DependencyConfigurator>? configure = null)
     {
-        var section = configuration.GetSection("WincheDatabase");
+        services.Configure<StoreOptions>(configuration.GetSection(ServiceKeys.CONFIG_SECTION_KEY));
 
-        services.Configure<StoreOptions>(section);
+        services.AddWincheSentinel<Document>()
+            .AddResourceObjectAccessor<DocumentObjectAccessor>()
+            .AddCallerContextAccessor<CallerContextAccessor>();
 
-        services.PostConfigure<StoreOptions>(options =>
-        {
-            options.AccessRules = [];
-            configureRules?.Invoke(options.AccessRules);
-        });
+        configure?.Invoke(new DependencyConfigurator(services));
 
-        services.AddNpgsqlDataSource(connectionString);
+        services.AddNpgsqlDataSource(connectionString, serviceKey: ServiceKeys.DATA_SOURCE_KEY);
 
-        var channel = Channel.CreateBounded<List<SubscriptionEvent>>(new BoundedChannelOptions(256)
-        {
-            FullMode = BoundedChannelFullMode.Wait,
-            SingleReader = true,
-            SingleWriter = false,
-        });
-        services.AddSingleton(channel.Reader);
-        services.AddSingleton(channel.Writer);
-
-        services.AddSingleton<SubscriptionRegistry>();
-        services.AddSingleton<TransactionRegistry>();
-
-        services.AddSingleton<DocumentManager>();
-        services.AddSingleton<SchemaManager>();
-        services.AddSingleton<ChangeProcessor>();
-        services.AddSingleton<SubscriptionManager>();
-        services.AddSingleton<TransactionManager>();
-        services.AddSingleton<AccessRuleEvaluator>();
+        services.AddSingleton<CallerContextAccessor>();
+        services.AddSingleton<IEventChannel, EventChannel>();
+        services.AddSingleton<ISubscriptionRegistry, SubscriptionRegistry>();
+        services.AddSingleton<ITransactionRegistry, TransactionRegistry>();
+        services.AddSingleton<IDocumentManager, DocumentManager>();
+        services.AddSingleton<ISchemaManager, SchemaManager>();
+        services.AddSingleton<IChangeProcessor, ChangeProcessor>();
+        services.AddSingleton<ISubscriptionManager, SubscriptionManager>();
+        services.AddSingleton<ITransactionManager, TransactionManager>();
 
         services.AddHostedService<ChangeNotifier>();
         services.AddHostedService<TransactionInvalidator>();

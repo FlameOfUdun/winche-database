@@ -1,9 +1,10 @@
 using System.Collections.Concurrent;
 using WincheDatabase.Core.Infrastructure;
+using WincheDatabase.WS.Abstraction;
 
-namespace WincheDatabase.WS.Stores;
+namespace WincheDatabase.WS.Services;
 
-public sealed class TransactionConnectionMap
+public sealed class TransactionConnectionMap : ITransactionConnectionMap
 {
     private readonly ConcurrentDictionary<string, string> _ownerByTransaction = new(StringComparer.Ordinal);
     private readonly SecondaryIndexMap<string> _transactionsByConnection = new(StringComparer.Ordinal);

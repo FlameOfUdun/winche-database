@@ -1,9 +1,11 @@
-using WincheDatabase.Store.Services;
+using WincheDatabase.Store.Abstraction;
 using WincheDatabase.WS.Messages;
 
 namespace WincheDatabase.WS.Handlers;
 
-internal sealed class DocumentGetHandler(DocumentManager documentManager) : IMessageHandler<DocumentGetRequest>
+internal sealed class DocumentGetHandler(
+    IDocumentManager documentManager
+) : IMessageHandler<DocumentGetRequest>
 {
     public async Task<ServerMessage> HandleAsync(string connectionId, DocumentGetRequest request, CancellationToken ct)
     {
@@ -17,7 +19,9 @@ internal sealed class DocumentGetHandler(DocumentManager documentManager) : IMes
     }
 }
 
-internal sealed class DocumentSetHandler(DocumentManager documentManager) : IMessageHandler<DocumentSetRequest>
+internal sealed class DocumentSetHandler(
+    IDocumentManager documentManager
+) : IMessageHandler<DocumentSetRequest>
 {
     public async Task<ServerMessage> HandleAsync(string connectionId, DocumentSetRequest request, CancellationToken ct)
     {
@@ -31,7 +35,9 @@ internal sealed class DocumentSetHandler(DocumentManager documentManager) : IMes
     }
 }
 
-internal sealed class DocumentUpdateHandler(DocumentManager documentManager) : IMessageHandler<DocumentUpdateRequest>
+internal sealed class DocumentUpdateHandler(
+    IDocumentManager documentManager
+) : IMessageHandler<DocumentUpdateRequest>
 {
     public async Task<ServerMessage> HandleAsync(string connectionId, DocumentUpdateRequest request, CancellationToken ct)
     {
@@ -45,7 +51,9 @@ internal sealed class DocumentUpdateHandler(DocumentManager documentManager) : I
     }
 }
 
-internal sealed class DocumentDeleteHandler(DocumentManager documentManager) : IMessageHandler<DocumentDeleteRequest>
+internal sealed class DocumentDeleteHandler(
+    IDocumentManager documentManager
+) : IMessageHandler<DocumentDeleteRequest>
 {
     public async Task<ServerMessage> HandleAsync(string connectionId, DocumentDeleteRequest request, CancellationToken ct)
     {

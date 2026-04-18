@@ -1,18 +1,16 @@
-using Microsoft.AspNetCore.Http.Json;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using System.Text.Json;
 using WincheDatabase.WS.Messages;
 using WincheDatabase.WS.Handlers;
+using WincheSentinel.Core.Models;
+using WincheDatabase.WS.Abstraction;
 using WincheDatabase.WS.Operands;
-using WincheDatabase.WS.Stores;
-using WincheDatabase.Store.Models;
+using WincheDatabase.Store.Services;
 
 namespace WincheDatabase.WS.Services;
 
 public sealed class MessageRouter(
-    IOptions<JsonOptions> jsonOptions,
-    ConnectionClaimsStore connectionClaimsStore,
+    IConnectionClaimsStore connectionClaimsStore,
     IMessageHandler<SystemPingRequest> systemPingHandler,
     IMessageHandler<DocumentGetRequest> documentGetHandler,
     IMessageHandler<DocumentSetRequest> documentSetHandler,
@@ -31,17 +29,19 @@ public sealed class MessageRouter(
     IMessageHandler<BatchCommitRequest> batchCommitHandler,
     IMessageHandler<SyncPushRequest> syncPushHandler,
     IMessageHandler<AggregateExecuteRequest> aggregateExecuteHandler,
-    ILogger<MessageRouter> logger
-)
+    ILogger<MessageRouter> logger,
+    CallerContextAccessor callerContextAccessor
+) : IMessageRouter
 {
     public async Task HandleMessageAsync(string connectionId, WebSocketConnection connection, JsonDocument document, CancellationToken ct)
     {
-        CallerContext.SetClaims(connectionClaimsStore.GetClaims(connectionId));
+        var claims = connectionClaimsStore.GetClaims(connectionId);
+        callerContextAccessor.SetClaims(claims);
 
         ClientMessage? message;
         try
         {
-            message = JsonSerializer.Deserialize<ClientMessage>(document.RootElement, jsonOptions.Value.SerializerOptions);
+            message = JsonSerializer.Deserialize<ClientMessage>(document.RootElement);
             if (message == null)
             {
                 logger.LogWarning("Received invalid request");
@@ -101,7 +101,16 @@ public sealed class MessageRouter(
             {
                 RequestId = message.Id,
                 Code = "permission_denied",
-                Message = "Access denied"
+                Message = "Access denied to path"
+            }, ct);
+        }
+        catch (NoRulesMatchedException)
+        {
+            await connection.SendAsync(new SystemErrorResponse
+            {
+                RequestId = message.Id,
+                Code = "permission_denied",
+                Message = "No rule matched the path"
             }, ct);
         }
         catch (Exception ex)

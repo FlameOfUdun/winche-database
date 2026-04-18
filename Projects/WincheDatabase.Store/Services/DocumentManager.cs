@@ -1,45 +1,53 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using System.Text.Json.Nodes;
 using WincheDatabase.AST.Models;
 using WincheDatabase.Core.Models;
-using WincheDatabase.Store.Operations;
+using WincheDatabase.Store.Abstraction;
+using WincheDatabase.Store.Constants;
 using WincheDatabase.Store.Models;
+using WincheDatabase.Store.Operations;
+using WincheSentinel.Core.Abstraction;
+using WincheSentinel.Core.Models;
 
 namespace WincheDatabase.Store.Services;
 
-public sealed class DocumentManager(NpgsqlDataSource source, IOptions<StoreOptions> options, AccessRuleEvaluator evaluator)
+public sealed class DocumentManager(
+    [FromKeyedServices(ServiceKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source, 
+    IOptions<StoreOptions> options, 
+    IAccessRuleEvaluator<Document> evaluator
+) : IDocumentManager
 {
     private readonly string _table = options.Value.TableName;
 
     public async Task<Document?> GetAsync(string path, CancellationToken ct = default)
     {
-        var document = await GetUnprotectedAsync(path, ct);
-        await AuthorizeAsync(AccessOperation.Read, path: path, getExisting: _ => Task.FromResult(document), ct: ct);
-        return document;
+        await evaluator.EvaluateAsync(AccessOperation.Read, path: path, null, ct);
+        return await GetUnprotectedAsync(path, ct); ;
     }
 
     public async Task<Document> SetAsync(string path, JsonObject data, CancellationToken ct = default)
     {
-        await AuthorizeAsync(AccessOperation.Write, path: path, incomingData: data, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
+        await evaluator.EvaluateAsync(AccessOperation.Write, path: path, data, ct);
         return await SetUnprotectedAsync(path, data, ct);
     }
 
     public async Task<Document?> UpdateAsync(string path, JsonObject patch, CancellationToken ct = default)
     {
-        await AuthorizeAsync(AccessOperation.Write, path: path, incomingData: patch, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
+        await evaluator.EvaluateAsync(AccessOperation.Write, path, patch, ct);
         return await UpdateUnprotectedAsync(path, patch, ct);
     }
 
     public async Task<bool> DeleteAsync(string path, CancellationToken ct = default)
     {
-        await AuthorizeAsync(AccessOperation.Delete, path: path, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
+        await evaluator.EvaluateAsync(AccessOperation.Delete, path: path, null, ct);
         return await DeleteUnprotectedAsync(path, ct);
     }
 
     public async Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default)
     {
-        await AuthorizeAsync(AccessOperation.Read, query.Collection, ct: ct);
+        await evaluator.EvaluateAsync(AccessOperation.Read, query.Collection, null, ct);
         return await QueryUnprotectedAsync(query, ct);
     }
 
@@ -49,12 +57,12 @@ public sealed class DocumentManager(NpgsqlDataSource source, IOptions<StoreOptio
         { 
             if (stage is MatchStage matchStage)
             {
-                await AuthorizeAsync(AccessOperation.Read, matchStage.Collection, ct: ct);
+                await evaluator.EvaluateAsync(AccessOperation.Read, matchStage.Collection, null, ct);
                 continue;
             }
             if (stage is LookupStage lookupStage)
             {
-                await AuthorizeAsync(AccessOperation.Read, lookupStage.Collection, ct: ct);
+                await evaluator.EvaluateAsync(AccessOperation.Read, lookupStage.Collection, null, ct);
                 continue;
             }
         }
@@ -68,13 +76,13 @@ public sealed class DocumentManager(NpgsqlDataSource source, IOptions<StoreOptio
             switch (operation.Type)
             {
                 case BatchOperationType.Set:
-                    await AuthorizeAsync(AccessOperation.Write, operation.Path, operation.Data, p => GetUnprotectedAsync(p, ct), ct);
+                    await evaluator.EvaluateAsync(AccessOperation.Write, operation.Path, operation.Data, ct);
                     break;
                 case BatchOperationType.Update:
-                    await AuthorizeAsync(AccessOperation.Write, operation.Path, operation.Data, p => GetUnprotectedAsync(p, ct), ct);
+                    await evaluator.EvaluateAsync(AccessOperation.Write, operation.Path, operation.Data, ct);
                     break;
                 case BatchOperationType.Delete:
-                    await AuthorizeAsync(AccessOperation.Delete, operation.Path, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct);
+                    await evaluator.EvaluateAsync(AccessOperation.Delete, operation.Path, null, ct);
                     break;
             }
         }
@@ -89,15 +97,15 @@ public sealed class DocumentManager(NpgsqlDataSource source, IOptions<StoreOptio
             switch (mutation.Type)
             {
                 case MutationType.Set:
-                    await AuthorizeAsync(AccessOperation.Write, batch.Path, mutation.Data, p => GetUnprotectedAsync(p, ct), ct);
+                    await evaluator.EvaluateAsync(AccessOperation.Write, batch.Path, mutation.Data, ct);
                     break;
 
                 case MutationType.Update:
-                    await AuthorizeAsync(AccessOperation.Write, batch.Path, mutation.Data, p => GetUnprotectedAsync(p, ct), ct);
+                    await evaluator.EvaluateAsync(AccessOperation.Write, batch.Path, mutation.Data, ct);
                     break;
 
                 case MutationType.Delete:
-                    await AuthorizeAsync(AccessOperation.Delete, batch.Path, getExisting: p => GetUnprotectedAsync(p, ct), ct: ct); 
+                    await evaluator.EvaluateAsync(AccessOperation.Delete, batch.Path, null, ct); 
                     break;
             }
         }
@@ -278,9 +286,4 @@ public sealed class DocumentManager(NpgsqlDataSource source, IOptions<StoreOptio
     }
 
     #endregion
-
-    private async Task AuthorizeAsync(AccessOperation operation, string path, JsonObject? incomingData = null, Func<string, Task<Document?>>? getExisting = null, CancellationToken ct = default)
-    {
-        await evaluator.EvaluateAsync(operation, path, incomingData, getExisting, ct);
-    }
 }

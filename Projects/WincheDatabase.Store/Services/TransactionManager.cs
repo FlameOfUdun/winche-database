@@ -1,17 +1,21 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Npgsql;
-using WincheDatabase.Store;
+using WincheDatabase.Core.Models;
+using WincheDatabase.Store.Abstraction;
+using WincheDatabase.Store.Constants;
+using WincheDatabase.Store.Models;
 using WincheDatabase.Store.Operands;
-using WincheDatabase.Store.Stores;
+using WincheSentinel.Core.Abstraction;
 
 namespace WincheDatabase.Store.Services;
 
 public sealed class TransactionManager(
     IOptions<StoreOptions> options,
-    AccessRuleEvaluator evaluator,
-    NpgsqlDataSource source,
-    TransactionRegistry registry
-)
+    IAccessRuleEvaluator<Document> evaluator,
+    [FromKeyedServices(ServiceKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source,
+    ITransactionRegistry registry
+) : ITransactionManager
 {
     public async Task<Transaction> BeginAsync(CancellationToken ct = default)
     {
@@ -25,10 +29,5 @@ public sealed class TransactionManager(
             throw new InvalidOperationException("Failed to register the transaction.");
         }
         return tx;
-    }
-
-    public bool TryGet(string id, out Transaction? tx)
-    {
-        return registry.TryGet(id, out tx);
     }
 }
