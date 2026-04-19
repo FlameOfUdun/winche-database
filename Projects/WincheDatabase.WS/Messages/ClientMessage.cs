@@ -2,11 +2,9 @@ using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using WincheDatabase.AST.Models;
-using WincheDatabase.AST.Serialization.Converters;
 using WincheDatabase.Store.Models;
 
 namespace WincheDatabase.WS.Messages;
-
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
 [JsonDerivedType(typeof(SystemPingRequest), "system:ping")]
@@ -183,6 +181,5 @@ public record AggregateExecuteRequest : ClientMessage
 {
     [Required]
     [JsonPropertyName("pipeline")]
-    [JsonConverter(typeof(PipelineStageListConverter))]
     public AggregationPipeline Pipeline { get; init; } = null!;
 }

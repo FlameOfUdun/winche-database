@@ -59,7 +59,7 @@ public sealed class MessageRouter(
             await connection.SendAsync(new SystemErrorResponse
             {
                 RequestId = document.RootElement.TryGetProperty("id", out var idProp) && idProp.ValueKind == JsonValueKind.String ? idProp.GetString()! : "",
-                Message = "Invalid message format"
+                Message = ex.Message,
             }, ct);
             return;
         }

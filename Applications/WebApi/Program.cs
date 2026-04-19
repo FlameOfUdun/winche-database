@@ -13,11 +13,16 @@ var connString = builder.Configuration.GetConnectionString("DefaultConnection")
 
 builder.Services.AddWincheDatabaseDocumentStore(connString, builder.Configuration, (config) =>
 {
-    //config.AddDocumentAccessRule(new DocumentAccessRule(
-    //    path: "patients",
-    //    operations: [AccessOperation.Read],
-    //    evaluate: async (context, ct) => true
-    //));
+    config.AddDocumentAccessRule(new DocumentAccessRule(
+        path: "patients",
+        operations: [AccessOperation.Read],
+        evaluate: async (context, ct) => true
+    ));
+    config.AddDocumentAccessRule(new DocumentAccessRule(
+        path: "products/**",
+        operations: [AccessOperation.Read],
+        evaluate: async (context, ct) => true
+    ));
 });
 builder.Services.AddWincheDatabaseRestApi((config) =>
 {

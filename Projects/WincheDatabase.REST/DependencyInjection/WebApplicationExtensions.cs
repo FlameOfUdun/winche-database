@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
 using System.Text;
 using System.Text.Json.Nodes;
 using WincheDatabase.AST.Models;
@@ -17,9 +18,11 @@ namespace WincheDatabase.REST.DependencyInjection
             return Encoding.UTF8.GetString(bytes);
         }
 
-        public static WebApplication UseWincheDatabaseRestApi(this WebApplication app, string prefix = "documents")
+        public static WebApplication UseWincheDatabaseRestApi(this WebApplication app, string prefix = "documents", Action<RouteGroupBuilder>? configure = null)
         {
             var group = app.MapGroup(prefix);
+
+            configure?.Invoke(group);
 
             group.AddEndpointFilter<CallerAccessor>();
             group.AddEndpointFilter<ExceptionHandler>();
