@@ -5,7 +5,7 @@ namespace WincheDatabase.SQL.QuerySqlBuilders;
 
 internal class OrderBySqlBuilder
 {
-    internal static string Build(List<SortNode> fields, string alias = "d")
+    internal static string Build(List<SortNode> fields, string? alias = "d", bool forIndex = false)
     {
         var resolved = EnsureTiebreaker(fields);
 
@@ -17,8 +17,10 @@ internal class OrderBySqlBuilder
                 ? FieldType.Numeric
                 : FieldType.Text);
 
-            var expr = FieldExpressionBuilder.CastExpression(
-                FieldResolver.Resolve(sf.Field, castType, alias));
+            var resolvedField = FieldResolver.Resolve(sf.Field, castType, alias);
+            var expr = forIndex
+                ? FieldExpressionBuilder.IndexExpression(resolvedField)
+                : FieldExpressionBuilder.CastExpression(resolvedField);
 
             return $"{expr} {dir}";
         });
@@ -28,24 +30,17 @@ internal class OrderBySqlBuilder
 
     private static List<SortNode> EnsureTiebreaker(List<SortNode> fields)
     {
-        var hasId = fields.Any(f => string.Equals(f.Field, "id", StringComparison.OrdinalIgnoreCase));
-        if (!hasId)
-        {
-            fields.Add(new SortNode("id", SortDirection.Desc));
-        }
+        var copy = new List<SortNode>(fields);
 
-        var hasCreatedAt = fields.Any(f => string.Equals(f.Field, "created_at", StringComparison.OrdinalIgnoreCase));
-        if (!hasCreatedAt) 
-        { 
-            fields.Add(new SortNode("created_at", SortDirection.Desc, FieldType.Timestamp));
-        }
+        if (!copy.Any(f => string.Equals(f.Field, "id", StringComparison.OrdinalIgnoreCase)))
+            copy.Add(new SortNode("id", SortDirection.Desc));
 
-        var hasUpdatedAt = fields.Any(f => string.Equals(f.Field, "updated_at", StringComparison.OrdinalIgnoreCase));
-        if (!hasUpdatedAt) 
-        { 
-            fields.Add(new SortNode("updated_at", SortDirection.Desc, FieldType.Timestamp));
-        }
+        if (!copy.Any(f => string.Equals(f.Field, "created_at", StringComparison.OrdinalIgnoreCase)))
+            copy.Add(new SortNode("created_at", SortDirection.Desc, FieldType.Timestamp));
 
-        return fields;
+        if (!copy.Any(f => string.Equals(f.Field, "updated_at", StringComparison.OrdinalIgnoreCase)))
+            copy.Add(new SortNode("updated_at", SortDirection.Desc, FieldType.Timestamp));
+
+        return copy;
     }
 }

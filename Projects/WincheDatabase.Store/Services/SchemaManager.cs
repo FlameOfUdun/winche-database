@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Npgsql;
+using WincheDatabase.AST.Models;
 using WincheDatabase.SQL;
 using WincheDatabase.Store.Abstraction;
 using WincheDatabase.Store.Constants;
@@ -10,11 +11,13 @@ namespace WincheDatabase.Store.Services;
 
 public sealed class SchemaManager(
     [FromKeyedServices(ServiceKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source,
-    IOptions<StoreOptions> options
+    IOptions<StoreOptions> options,
+    IEnumerable<IndexDefinition> indexes
 ) : ISchemaManager
 {
     private readonly string _table = options.Value.TableName;
     private readonly string _schema = options.Value.Schema;
+    private readonly IEnumerable<IndexDefinition> _indexes = indexes;
 
     public async Task EnsureCreatedAsync(CancellationToken ct = default)
     {
@@ -25,12 +28,15 @@ public sealed class SchemaManager(
     }
 
 
-    public async Task SyncIndexesAsync(IEnumerable<IndexDefinition> indexes, CancellationToken ct = default)
+    public async Task SyncIndexesAsync(CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
 
-        foreach (var index in indexes)
+        foreach (var index in _indexes)
         {
+            if (index.Fields.Count == 0)
+                throw new InvalidOperationException("Index must have at least one field.");
+
             await using var cmd = conn.CreateCommand();
             IndexSqlBuilder.BuildCreate(index, _schema, _table).Apply(cmd);
             await cmd.ExecuteNonQueryAsync(ct);

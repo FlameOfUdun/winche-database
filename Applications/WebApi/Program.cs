@@ -1,9 +1,7 @@
+using WincheDatabase.AST.Models;
 using WincheDatabase.REST.DependencyInjection;
-using WincheDatabase.REST.Services;
 using WincheDatabase.Store.DependencyInjection;
-using WincheDatabase.Store.Models;
 using WincheDatabase.WS.DependencyInjection;
-using WincheDatabase.WS.Services;
 using WincheSentinel.Core.Models;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -13,20 +11,24 @@ var connString = builder.Configuration.GetConnectionString("DefaultConnection")
 
 builder.Services.AddWincheDatabaseDocumentStore(connString, builder.Configuration, (config) =>
 {
-    config.AddDocumentAccessRule(new DocumentAccessRule(
+    config.AddDocumentAccessRule(new(
         path: "patients",
         operations: [AccessOperation.Read],
         evaluate: async (context, ct) => true
     ));
-    config.AddDocumentAccessRule(new DocumentAccessRule(
+    config.AddDocumentAccessRule(new(
         path: "products/**",
         operations: [AccessOperation.Read],
         evaluate: async (context, ct) => true
     ));
+    config.AddIndexDefinition(new(
+        collection: "products", 
+        fields: [new("price", SortDirection.Desc, FieldType.Numeric)]
+    ));
 });
 builder.Services.AddWincheDatabaseRestApi((config) =>
 {
-    config.AddClaimsMapper(new RestClaimsMapper((context) => 
+    config.AddClaimsMapper(new ((context) => 
     {
         return new Dictionary<string, object?>
         {
@@ -36,7 +38,7 @@ builder.Services.AddWincheDatabaseRestApi((config) =>
 });
 builder.Services.AddWincheDatabaseWsApi((config) =>
 {
-    config.AddClaimsMapper(new WsClaimsMapper((context) => 
+    config.AddClaimsMapper(new ((context) => 
     {
         return new Dictionary<string, object?>
         {

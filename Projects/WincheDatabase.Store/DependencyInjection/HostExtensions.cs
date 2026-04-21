@@ -11,6 +11,7 @@ namespace WincheDatabase.Store.DependencyInjection
             using var scope = host.Services.CreateScope();
             var service = scope.ServiceProvider.GetRequiredService<ISchemaManager>()!;
             service.EnsureCreatedAsync().GetAwaiter().GetResult();
+            service.SyncIndexesAsync().GetAwaiter().GetResult();
 
             return host;
         }

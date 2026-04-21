@@ -6,14 +6,6 @@ using WincheDatabase.SQL.Infrastructure;
 
 namespace WincheDatabase.SQL;
 
-public sealed class IndexDefinition
-{
-    public required string Collection { get; init; }
-    public required List<SortNode> Fields { get; init; }
-    public string? Name { get; init; }
-    public WhereNode? Where { get; init; }
-}
-
 public static class IndexSqlBuilder
 {
     public static SqlBuildResult BuildCreate(IndexDefinition index, string schema, string table)
@@ -24,7 +16,7 @@ public static class IndexSqlBuilder
         var name = index.Name ?? GenerateName(index);
         sb.Append($" {name} ON {schema}.{table} ");
 
-        var columns = OrderBySqlBuilder.Build(index.Fields);
+        var columns = OrderBySqlBuilder.Build(index.Fields, alias: null, forIndex: true);
         sb.Append($"({columns})");
 
         if (index.Where != null)

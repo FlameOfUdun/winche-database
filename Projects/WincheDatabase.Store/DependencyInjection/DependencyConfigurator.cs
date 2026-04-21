@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
+using WincheDatabase.AST.Models;
 using WincheDatabase.Core.Models;
 using WincheDatabase.Store.Models;
 using WincheSentinel.Core.DependencyInjection;
@@ -13,6 +14,12 @@ public sealed class DependencyConfigurator(IServiceCollection services)
         {
             configurator.AddAccessRule(rule);
         });
+        return this;
+    }
+
+    public DependencyConfigurator AddIndexDefinition(IndexDefinition definition)
+    {
+        services.AddSingleton(definition);
         return this;
     }
 }
