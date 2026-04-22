@@ -7,7 +7,7 @@
       "type": "process",
       "args": [
         "build",
-        "${workspaceFolder}/Applications/WebApi/WebApi.csproj",
+        "${workspaceFolder}/Applications/WebApi/WincheDatabase.Sample.csproj",
         "--configuration",
         "Debug"
       ],
