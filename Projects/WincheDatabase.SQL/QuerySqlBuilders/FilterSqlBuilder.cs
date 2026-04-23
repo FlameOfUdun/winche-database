@@ -32,23 +32,22 @@ internal class FilterSqlBuilder(string alias = "d", ParameterBag? bag = null)
 
         var field = FieldResolver.Resolve(fc.Field, _alias);
 
-        // For range operators on JSONB fields, default to numeric cast
-        // to avoid incorrect text comparison (e.g. "9" > "18" = true)
-        var comparisonField = fc.Operator is ConditionalOperator.Gt or ConditionalOperator.Gte or ConditionalOperator.Lt or ConditionalOperator.Lte
-            && field.IsJsonb && field.Cast is FieldType.Text
-                ? field.WithCast(FieldType.Numeric)
-                : field;
+        if (field.IsJsonb && fc.Type is null)
+            throw new InvalidOperationException(
+                $"Field '{fc.Field}' is a JSONB path. A 'type' must be specified in the FieldFilter.");
+
+        var typedField = fc.Type.HasValue ? field.WithCast(fc.Type.Value) : field;
 
         var expr = FieldExpressionBuilder.Expression(field);
-        var castExpr = FieldExpressionBuilder.CastExpression(comparisonField);
+        var castExpr = FieldExpressionBuilder.CastExpression(typedField);
         var accessor = FieldExpressionBuilder.Accessor(field);
 
         return fc.Operator switch
         {
             ConditionalOperator.Eq when fc.Value is null => $"{expr} IS NULL",
-            ConditionalOperator.Eq => $"{expr} = {_bag.Add(fc.Value)}",
+            ConditionalOperator.Eq => $"{castExpr} = {_bag.Add(fc.Value)}",
             ConditionalOperator.Ne when fc.Value is null => $"{expr} IS NOT NULL",
-            ConditionalOperator.Ne => $"({expr} IS NULL OR {expr} <> {_bag.Add(fc.Value)})",
+            ConditionalOperator.Ne => $"({expr} IS NULL OR {castExpr} <> {_bag.Add(fc.Value)})",
             ConditionalOperator.Gt => $"{castExpr} > {_bag.Add(fc.Value)}",
             ConditionalOperator.Gte => $"{castExpr} >= {_bag.Add(fc.Value)}",
             ConditionalOperator.Lt => $"{castExpr} < {_bag.Add(fc.Value)}",

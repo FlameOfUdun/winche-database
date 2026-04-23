@@ -23,13 +23,13 @@ internal sealed class CursorSqlBuilder(string alias, ParameterBag bag)
 
         for (var i = 0; i < level; i++)
         {
-            var expr = GetExpression(fields[i], values[i]);
+            var expr = GetExpression(fields[i]);
             parts.Add(values[i] is null
                 ? $"{expr} IS NULL"
                 : $"{expr} = {bag.Add(values[i])}");
         }
 
-        var currentExpr = GetExpression(fields[level], values[level]);
+        var currentExpr = GetExpression(fields[level]);
         var isLast = level == count - 1;
         var op = GetOperator(fields[level].Direction, boundary, isLast);
 
@@ -42,21 +42,14 @@ internal sealed class CursorSqlBuilder(string alias, ParameterBag bag)
             : $"({string.Join(" AND ", parts)})";
     }
 
-    private string GetExpression(SortNode sf, object? value)
+    private string GetExpression(SortNode sf)
     {
-        var castType = sf.Type ?? InferCastFromValue(value);
-        var field = FieldResolver.Resolve(sf.Field, castType, alias);
+        var field = sf.Type.HasValue
+            ? FieldResolver.Resolve(sf.Field, sf.Type.Value, alias)
+            : FieldResolver.Resolve(sf.Field, alias);
         return FieldExpressionBuilder.CastExpression(field);
     }
 
-    private static FieldType InferCastFromValue(object? value) => value switch
-    {
-        int or long or short or float or double or decimal => FieldType.Numeric,
-        bool => FieldType.Boolean,
-        DateTime or DateTimeOffset => FieldType.Timestamp,
-        Guid => FieldType.Uuid,
-        _ => FieldType.Text
-    };
 
     private static string GetOperator(SortDirection dir, CursorBound boundary, bool isLast) =>
         (boundary, dir, isLast) switch

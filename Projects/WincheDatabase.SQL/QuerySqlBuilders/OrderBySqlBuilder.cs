@@ -13,11 +13,13 @@ internal class OrderBySqlBuilder
         {
             var dir = sf.Direction == SortDirection.Desc ? "DESC" : "ASC";
 
-            var castType = sf.Type ?? (FieldResolver.Resolve(sf.Field, alias).IsJsonb
-                ? FieldType.Numeric
-                : FieldType.Text);
+            var baseField = FieldResolver.Resolve(sf.Field, alias);
 
-            var resolvedField = FieldResolver.Resolve(sf.Field, castType, alias);
+            if (baseField.IsJsonb && sf.Type is null)
+                throw new InvalidOperationException(
+                    $"Sort field '{sf.Field}' is a JSONB path. A 'type' must be specified in the SortNode.");
+
+            var resolvedField = sf.Type.HasValue ? baseField.WithCast(sf.Type.Value) : baseField;
             var expr = forIndex
                 ? FieldExpressionBuilder.IndexExpression(resolvedField)
                 : FieldExpressionBuilder.CastExpression(resolvedField);

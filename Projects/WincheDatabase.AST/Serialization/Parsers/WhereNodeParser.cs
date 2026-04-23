@@ -97,16 +97,20 @@ internal static class WhereNodeParser
         if (!OpMap.TryGetValue(opStr, out var op))
             throw new ArgumentException($"Unknown compare operator: '{opStr}'");
 
-        var cast = obj["type"]?.GetValue<string>() is { Length: > 0 } c
-            ? Enum.Parse<FieldType>(c, ignoreCase: true)
-            : (FieldType?)null;
+        FieldType? cast = null;
+        if (obj["type"]?.GetValue<string>() is { Length: > 0 } castStr)
+        {
+            if (!Enum.TryParse<FieldType>(castStr, ignoreCase: true, out var parsedCast))
+                throw new ArgumentException($"Unknown field type '{castStr}' on compare");
+            cast = parsedCast;
+        }
 
         return new FieldCompare(left, op, right, cast);
     }
 
     private static WhereNode ParseFieldFilter(string field, JsonNode? value)
     {
-        // Primitive value → implicit Eq
+        // Primitive value → implicit Eq; no type context available
         if (value is null or JsonValue)
             return new FieldFilter(field, ConditionalOperator.Eq, ExtractValue(value));
 
@@ -118,19 +122,28 @@ internal static class WhereNodeParser
         if (firstKey is null || !OpMap.ContainsKey(firstKey))
             return new FieldFilter(field, ConditionalOperator.Eq, ExtractValue(value));
 
-        // One FieldFilter per operator key
-        var filters = new List<WhereNode>();
-        foreach (var (opKey, opValue) in obj)
+        // Extract optional type hint before iterating operators
+        FieldType? type = null;
+        if (obj["type"]?.GetValue<string>() is { Length: > 0 } typeStr)
         {
-            if (!OpMap.TryGetValue(opKey, out var op))
-                throw new ArgumentException($"Unknown operator: '{opKey}'");
-
-            filters.Add(new FieldFilter(field, op, ExtractValue(opValue)));
+            if (!Enum.TryParse<FieldType>(typeStr, ignoreCase: true, out var parsedType))
+                throw new ArgumentException($"Unknown field type '{typeStr}' on field '{field}'");
+            type = parsedType;
         }
 
-        return filters.Count == 1
-            ? filters[0]
-            : new LogicGroup(LogicalOperator.And, filters);
+        var opKeys = obj.Select(kvp => kvp.Key).Where(k => k != "type").ToList();
+
+        if (opKeys.Count > 1)
+            throw new ArgumentException(
+                $"Field '{field}' has multiple operators ({string.Join(", ", opKeys)}). Use '$and' or '$or' to combine operators.");
+
+        if (opKeys.Count == 0)
+            return new FieldFilter(field, ConditionalOperator.Eq, ExtractValue(obj));
+
+        if (!OpMap.TryGetValue(opKeys[0], out var op))
+            throw new ArgumentException($"Unknown operator: '{opKeys[0]}'");
+
+        return new FieldFilter(field, op, ExtractValue(obj[opKeys[0]]), type);
     }
 
     private static object? ExtractValue(JsonNode? node)
@@ -144,7 +157,7 @@ internal static class WhereNodeParser
 
         return jv.GetValueKind() switch
         {
-            JsonValueKind.String => jv.GetValue<string>(),
+            JsonValueKind.String => TryParseDateTime(jv.GetValue<string>()),
             JsonValueKind.True => true,
             JsonValueKind.False => false,
             JsonValueKind.Null => null,
@@ -152,6 +165,11 @@ internal static class WhereNodeParser
             _ => null
         };
     }
+
+    private static object TryParseDateTime(string s) =>
+        DateTimeOffset.TryParse(s, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dto)
+            ? dto
+            : s;
 
     private static object ParseNumber(JsonElement el)
     {

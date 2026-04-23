@@ -17,6 +17,11 @@ builder.Services.AddWincheDatabaseDocumentStore(connString, builder.Configuratio
         evaluate: async (context, ct) => true
     ));
     config.AddDocumentAccessRule(new(
+        path: "patients/**",
+        operations: [AccessOperation.Read, AccessOperation.Write, AccessOperation.Delete],
+        evaluate: async (context, ct) => true
+    ));
+    config.AddDocumentAccessRule(new(
         path: "products/**",
         operations: [AccessOperation.Read],
         evaluate: async (context, ct) => true

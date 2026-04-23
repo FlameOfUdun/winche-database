@@ -22,9 +22,13 @@ namespace WincheDatabase.AST.Serialization.Parsers
                 ? SortDirection.Desc
                 : SortDirection.Asc;
 
-            var type = obj["type"]?.GetValue<string>() is { Length: > 0 } c
-                ? Enum.Parse<FieldType>(c, ignoreCase: true)
-                : (FieldType?)null;
+            FieldType? type = null;
+            if (obj["type"]?.GetValue<string>() is { Length: > 0 } typeStr)
+            {
+                if (!Enum.TryParse<FieldType>(typeStr, ignoreCase: true, out var parsedType))
+                    throw new ArgumentException($"Unknown field type '{typeStr}' on sort field '{field}'");
+                type = parsedType;
+            }
 
             return new SortNode(field, dir, type);
         }
