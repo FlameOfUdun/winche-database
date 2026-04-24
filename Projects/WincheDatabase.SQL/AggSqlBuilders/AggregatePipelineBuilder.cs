@@ -12,7 +12,7 @@ public static class AggregatePipelineBuilder
 
         var bag = new ParameterBag();
         var ctes = new List<string>();
-        var hasGroupOrProject = pipeline.Any(s => s is GroupStage or ProjectStage);
+        var hasGroupOrProject = false;
         var prevAlias = tableName;
 
         for (var i = 0; i < pipeline.Count; i++)
@@ -31,6 +31,9 @@ public static class AggregatePipelineBuilder
                 SkipStage ss => SkipStageBuilder.Build(ss, prevAlias),
                 var unknown => throw new NotSupportedException($"Unsupported pipeline stage: {unknown.GetType().Name}")
             };
+
+            if (pipeline[i] is GroupStage or ProjectStage)
+                hasGroupOrProject = true;
 
             ctes.Add($"{currentAlias} AS ({cteSql})");
             prevAlias = currentAlias;
