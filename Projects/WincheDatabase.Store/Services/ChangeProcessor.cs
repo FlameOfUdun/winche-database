@@ -22,6 +22,13 @@ public sealed class ChangeProcessor(
         if (groups.Count == 0)
             return;
 
+        if (change.Type != DocumentChangeType.Removed)
+        {
+            var document = await manager.GetUnprotectedAsync(change.Path, ct);
+            if (document != null)
+                change = change with { Data = document.Data };
+        }
+
         var options = new ParallelOptions
         {
             MaxDegreeOfParallelism = MaxParallelism,

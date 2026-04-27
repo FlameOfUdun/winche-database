@@ -12,23 +12,9 @@ var connString = builder.Configuration.GetConnectionString("DefaultConnection")
 builder.Services.AddWincheDatabaseDocumentStore(connString, builder.Configuration, (config) =>
 {
     config.AddDocumentAccessRule(new(
-        path: "patients",
-        operations: [AccessOperation.Read],
-        evaluate: async (context, ct) => true
-    ));
-    config.AddDocumentAccessRule(new(
-        path: "patients/**",
+        path: "**",
         operations: [AccessOperation.Read, AccessOperation.Write, AccessOperation.Delete],
         evaluate: async (context, ct) => true
-    ));
-    config.AddDocumentAccessRule(new(
-        path: "products/**",
-        operations: [AccessOperation.Read],
-        evaluate: async (context, ct) => true
-    ));
-    config.AddIndexDefinition(new(
-        collection: "products", 
-        fields: [new("price", SortDirection.Desc, FieldType.Numeric)]
     ));
 });
 builder.Services.AddWincheDatabaseRestApi((config) =>

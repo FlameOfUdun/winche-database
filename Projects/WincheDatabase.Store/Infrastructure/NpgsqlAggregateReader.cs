@@ -6,7 +6,7 @@ namespace WincheDatabase.Store.Infrastructure
 {
     internal static class NpgsqlAggregateReader
     {
-        private static IReadOnlyDictionary<string, JsonNode?> ReadRow(NpgsqlDataReader reader)
+        private static Dictionary<string, JsonNode?> ReadRow(NpgsqlDataReader reader)
         {
             var fields = new Dictionary<string, JsonNode?>(
                 reader.FieldCount,

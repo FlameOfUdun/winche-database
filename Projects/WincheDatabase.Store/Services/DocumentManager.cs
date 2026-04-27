@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using System.Text.Json.Nodes;
@@ -16,7 +17,8 @@ namespace WincheDatabase.Store.Services;
 public sealed class DocumentManager(
     [FromKeyedServices(ServiceKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source, 
     IOptions<StoreOptions> options, 
-    IAccessRuleEvaluator<Document> evaluator
+    IAccessRuleEvaluator<Document> evaluator,
+    ILogger<DocumentManager> logger
 ) : IDocumentManager
 {
     private readonly string _table = options.Value.TableName;
@@ -203,8 +205,9 @@ public sealed class DocumentManager(
                 throw;
             }
         }
-        catch
+        catch (Exception ex)
         {
+            logger.LogError(ex, "Commit failed");
             await tx.DisposeAsync();
             throw;
         }
@@ -270,8 +273,10 @@ public sealed class DocumentManager(
                 HasConflict = false,
             };
         }
-        catch
+        catch (Exception ex)
         {
+            logger.LogError(ex, "Sync failed");
+
             await tx.DisposeAsync();
 
             var serverDoc = await new GetOperation(conn, null, _table).ExecuteAsync(path, ct);
