@@ -4,6 +4,16 @@
     <Authors>Ehsan Rashidi</Authors>
     <PackageProjectUrl>https://github.com/FlameOfUdun/winche-database</PackageProjectUrl>
     <RepositoryUrl>https://github.com/FlameOfUdun/winche-database</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
     <IsPackable>true</IsPackable>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" />
+    <None Include="$(MSBuildThisFileDirectory)LICENSE" Pack="true" PackagePath="\" />
+  </ItemGroup>
 </Project>
