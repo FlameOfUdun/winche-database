@@ -1,5 +1,5 @@
 ﻿using Microsoft.AspNetCore.Http;
-using WincheDatabase.REST.Services;
+using WincheDatabase.REST.Abstraction;
 using WincheDatabase.Store.Services;
 
 namespace WincheDatabase.REST.EndpointFilters;
@@ -11,8 +11,8 @@ internal class CallerAccessor(
 {
     public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
     {
-        var claism = mapper.MapClaims(context.HttpContext);
-        accessor.SetClaims(claism);
+        var claims = await mapper.MapClaims(context.HttpContext);
+        accessor.SetClaims(claims);
 
         return await next(context);
     }

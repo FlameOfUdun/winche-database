@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging;
 using Npgsql;
 using System.Collections.Concurrent;
 using System.Text.Json;
-using WincheDatabase.Store.Abstraction;
+using WincheDatabase.Store.Interfaces;
 using WincheDatabase.Store.Constants;
 using WincheDatabase.Store.Models;
 

@@ -3,7 +3,7 @@ using WincheDatabase.AST.Models;
 using WincheDatabase.Core.Models;
 using WincheDatabase.Store.Models;
 
-namespace WincheDatabase.Store.Abstraction;
+namespace WincheDatabase.Store.Interfaces;
 
 public interface IDocumentManager
 {

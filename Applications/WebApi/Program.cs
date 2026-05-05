@@ -1,8 +1,7 @@
-using WincheDatabase.AST.Models;
 using WincheDatabase.REST.DependencyInjection;
+using WincheDatabase.Sample.Configurations;
 using WincheDatabase.Store.DependencyInjection;
 using WincheDatabase.WS.DependencyInjection;
-using WincheSentinel.Core.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -11,31 +10,16 @@ var connString = builder.Configuration.GetConnectionString("DefaultConnection")
 
 builder.Services.AddWincheDatabaseDocumentStore(connString, builder.Configuration, (config) =>
 {
-    config.AddDocumentAccessRule(new(
-        path: "**",
-        operations: [AccessOperation.Read, AccessOperation.Write, AccessOperation.Delete],
-        evaluate: async (context, ct) => true
-    ));
+    config.AddDocumentAccessRule<AllowPublicAccess>();
+    config.AddDocumentStoreHook<DocumentUpdateHook>();
 });
 builder.Services.AddWincheDatabaseRestApi((config) =>
 {
-    config.AddClaimsMapper(new ((context) => 
-    {
-        return new Dictionary<string, object?>
-        {
-            ["uid"] = "123"
-        };
-    }));
+    config.AddClaimsMapper<RESTClaimsMapper>();
 });
 builder.Services.AddWincheDatabaseWsApi((config) =>
 {
-    config.AddClaimsMapper(new ((context) => 
-    {
-        return new Dictionary<string, object?>
-        {
-            ["uid"] = "123"
-        };
-    }));
+    config.AddClaimsMapper<WSClaimsMapper>();
 });
 
 builder.Services.AddWincheDatabaseWsApi();

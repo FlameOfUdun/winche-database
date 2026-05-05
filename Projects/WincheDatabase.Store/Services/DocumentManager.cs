@@ -5,7 +5,7 @@ using Npgsql;
 using System.Text.Json.Nodes;
 using WincheDatabase.AST.Models;
 using WincheDatabase.Core.Models;
-using WincheDatabase.Store.Abstraction;
+using WincheDatabase.Store.Interfaces;
 using WincheDatabase.Store.Constants;
 using WincheDatabase.Store.Models;
 using WincheDatabase.Store.Operations;
@@ -15,9 +15,10 @@ using WincheSentinel.Core.Models;
 namespace WincheDatabase.Store.Services;
 
 public sealed class DocumentManager(
-    [FromKeyedServices(ServiceKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source, 
-    IOptions<StoreOptions> options, 
+    [FromKeyedServices(ServiceKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source,
+    IOptions<StoreOptions> options,
     IAccessRuleEvaluator<Document> evaluator,
+    HookInvocationDispatcher hookDispatcher,
     ILogger<DocumentManager> logger
 ) : IDocumentManager
 {
@@ -127,22 +128,25 @@ public sealed class DocumentManager(
     public async Task<Document> SetUnprotectedAsync(string path, JsonObject data, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
-        return await new SetOperation(conn, null, _table)
-            .ExecuteAsync(path, data, ct);
+        var doc = await new SetOperation(conn, null, _table).ExecuteAsync(path, data, ct);
+        hookDispatcher.Enqueue(path, (h, t) => h.OnDocumentSetAsync(path, doc, t));
+        return doc;
     }
 
     public async Task<Document?> UpdateUnprotectedAsync(string path, JsonObject patch, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
-        return await new UpdateOperation(conn, null, _table)
-            .ExecuteAsync(path, patch, ct);
+        var doc = await new UpdateOperation(conn, null, _table).ExecuteAsync(path, patch, ct);
+        if (doc is not null) hookDispatcher.Enqueue(path, (h, t) => h.OnDocumentUpdatedAsync(path, doc, t));
+        return doc;
     }
 
     public async Task<bool> DeleteUnprotectedAsync(string path, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
-        return await new DeleteOperation(conn, null, _table)
-            .ExecuteAsync(path, ct);
+        var deleted = await new DeleteOperation(conn, null, _table).ExecuteAsync(path, ct);
+        if (deleted) hookDispatcher.Enqueue(path, (h, t) => h.OnDocumentDeletedAsync(path, t));
+        return deleted;
     }
 
     public async Task<QueryResult> QueryUnprotectedAsync(Query query, CancellationToken ct = default)
@@ -192,6 +196,24 @@ public sealed class DocumentManager(
 
                 await tx.CommitAsync(ct);
                 await tx.DisposeAsync();
+
+                for (int i = 0; i < batch.Operations.Count; i++)
+                {
+                    var op = batch.Operations[i];
+                    var doc = documents[i];
+                    switch (op.Type)
+                    {
+                        case BatchOperationType.Set:
+                            hookDispatcher.Enqueue(op.Path, (h, t) => h.OnDocumentSetAsync(op.Path, doc!, t));
+                            break;
+                        case BatchOperationType.Update:
+                            if (doc is not null) hookDispatcher.Enqueue(op.Path, (h, t) => h.OnDocumentUpdatedAsync(op.Path, doc, t));
+                            break;
+                        case BatchOperationType.Delete:
+                            hookDispatcher.Enqueue(op.Path, (h, t) => h.OnDocumentDeletedAsync(op.Path, t));
+                            break;
+                    }
+                }
 
                 return new CommitResult
                 {
@@ -264,6 +286,11 @@ public sealed class DocumentManager(
 
             await tx.CommitAsync(ct);
             await tx.DisposeAsync();
+
+            if (current is not null)
+                hookDispatcher.Enqueue(path, (h, t) => h.OnDocumentSetAsync(path, current, t));
+            else
+                hookDispatcher.Enqueue(path, (h, t) => h.OnDocumentDeletedAsync(path, t));
 
             return new SyncResult
             {

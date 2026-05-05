@@ -1,4 +1,4 @@
-﻿namespace WincheDatabase.WS.Abstraction
+﻿namespace WincheDatabase.WS.Interfaces
 {
     public interface ITransactionConnectionMap
     {

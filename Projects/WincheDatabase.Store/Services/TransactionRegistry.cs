@@ -1,5 +1,5 @@
 using System.Collections.Concurrent;
-using WincheDatabase.Store.Abstraction;
+using WincheDatabase.Store.Interfaces;
 using WincheDatabase.Store.Operands;
 
 namespace WincheDatabase.Store.Services;

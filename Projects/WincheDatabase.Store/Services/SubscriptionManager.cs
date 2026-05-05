@@ -1,5 +1,5 @@
 using WincheDatabase.AST.Models;
-using WincheDatabase.Store.Abstraction;
+using WincheDatabase.Store.Interfaces;
 using WincheDatabase.Store.Infrastructure;
 using WincheDatabase.Store.Models;
 

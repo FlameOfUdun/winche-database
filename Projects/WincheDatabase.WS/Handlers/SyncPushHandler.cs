@@ -1,4 +1,4 @@
-using WincheDatabase.Store.Abstraction;
+using WincheDatabase.Store.Interfaces;
 using WincheDatabase.Store.Models;
 using WincheDatabase.WS.Messages;
 

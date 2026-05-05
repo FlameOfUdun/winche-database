@@ -1,7 +1,7 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
-using WincheDatabase.Store.Abstraction;
+using WincheDatabase.Store.Interfaces;
 using WincheDatabase.Ws.DependencyInjection;
-using WincheDatabase.WS.Abstraction;
+using WincheDatabase.WS.Interfaces;
 using WincheDatabase.WS.Handlers;
 using WincheDatabase.WS.Messages;
 using WincheDatabase.WS.Services;

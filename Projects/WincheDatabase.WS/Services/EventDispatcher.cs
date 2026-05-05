@@ -1,6 +1,6 @@
-using WincheDatabase.Store.Abstraction;
+using WincheDatabase.Store.Interfaces;
 using WincheDatabase.Store.Models;
-using WincheDatabase.WS.Abstraction;
+using WincheDatabase.WS.Interfaces;
 using WincheDatabase.WS.Messages;
 
 namespace WincheDatabase.WS.Services;

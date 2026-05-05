@@ -1,6 +1,6 @@
 ﻿using System.Net.WebSockets;
 
-namespace WincheDatabase.WS.Abstraction;
+namespace WincheDatabase.WS.Interfaces;
 
 public interface IConnectionManager
 {

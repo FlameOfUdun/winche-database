@@ -1,6 +1,6 @@
 ﻿using WincheDatabase.Store.Operands;
 
-namespace WincheDatabase.Store.Abstraction;
+namespace WincheDatabase.Store.Interfaces;
 
 public interface ITransactionRegistry
 {

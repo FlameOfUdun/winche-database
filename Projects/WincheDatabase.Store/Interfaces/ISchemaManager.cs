@@ -1,6 +1,6 @@
 ﻿using WincheDatabase.SQL;
 
-namespace WincheDatabase.Store.Abstraction;
+namespace WincheDatabase.Store.Interfaces;
 
 public interface ISchemaManager
 {

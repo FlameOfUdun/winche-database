@@ -1,13 +1,13 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
-using WincheDatabase.WS.Services;
+using WincheDatabase.WS.Abstraction;
 
 namespace WincheDatabase.Ws.DependencyInjection;
 
 public sealed class DependencyConfigurator(IServiceCollection services)
 {
-    public DependencyConfigurator AddClaimsMapper(WsClaimsMapper instance)
+    public DependencyConfigurator AddClaimsMapper<TMapper>() where TMapper : WsClaimsMapper
     {
-        services.AddSingleton(instance);
+        services.AddSingleton<WsClaimsMapper, TMapper>();
         return this;
     }
 }

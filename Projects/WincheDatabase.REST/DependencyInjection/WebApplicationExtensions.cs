@@ -5,7 +5,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using WincheDatabase.AST.Models;
 using WincheDatabase.REST.EndpointFilters;
-using WincheDatabase.Store.Abstraction;
+using WincheDatabase.Store.Interfaces;
 using WincheDatabase.Store.Models;
 
 namespace WincheDatabase.REST.DependencyInjection

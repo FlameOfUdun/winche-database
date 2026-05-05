@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using WincheDatabase.AST.Models;
 using WincheDatabase.Core.Infrastructure;
-using WincheDatabase.Store.Abstraction;
+using WincheDatabase.Store.Interfaces;
 using WincheDatabase.Store.Models;
 
 namespace WincheDatabase.Store.Services;

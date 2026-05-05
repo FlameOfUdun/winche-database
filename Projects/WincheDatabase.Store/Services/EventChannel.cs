@@ -1,5 +1,5 @@
 ﻿using System.Threading.Channels;
-using WincheDatabase.Store.Abstraction;
+using WincheDatabase.Store.Interfaces;
 using WincheDatabase.Store.Models;
 
 namespace WincheDatabase.Store.Services;

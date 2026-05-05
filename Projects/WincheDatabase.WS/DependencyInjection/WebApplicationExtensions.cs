@@ -2,7 +2,7 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using WincheDatabase.Store.Services;
-using WincheDatabase.WS.Abstraction;
+using WincheDatabase.WS.Interfaces;
 using WincheDatabase.WS.EndpointFilters;
 using WincheDatabase.WS.Services;
 

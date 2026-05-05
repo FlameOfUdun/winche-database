@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using WincheDatabase.Store.Abstraction;
+using WincheDatabase.Store.Interfaces;
 
 namespace WincheDatabase.Store.BackgroundServices;
 

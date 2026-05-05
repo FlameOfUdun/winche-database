@@ -3,7 +3,7 @@ using System.Text.Json;
 using WincheDatabase.WS.Messages;
 using WincheDatabase.WS.Handlers;
 using WincheSentinel.Core.Models;
-using WincheDatabase.WS.Abstraction;
+using WincheDatabase.WS.Interfaces;
 using WincheDatabase.WS.Operands;
 using WincheDatabase.Store.Services;
 

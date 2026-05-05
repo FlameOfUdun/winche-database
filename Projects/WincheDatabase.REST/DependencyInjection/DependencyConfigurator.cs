@@ -1,13 +1,13 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
-using WincheDatabase.REST.Services;
+using WincheDatabase.REST.Abstraction;
 
 namespace WincheDatabase.REST.DependencyInjection;
 
 public sealed class DependencyConfigurator(IServiceCollection services)
 {
-    public DependencyConfigurator AddClaimsMapper(RestClaimsMapper instance)
+    public DependencyConfigurator AddClaimsMapper<TMapper>() where TMapper : RestClaimsMapper
     {
-        services.AddSingleton(instance);
+        services.AddSingleton<RestClaimsMapper, TMapper>();
         return this;
     }
 }

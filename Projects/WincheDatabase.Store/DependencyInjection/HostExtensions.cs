@@ -1,6 +1,6 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using WincheDatabase.Store.Abstraction;
+using WincheDatabase.Store.Interfaces;
 
 namespace WincheDatabase.Store.DependencyInjection
 {

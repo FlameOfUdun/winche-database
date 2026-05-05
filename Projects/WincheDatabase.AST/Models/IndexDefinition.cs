@@ -1,9 +1,9 @@
 ﻿namespace WincheDatabase.AST.Models;
 
-public sealed class IndexDefinition(string collection, List<SortNode> fields)
+public abstract class IndexDefinition
 {
-    public string Collection { get; init; } = collection;
-    public List<SortNode> Fields { get; init; } = fields;
-    public string? Name { get; init; }
-    public WhereNode? Where { get; init; }
+    public abstract string Collection { get; }
+    public abstract List<SortNode> Fields { get; }
+    public virtual string? Name { get; } = null;
+    public virtual WhereNode? Where { get; } = null;
 }

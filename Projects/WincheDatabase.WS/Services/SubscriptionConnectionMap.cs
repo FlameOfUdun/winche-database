@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 using WincheDatabase.Core.Infrastructure;
-using WincheDatabase.WS.Abstraction;
+using WincheDatabase.WS.Interfaces;
 
 namespace WincheDatabase.WS.Services;
 

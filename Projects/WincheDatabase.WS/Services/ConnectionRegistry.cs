@@ -1,5 +1,5 @@
 using System.Collections.Concurrent;
-using WincheDatabase.WS.Abstraction;
+using WincheDatabase.WS.Interfaces;
 using WincheDatabase.WS.Messages;
 using WincheDatabase.WS.Operands;
 

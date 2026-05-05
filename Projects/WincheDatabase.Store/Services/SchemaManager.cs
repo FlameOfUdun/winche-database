@@ -3,7 +3,7 @@ using Microsoft.Extensions.Options;
 using Npgsql;
 using WincheDatabase.AST.Models;
 using WincheDatabase.SQL;
-using WincheDatabase.Store.Abstraction;
+using WincheDatabase.Store.Interfaces;
 using WincheDatabase.Store.Constants;
 using WincheDatabase.Store.Models;
 
