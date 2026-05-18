@@ -1,13 +1,13 @@
 <Solution>
   <Folder Name="/Projects/">
-    <Project Path="Projects/WincheDatabase.AST/WincheDatabase.AST.csproj" Id="6480f00f-3672-47ea-8d12-054e484fbc7c" />
+    <Project Path="Projects/WincheDatabase.AST/WincheDatabase.AST.csproj" />
     <Project Path="Projects/WincheDatabase.Core/WincheDatabase.Core.csproj" />
-    <Project Path="Projects/WincheDatabase.REST/WincheDatabase.REST.csproj" Id="3cb42548-3eb1-4fd0-927e-4958144a8ceb" />
+    <Project Path="Projects/WincheDatabase.REST/WincheDatabase.REST.csproj" />
     <Project Path="Projects/WincheDatabase.SQL/WincheDatabase.SQL.csproj" />
     <Project Path="Projects/WincheDatabase.Store/WincheDatabase.Store.csproj" />
     <Project Path="Projects/WincheDatabase.WS/WincheDatabase.WS.csproj" />
   </Folder>
   <Folder Name="/Samples/">
-    <Project Path="Applications/WebApi/WincheDatabase.Sample.csproj" />
+    <Project Path="Samples/WebApi/WincheDatabase.Sample.csproj" />
   </Folder>
 </Solution>
