@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(timeout 30 dotnet run --no-build --launch-profile https)"
+    ]
+  }
+}

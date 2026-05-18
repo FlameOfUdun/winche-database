@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using WincheDatabase.Core.Models;
 using WincheDatabase.AST.Models;
 using Microsoft.Extensions.Options;
+using WincheDatabase.Store.Infrastructure;
 using WincheDatabase.Store.Models;
 using WincheDatabase.Store.Operations;
 using WincheSentinel.Core.Models;
@@ -65,8 +66,26 @@ public class Transaction : IAsyncDisposable
     public async Task<bool> DeleteAsync(string path, CancellationToken ct = default)
     {
         Touch();
-        await _evaluator.EvaluateAsync(AccessOperation.Delete, path, null, ct);
-        return await DeleteUnprotectedAsync(path, ct);
+
+        var op = new DeleteOperation(_connection, _transaction, _table);
+
+        var authorizedPaths = await op.SelectForUpdateAsync(path, ct);
+        var authorizedSet = new HashSet<string>(authorizedPaths);
+
+        foreach (var p in authorizedPaths)
+            await _evaluator.EvaluateAsync(AccessOperation.Delete, p, null, ct);
+
+        var deleted = await op.ExecuteAsync(path, ct);
+
+        var stowaways = deleted.Where(p => !authorizedSet.Contains(p)).ToList();
+        if (stowaways.Count > 0)
+        {
+            await _transaction.RollbackAsync(ct);
+            _isCompleted = true;
+            throw new ConcurrentSubtreeModificationException(path, stowaways);
+        }
+
+        return deleted.Count > 0;
     }
 
     public async Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default)
@@ -96,10 +115,11 @@ public class Transaction : IAsyncDisposable
         return new UpdateOperation(_connection, _transaction, _table).ExecuteAsync(path, data, ct);
     }
 
-    public Task<bool> DeleteUnprotectedAsync(string path, CancellationToken ct = default)
+    public async Task<bool> DeleteUnprotectedAsync(string path, CancellationToken ct = default)
     {
         Touch();
-        return new DeleteOperation(_connection, _transaction, _table).ExecuteAsync(path, ct);
+        var deleted = await new DeleteOperation(_connection, _transaction, _table).ExecuteAsync(path, ct);
+        return deleted.Count > 0;
     }
 
     public Task<QueryResult> QueryUnprotectedAsync(Query query, CancellationToken ct = default)

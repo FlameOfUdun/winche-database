@@ -1,4 +1,4 @@
-﻿using Npgsql;
+using Npgsql;
 using WincheDatabase.Core.Infrastructure;
 using WincheDatabase.SQL.OperationBuilders;
 
@@ -17,9 +17,9 @@ internal sealed class DeleteOperation
         _table = table;
     }
 
-    internal async Task<bool> ExecuteAsync(string path, CancellationToken ct)
+    internal async Task<IReadOnlyList<string>> ExecuteAsync(string path, CancellationToken ct)
     {
-        if (!DocumentPathParser.IsValidDocumentPath(path, out var error))
+        if (!DocumentPathParser.IsValidPath(path, out var error))
             throw new ArgumentException(error);
 
         await using var cmd = _conn.CreateCommand();
@@ -28,7 +28,30 @@ internal sealed class DeleteOperation
         var result = new DeleteSqlBuilder(_table).Build(path);
         result.Apply(cmd);
 
-        var removed = await cmd.ExecuteScalarAsync(ct);
-        return removed is not null;
+        var deleted = new List<string>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            deleted.Add(reader.GetString(0));
+
+        return deleted;
+    }
+
+    internal async Task<IReadOnlyList<string>> SelectForUpdateAsync(string path, CancellationToken ct)
+    {
+        if (!DocumentPathParser.IsValidPath(path, out var error))
+            throw new ArgumentException(error);
+
+        await using var cmd = _conn.CreateCommand();
+        cmd.Transaction = _tx;
+
+        var result = new DeleteSqlBuilder(_table).BuildSelectForUpdate(path);
+        result.Apply(cmd);
+
+        var paths = new List<string>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            paths.Add(reader.GetString(0));
+
+        return paths;
     }
 }

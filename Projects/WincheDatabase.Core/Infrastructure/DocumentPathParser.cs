@@ -53,4 +53,23 @@ public static class DocumentPathParser
         error = null;
         return true;
     }
+
+    public static bool IsValidPath(string path, out string? error)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            error = "Path cannot be null or empty.";
+            return false;
+        }
+
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length == 0)
+        {
+            error = "Path must contain at least one segment.";
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
 }

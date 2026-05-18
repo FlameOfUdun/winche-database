@@ -7,6 +7,7 @@ using WincheDatabase.AST.Models;
 using WincheDatabase.Core.Models;
 using WincheDatabase.Store.Interfaces;
 using WincheDatabase.Store.Constants;
+using WincheDatabase.Store.Infrastructure;
 using WincheDatabase.Store.Models;
 using WincheDatabase.Store.Operations;
 using WincheSentinel.Core.Abstraction;
@@ -44,8 +45,44 @@ public sealed class DocumentManager(
 
     public async Task<bool> DeleteAsync(string path, CancellationToken ct = default)
     {
-        await evaluator.EvaluateAsync(AccessOperation.Delete, path: path, null, ct);
-        return await DeleteUnprotectedAsync(path, ct);
+        await using var conn = await source.OpenConnectionAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+
+        try
+        {
+            var op = new DeleteOperation(conn, tx, _table);
+
+            var authorizedPaths = await op.SelectForUpdateAsync(path, ct);
+            var authorizedSet = new HashSet<string>(authorizedPaths);
+
+            foreach (var p in authorizedPaths)
+                await evaluator.EvaluateAsync(AccessOperation.Delete, p, null, ct);
+
+            var deleted = await op.ExecuteAsync(path, ct);
+
+            var stowaways = deleted.Where(p => !authorizedSet.Contains(p)).ToList();
+            if (stowaways.Count > 0)
+            {
+                await tx.RollbackAsync(ct);
+                throw new ConcurrentSubtreeModificationException(path, stowaways);
+            }
+
+            await tx.CommitAsync(ct);
+
+            foreach (var p in deleted)
+                hookDispatcher.Enqueue(p, (h, t) => h.OnDocumentDeletedAsync(p, t));
+
+            return deleted.Count > 0;
+        }
+        catch (ConcurrentSubtreeModificationException)
+        {
+            throw;
+        }
+        catch
+        {
+            try { await tx.RollbackAsync(ct); } catch { }
+            throw;
+        }
     }
 
     public async Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default)
@@ -145,8 +182,11 @@ public sealed class DocumentManager(
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         var deleted = await new DeleteOperation(conn, null, _table).ExecuteAsync(path, ct);
-        if (deleted) hookDispatcher.Enqueue(path, (h, t) => h.OnDocumentDeletedAsync(path, t));
-        return deleted;
+
+        foreach (var p in deleted)
+            hookDispatcher.Enqueue(p, (h, t) => h.OnDocumentDeletedAsync(p, t));
+
+        return deleted.Count > 0;
     }
 
     public async Task<QueryResult> QueryUnprotectedAsync(Query query, CancellationToken ct = default)
@@ -172,6 +212,7 @@ public sealed class DocumentManager(
             try
             {
                 var documents = new List<Document?>(batch.Operations.Count);
+                var deletedPathsByOp = new List<IReadOnlyList<string>?>(batch.Operations.Count);
 
                 foreach (var operation in batch.Operations)
                 {
@@ -180,16 +221,19 @@ public sealed class DocumentManager(
                         case BatchOperationType.Set:
                             var setResult = await new SetOperation(conn, tx, _table).ExecuteAsync(operation.Path, operation.Data!, ct);
                             documents.Add(setResult);
+                            deletedPathsByOp.Add(null);
                             break;
 
                         case BatchOperationType.Update:
                             var updateResult = await new UpdateOperation(conn, tx, _table).ExecuteAsync(operation.Path, operation.Data!, ct);
                             documents.Add(updateResult);
+                            deletedPathsByOp.Add(null);
                             break;
 
                         case BatchOperationType.Delete:
                             var deleteResult = await new DeleteOperation(conn, tx, _table).ExecuteAsync(operation.Path, ct);
                             documents.Add(null);
+                            deletedPathsByOp.Add(deleteResult);
                             break;
                     }
                 }
@@ -210,7 +254,9 @@ public sealed class DocumentManager(
                             if (doc is not null) hookDispatcher.Enqueue(op.Path, (h, t) => h.OnDocumentUpdatedAsync(op.Path, doc, t));
                             break;
                         case BatchOperationType.Delete:
-                            hookDispatcher.Enqueue(op.Path, (h, t) => h.OnDocumentDeletedAsync(op.Path, t));
+                            var deletedPaths = deletedPathsByOp[i]!;
+                            foreach (var p in deletedPaths)
+                                hookDispatcher.Enqueue(p, (h, t) => h.OnDocumentDeletedAsync(p, t));
                             break;
                     }
                 }
@@ -263,6 +309,8 @@ public sealed class DocumentManager(
                 };
             }
 
+            var cascadeDeletedPaths = new HashSet<string>();
+
             foreach (var mutation in mutations)
             {
                 switch (mutation.Type)
@@ -276,7 +324,9 @@ public sealed class DocumentManager(
                         break;
 
                     case MutationType.Delete:
-                        await new DeleteOperation(conn, tx, _table).ExecuteAsync(path, ct);
+                        var deleted = await new DeleteOperation(conn, tx, _table).ExecuteAsync(path, ct);
+                        foreach (var p in deleted)
+                            cascadeDeletedPaths.Add(p);
                         current = null;
                         break;
                 }
@@ -287,9 +337,15 @@ public sealed class DocumentManager(
             await tx.CommitAsync(ct);
             await tx.DisposeAsync();
 
+            foreach (var p in cascadeDeletedPaths)
+            {
+                if (p == path) continue;
+                hookDispatcher.Enqueue(p, (h, t) => h.OnDocumentDeletedAsync(p, t));
+            }
+
             if (current is not null)
                 hookDispatcher.Enqueue(path, (h, t) => h.OnDocumentSetAsync(path, current, t));
-            else
+            else if (cascadeDeletedPaths.Contains(path))
                 hookDispatcher.Enqueue(path, (h, t) => h.OnDocumentDeletedAsync(path, t));
 
             return new SyncResult

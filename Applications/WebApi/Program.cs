@@ -37,4 +37,7 @@ else
 app.UseWincheDatabaseDocumentStore();
 app.UseWincheDatabaseWsApi();
 app.UseWincheDatabaseRestApi();
+
+// await CascadeDeleteSmokeTest.RunAsync(app.Services);
+
 app.Run();
