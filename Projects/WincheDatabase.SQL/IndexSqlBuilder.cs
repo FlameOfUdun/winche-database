@@ -1,13 +1,19 @@
 ﻿using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using WincheDatabase.AST.Models;
 using WincheDatabase.SQL.QuerySqlBuilders;
 using WincheDatabase.SQL.Infrastructure;
 
 namespace WincheDatabase.SQL;
 
-public static class IndexSqlBuilder
+public static partial class IndexSqlBuilder
 {
+    [GeneratedRegex(@"\{[^}]+\}", RegexOptions.Compiled)]
+    private static partial Regex WildcardRegex();
+
+    private static readonly Regex WildcardPattern = WildcardRegex();
+
     public static SqlBuildResult BuildCreate(IndexDefinition index, string schema, string table)
     {
         var pb = new ParameterBag();
@@ -16,18 +22,17 @@ public static class IndexSqlBuilder
         var name = index.Name ?? GenerateName(index);
         sb.Append($" {name} ON {schema}.{table} ");
 
-        var columns = OrderBySqlBuilder.Build(index.Fields, alias: null, forIndex: true);
-        sb.Append($"({columns})");
+        // Always lead with collection for path-based seeking
+        var dataColumns = OrderBySqlBuilder.Build(index.Fields, alias: null, forIndex: true);
+        sb.Append($"(collection, {dataColumns})");
 
-        if (index.Where != null)
+        if (!WildcardPattern.IsMatch(index.Collection) && index.Where != null)
         {
             var where = new FilterSqlBuilder("d", pb).Build(index.Where);
             if (!string.IsNullOrEmpty(where))
-            {
                 sb.Append($" WHERE {where}");
-            }
         }
-        
+
         return new SqlBuildResult(sb.ToString(), pb.ToArray());
     }
 
@@ -54,13 +59,15 @@ public static class IndexSqlBuilder
             SHA256.HashData(Encoding.UTF8.GetBytes(name))
         )[..8].ToLowerInvariant();
 
-        var prefix = name[..54];
-        return $"{prefix}_{hash}";
+        return $"{name[..54]}_{hash}";
     }
 
     private static string Slugify(string s)
         => s.Replace("/", "_")
             .Replace(".", "_")
             .Replace("-", "_")
+            .Replace("{", "")
+            .Replace("}", "")
             .ToLowerInvariant();
+    
 }

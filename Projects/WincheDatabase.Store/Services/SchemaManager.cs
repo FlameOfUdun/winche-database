@@ -34,9 +34,6 @@ public sealed class SchemaManager(
 
         foreach (var index in _indexes)
         {
-            if (index.Fields.Count == 0)
-                throw new InvalidOperationException("Index must have at least one field.");
-
             await using var cmd = conn.CreateCommand();
             IndexSqlBuilder.BuildCreate(index, _schema, _table).Apply(cmd);
             await cmd.ExecuteNonQueryAsync(ct);

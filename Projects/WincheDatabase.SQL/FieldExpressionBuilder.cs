@@ -17,6 +17,7 @@ internal static class FieldExpressionBuilder
         if (f.IsColumn) return ColumnExpr(f);
         if (f.Cast is FieldType.Text) return Expression(f);
         if (f.Cast is FieldType.Jsonb) return $"({BuildJsonbAccessor(f)})::jsonb";
+        if (f.Cast is FieldType.Timestamp) return $"public.parse_timestamp({BuildJsonbAccessor(f)})";
 
         return $"{Expression(f)}::{ToSqlCast(f.Cast)}";
     }
@@ -47,15 +48,13 @@ internal static class FieldExpressionBuilder
         var prefix = f.Alias is null ? "data" : $"{f.Alias}.data";
         var segments = f.Path.Split('.');
         var useArrow = f.Cast == FieldType.Jsonb;
+
         var sb = new StringBuilder(prefix);
-
         for (var i = 0; i < segments.Length - 1; i++)
+        {
             sb.Append($"->'{segments[i]}'");
-
-        sb.Append(useArrow
-            ? $"->'{segments[^1]}'"
-            : $"->>'{segments[^1]}'");
-
+        }
+        sb.Append(useArrow ? $"->'{segments[^1]}'" : $"->>'{segments[^1]}'");
         return sb.ToString();
     }
 }

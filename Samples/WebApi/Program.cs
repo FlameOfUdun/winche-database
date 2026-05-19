@@ -12,6 +12,7 @@ builder.Services.AddWincheDatabaseDocumentStore(connString, builder.Configuratio
 {
     config.AddDocumentAccessRule<AllowPublicAccess>();
     config.AddDocumentStoreHook<DocumentUpdateHook>();
+    config.AddIndexDefinition<WildcardIndexDefinition>();
 });
 builder.Services.AddWincheDatabaseRestApi((config) =>
 {
