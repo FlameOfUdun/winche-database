@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsPublishable>false</IsPublishable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.4" />
+    <PackageReference Include="Npgsql" Version="10.0.2" />
+    <PackageReference Include="Npgsql.DependencyInjection" Version="10.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Winche.Database\Winche.Database.csproj" />
+    <ProjectReference Include="..\..\src\Winche.Database.AspNetCore.Rest\Winche.Database.AspNetCore.Rest.csproj" />
+    <ProjectReference Include="..\..\src\Winche.Database.AspNetCore.WebSockets\Winche.Database.AspNetCore.WebSockets.csproj" />
+  </ItemGroup>
+
+</Project>

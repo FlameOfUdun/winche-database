@@ -1,0 +1,36 @@
+﻿name: Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore WincheDatabase.slnx
+
+      - name: Build
+        run: dotnet build WincheDatabase.slnx -c Release --no-restore
+
+      - name: Test
+        run: dotnet test WincheDatabase.slnx -c Release --no-build
+
+      - name: Pack
+        run: |
+          dotnet pack src/Winche.Database/Winche.Database.csproj -c Release --no-build -o ./packages
+          dotnet pack src/Winche.Database.AspNetCore.Rest/Winche.Database.AspNetCore.Rest.csproj -c Release --no-build -o ./packages
+          dotnet pack src/Winche.Database.AspNetCore.WebSockets/Winche.Database.AspNetCore.WebSockets.csproj -c Release --no-build -o ./packages
+
+      - name: Push
+        run: dotnet nuget push ./packages/*.nupkg ./packages/*.snupkg --source https://api.nuget.org/v3/index.json --api-key ${{ secrets.NUGET_API_KEY }} --skip-duplicate

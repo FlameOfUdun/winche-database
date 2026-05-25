@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(timeout 30 dotnet run --no-build --launch-profile https)",
+      "Bash(timeout 45 dotnet run --no-build)",
+      "Bash(Rename-Item samples_new samples)",
+      "PowerShell(Remove-Item *)",
+      "PowerShell(New-Item *)"
+    ]
+  }
+}

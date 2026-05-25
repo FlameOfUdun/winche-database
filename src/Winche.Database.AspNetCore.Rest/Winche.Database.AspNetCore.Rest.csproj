@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PackageId>Winche.Database.AspNetCore.Rest</PackageId>
+    <Description>ASP.NET Core REST integration for Winche.Database. Exposes document store operations as HTTP endpoints with claims-based access control.</Description>
+    <PackageTags>winche database rest aspnetcore http</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Winche.Database\Winche.Database.csproj" />
+  </ItemGroup>
+
+</Project>

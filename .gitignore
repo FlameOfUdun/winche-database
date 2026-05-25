@@ -1,0 +1,59 @@
+# Build output
+bin/
+obj/
+out/
+publish/
+packages/
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+
+# User-specific Visual Studio files
+*.user
+*.suo
+*.userosscache
+*.sln.docobj
+*.csproj.user
+.vs/
+.vscode/
+.claude/
+
+# Rider
+.idea/
+
+# VS Code (uncomment to ignore local IDE settings)
+# .vscode/
+
+# Environment-specific appsettings (may contain secrets)
+appsettings.Development.json
+appsettings.Production.json
+appsettings.Staging.json
+appsettings.Local.json
+appsettings.*.local.json
+
+# Secrets
+secrets.json
+*.pfx
+*.p12
+*.key
+*.pem
+.env
+.env.*
+
+# Test results
+TestResults/
+coverage/
+*.trx
+*.coverage
+*.coveragexml
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
