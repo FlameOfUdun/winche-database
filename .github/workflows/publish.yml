@@ -18,13 +18,13 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Restore
-        run: dotnet restore WincheDatabase.slnx
+        run: dotnet restore Winche.Database.slnx
 
       - name: Build
-        run: dotnet build WincheDatabase.slnx -c Release --no-restore
+        run: dotnet build Winche.Database.slnx -c Release --no-restore
 
       - name: Test
-        run: dotnet test WincheDatabase.slnx -c Release --no-build
+        run: dotnet test Winche.Database.slnx -c Release --no-build
 
       - name: Pack
         run: |
