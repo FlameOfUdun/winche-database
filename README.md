@@ -38,7 +38,7 @@ dotnet add package Winche.Database.AspNetCore.WebSockets
 ### 2. Register services
 
 ```csharp
-builder.Services.AddWincheDatabaseDocumentStore(connectionString, builder.Configuration);
+builder.Services.AddWincheDatabase(connectionString, builder.Configuration);
 
 // Add REST API (optional)
 builder.Services.AddWincheDatabaseRestApi();
@@ -51,7 +51,7 @@ builder.Services.AddWincheDatabaseWsApi();
 
 ```csharp
 // Ensures the documents table and indexes exist
-app.UseWincheDatabaseDocumentStore();
+app.UseWincheDatabase();
 
 // Map REST routes (default prefix: "documents")
 app.UseWincheDatabaseRestApi();
