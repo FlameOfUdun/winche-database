@@ -2,9 +2,9 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Winche.Database.AspNetCore.WebSockets.EndpointFilters;
+using Winche.Database.AspNetCore.Abstraction;
 using Winche.Database.AspNetCore.WebSockets.Interfaces;
 using Winche.Database.Core.Models;
-using Winche.Sentinel.AspNetCore.Abstraction;
 
 namespace Winche.Database.AspNetCore.WebSockets.DependencyInjection;
 
@@ -20,7 +20,7 @@ public static class WebApplicationExtensions
 
         group.AddEndpointFilter<CallerAccessor>();
 
-        group.MapGet("/ws", async (HttpContext context, HttpCallerClaimsAccessor<Document> accessor, IConnectionManager manager) =>
+        group.MapGet("/ws", async (HttpContext context, DocumentClaimsAccessor accessor, IConnectionManager manager) =>
         {
             if (!context.WebSockets.IsWebSocketRequest)
             {
