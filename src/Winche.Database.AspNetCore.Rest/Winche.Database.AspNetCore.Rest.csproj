@@ -14,7 +14,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Winche.Database\Winche.Database.csproj" />
+    <ProjectReference Include="..\Winche.Database.AspNetCore\Winche.Database.AspNetCore.csproj" />
   </ItemGroup>
 
 </Project>

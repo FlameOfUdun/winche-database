@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Winche.Database/Winche.Database.csproj" />
+    <Project Path="src/Winche.Database.AspNetCore/Winche.Database.AspNetCore.csproj" />
     <Project Path="src/Winche.Database.AspNetCore.Rest/Winche.Database.AspNetCore.Rest.csproj" />
     <Project Path="src/Winche.Database.AspNetCore.WebSockets/Winche.Database.AspNetCore.WebSockets.csproj" />
   </Folder>

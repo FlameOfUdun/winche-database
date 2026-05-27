@@ -9,6 +9,7 @@ packages/
 *.nupkg
 *.snupkg
 .nuget/
+nupkgs/
 
 # User-specific Visual Studio files
 *.user

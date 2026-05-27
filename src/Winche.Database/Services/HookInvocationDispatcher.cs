@@ -3,7 +3,7 @@ using Winche.Database.Abstraction;
 using Winche.Database.Core.Models;
 using Winche.Database.Interfaces;
 using Winche.Database.Models;
-using WincheSentinel.Interfaces;
+using Winche.Sentinel.Interfaces;
 
 namespace Winche.Database.Services;
 

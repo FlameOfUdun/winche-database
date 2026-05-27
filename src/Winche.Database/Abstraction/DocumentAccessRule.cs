@@ -1,8 +1,8 @@
 ﻿using Winche.Database.Core.Models;
-using WincheSentinel.Interfaces;
-using WincheSentinel.Models;
+using Winche.Sentinel.Interfaces;
+using Winche.Sentinel.Models;
 
-namespace Winche.Database.Models;
+namespace Winche.Database.Abstraction;
 
 public abstract class DocumentAccessRule : IResourceAccessRule<Document>
 {

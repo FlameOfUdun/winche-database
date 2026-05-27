@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PackageId>Winche.Database.AspNetCore</PackageId>
+    <Description>Shared ASP.NET Core abstractions for Winche.Database. Provides the DocumentClaimsAccessor base class used by REST and WebSocket transport packages.</Description>
+    <PackageTags>winche database aspnetcore claims</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Winche.Sentinel.AspNetCore" Version="2.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Winche.Database\Winche.Database.csproj" />
+  </ItemGroup>
+
+</Project>

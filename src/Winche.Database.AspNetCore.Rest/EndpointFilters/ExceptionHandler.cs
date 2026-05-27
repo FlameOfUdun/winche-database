@@ -1,5 +1,5 @@
 ﻿using Microsoft.AspNetCore.Http;
-using WincheSentinel.Models;
+using Winche.Sentinel.Models;
 
 namespace Winche.Database.AspNetCore.Rest.EndpointFilters;
 

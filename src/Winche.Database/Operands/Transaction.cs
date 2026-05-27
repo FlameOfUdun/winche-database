@@ -3,8 +3,8 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.Options;
 using Winche.Database.Infrastructure;
 using Winche.Database.Operations;
-using WincheSentinel.Interfaces;
-using WincheSentinel.Models;
+using Winche.Sentinel.Interfaces;
+using Winche.Sentinel.Models;
 using Winche.Database.AST.Models;
 using Winche.Database.Core.Models;
 using Winche.Database.Models;
@@ -45,21 +45,21 @@ public class Transaction : IAsyncDisposable
     public async Task<Document?> GetAsync(string path, CancellationToken ct = default)
     {
         Touch();
-        await _evaluator.EvaluateAsync(AccessOperation.Read, path, null, ct);
+        await _evaluator.EvaluateAsync(AccessOperation.Read, path, null, (ct) => GetResourceAsync(path, ct), ct);
         return await GetUnprotectedAsync(path, ct); ;
     }
 
     public async Task<Document> SetAsync(string path, JsonObject data, CancellationToken ct = default)
     {
         Touch();
-        await _evaluator.EvaluateAsync(AccessOperation.Write, path, data, ct);
+        await _evaluator.EvaluateAsync(AccessOperation.Write, path, data, (ct) => GetResourceAsync(path, ct), ct);
         return await SetUnprotectedAsync(path, data, ct);
     }
 
     public async Task<Document?> UpdateAsync(string path, JsonObject data, CancellationToken ct = default)
     {
         Touch();
-        await _evaluator.EvaluateAsync(AccessOperation.Write, path, data, ct);
+        await _evaluator.EvaluateAsync(AccessOperation.Write, path, data, (ct) => GetResourceAsync(path, ct), ct);
         return await UpdateUnprotectedAsync(path, data, ct);
     }
 
@@ -73,7 +73,7 @@ public class Transaction : IAsyncDisposable
         var authorizedSet = new HashSet<string>(authorizedPaths);
 
         foreach (var p in authorizedPaths)
-            await _evaluator.EvaluateAsync(AccessOperation.Delete, p, null, ct);
+            await _evaluator.EvaluateAsync(AccessOperation.Delete, p, null, (ct) => GetResourceAsync(p, ct), ct);
 
         var deleted = await op.ExecuteAsync(path, ct);
 
@@ -91,8 +91,21 @@ public class Transaction : IAsyncDisposable
     public async Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default)
     {
         Touch();
-        await _evaluator.EvaluateAsync(AccessOperation.Read, query.Collection, null, ct);
-        return await QueryUnprotectedAsync(query, ct);
+        var result = await QueryUnprotectedAsync(query, ct);
+
+        var allowed = new List<Document>(result.Documents.Count);
+        foreach (var doc in result.Documents)
+        {
+            try
+            {
+                await _evaluator.EvaluateAsync(AccessOperation.Read, doc.Path, null, _ => Task.FromResult<Document?>(doc), ct);
+                allowed.Add(doc);
+            }
+            catch (AccessDeniedException) { }
+            catch (NoRulesMatchedException) { }
+        }
+
+        return result with { Documents = allowed };
     }
 
     #region Unprotected — bypass access rules
@@ -150,6 +163,15 @@ public class Transaction : IAsyncDisposable
         }
         await _transaction.RollbackAsync(ct);
         _isCompleted = true;
+    }
+
+    #endregion
+
+    #region Resource Access
+
+    private async Task<Document?> GetResourceAsync(string path, CancellationToken ct = default)
+    {
+        return await new GetOperation(_connection, _transaction, _table).ExecuteAsync(path, ct);
     }
 
     #endregion

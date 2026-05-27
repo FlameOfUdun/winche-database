@@ -29,6 +29,7 @@ jobs:
       - name: Pack
         run: |
           dotnet pack src/Winche.Database/Winche.Database.csproj -c Release --no-build -o ./packages
+          dotnet pack src/Winche.Database.AspNetCore/Winche.Database.AspNetCore.csproj -c Release --no-build -o ./packages
           dotnet pack src/Winche.Database.AspNetCore.Rest/Winche.Database.AspNetCore.Rest.csproj -c Release --no-build -o ./packages
           dotnet pack src/Winche.Database.AspNetCore.WebSockets/Winche.Database.AspNetCore.WebSockets.csproj -c Release --no-build -o ./packages
 

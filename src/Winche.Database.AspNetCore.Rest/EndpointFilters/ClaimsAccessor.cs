@@ -1,19 +1,15 @@
 ﻿using Microsoft.AspNetCore.Http;
-using Winche.Database.AspNetCore.Rest.Abstraction;
-using Winche.Database.Services;
+using Winche.Database.AspNetCore.Abstraction;
 
 namespace Winche.Database.AspNetCore.Rest.EndpointFilters;
 
-internal class CallerAccessor(
-    RestClaimsMapper mapper,
-    CallerContextAccessor accessor
+internal class ClaimsAccessor(
+    DocumentClaimsAccessor accessor
 ) : IEndpointFilter
 {
     public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
     {
-        var claims = await mapper.MapClaims(context.HttpContext);
-        accessor.SetClaims(claims);
-
+        accessor.SetClaims(context.HttpContext);
         return await next(context);
     }
 }

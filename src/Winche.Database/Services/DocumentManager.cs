@@ -3,15 +3,15 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using System.Text.Json.Nodes;
-using Winche.Database.Operations;
-using WincheSentinel.Interfaces;
-using WincheSentinel.Models;
-using Winche.Database.Models;
 using Winche.Database.AST.Models;
-using Winche.Database.Interfaces;
-using Winche.Database.Infrastructure;
-using Winche.Database.Core.Models;
 using Winche.Database.Constants;
+using Winche.Database.Core.Models;
+using Winche.Database.Infrastructure;
+using Winche.Database.Interfaces;
+using Winche.Database.Models;
+using Winche.Database.Operations;
+using Winche.Sentinel.Interfaces;
+using Winche.Sentinel.Models;
 
 namespace Winche.Database.Services;
 
@@ -27,19 +27,19 @@ public sealed class DocumentManager(
 
     public async Task<Document?> GetAsync(string path, CancellationToken ct = default)
     {
-        await evaluator.EvaluateAsync(AccessOperation.Read, path: path, null, ct);
+        await evaluator.EvaluateAsync(AccessOperation.Read, path: path, null, (ct) => GetResourceAsync(path, ct), ct);
         return await GetUnprotectedAsync(path, ct); ;
     }
 
     public async Task<Document> SetAsync(string path, JsonObject data, CancellationToken ct = default)
     {
-        await evaluator.EvaluateAsync(AccessOperation.Write, path: path, data, ct);
+        await evaluator.EvaluateAsync(AccessOperation.Write, path: path, data, (ct) => GetResourceAsync(path, ct), ct);
         return await SetUnprotectedAsync(path, data, ct);
     }
 
     public async Task<Document?> UpdateAsync(string path, JsonObject patch, CancellationToken ct = default)
     {
-        await evaluator.EvaluateAsync(AccessOperation.Write, path, patch, ct);
+        await evaluator.EvaluateAsync(AccessOperation.Write, path, patch, (ct) => GetResourceAsync(path, ct), ct);
         return await UpdateUnprotectedAsync(path, patch, ct);
     }
 
@@ -56,7 +56,7 @@ public sealed class DocumentManager(
             var authorizedSet = new HashSet<string>(authorizedPaths);
 
             foreach (var p in authorizedPaths)
-                await evaluator.EvaluateAsync(AccessOperation.Delete, p, null, ct);
+                await evaluator.EvaluateAsync(AccessOperation.Delete, p, null, (ct) => GetResourceAsync(p, ct), ct);
 
             var deleted = await op.ExecuteAsync(path, ct);
 
@@ -80,15 +80,36 @@ public sealed class DocumentManager(
         }
         catch
         {
-            try { await tx.RollbackAsync(ct); } catch { }
+            try 
+            { 
+                await tx.RollbackAsync(ct); 
+            } 
+            catch 
+            {
+                // Best effort to roll back, but if it fails, there's not much we can do.
+            }
+
             throw;
         }
     }
 
     public async Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default)
     {
-        await evaluator.EvaluateAsync(AccessOperation.Read, query.Collection, null, ct);
-        return await QueryUnprotectedAsync(query, ct);
+        var result = await QueryUnprotectedAsync(query, ct);
+
+        var allowed = new List<Document>(result.Documents.Count);
+        foreach (var doc in result.Documents)
+        {
+            try
+            {
+                await evaluator.EvaluateAsync(AccessOperation.Read, doc.Path, null, _ => Task.FromResult<Document?>(doc), ct);
+                allowed.Add(doc);
+            }
+            catch (AccessDeniedException) { }
+            catch (NoRulesMatchedException) { }
+        }
+
+        return result with { Documents = allowed };
     }
 
     public async Task<AggregateResult> AggregateAsync(AggregationPipeline pipeline, CancellationToken ct = default)
@@ -97,12 +118,12 @@ public sealed class DocumentManager(
         { 
             if (stage is MatchStage matchStage)
             {
-                await evaluator.EvaluateAsync(AccessOperation.Read, matchStage.Collection, null, ct);
+                await evaluator.EvaluateAsync(AccessOperation.Read, matchStage.Collection, null, _ => Task.FromResult<Document?>(null), ct);
                 continue;
             }
             if (stage is LookupStage lookupStage)
             {
-                await evaluator.EvaluateAsync(AccessOperation.Read, lookupStage.Collection, null, ct);
+                await evaluator.EvaluateAsync(AccessOperation.Read, lookupStage.Collection, null, _ => Task.FromResult<Document?>(null), ct);
                 continue;
             }
         }
@@ -116,13 +137,13 @@ public sealed class DocumentManager(
             switch (operation.Type)
             {
                 case BatchOperationType.Set:
-                    await evaluator.EvaluateAsync(AccessOperation.Write, operation.Path, operation.Data, ct);
+                    await evaluator.EvaluateAsync(AccessOperation.Write, operation.Path, operation.Data, (ct) => GetResourceAsync(operation.Path, ct), ct);
                     break;
                 case BatchOperationType.Update:
-                    await evaluator.EvaluateAsync(AccessOperation.Write, operation.Path, operation.Data, ct);
+                    await evaluator.EvaluateAsync(AccessOperation.Write, operation.Path, operation.Data, (ct) => GetResourceAsync(operation.Path, ct), ct);
                     break;
                 case BatchOperationType.Delete:
-                    await evaluator.EvaluateAsync(AccessOperation.Delete, operation.Path, null, ct);
+                    await evaluator.EvaluateAsync(AccessOperation.Delete, operation.Path, null, (ct) => GetResourceAsync(operation.Path, ct), ct);
                     break;
             }
         }
@@ -137,21 +158,31 @@ public sealed class DocumentManager(
             switch (mutation.Type)
             {
                 case MutationType.Set:
-                    await evaluator.EvaluateAsync(AccessOperation.Write, batch.Path, mutation.Data, ct);
+                    await evaluator.EvaluateAsync(AccessOperation.Write, batch.Path, mutation.Data, (ct) => GetResourceAsync(batch.Path, ct), ct);
                     break;
 
                 case MutationType.Update:
-                    await evaluator.EvaluateAsync(AccessOperation.Write, batch.Path, mutation.Data, ct);
+                    await evaluator.EvaluateAsync(AccessOperation.Write, batch.Path, mutation.Data, (ct) => GetResourceAsync(batch.Path, ct), ct);
                     break;
 
                 case MutationType.Delete:
-                    await evaluator.EvaluateAsync(AccessOperation.Delete, batch.Path, null, ct); 
+                    await evaluator.EvaluateAsync(AccessOperation.Delete, batch.Path, null, (ct) => GetResourceAsync(batch.Path, ct), ct); 
                     break;
             }
         }
 
         return await SyncUnprotectedAsync(batch.Path, batch.Mutations, ct);
     }
+
+    #region Resource Access
+
+    private async Task<Document?> GetResourceAsync(string path, CancellationToken ct = default)
+    {
+        await using var conn = await source.OpenConnectionAsync(ct);
+        return await new GetOperation(conn, null, _table).ExecuteAsync(path, ct);
+    }
+
+    #endregion
 
     #region Unprotected — bypass access rules
 

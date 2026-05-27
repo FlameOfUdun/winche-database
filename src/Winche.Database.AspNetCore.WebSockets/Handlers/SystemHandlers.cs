@@ -1,3 +1,4 @@
+using Winche.Database.AspNetCore.WebSockets.Interfaces;
 using Winche.Database.AspNetCore.WebSockets.Messages;
 
 namespace Winche.Database.AspNetCore.WebSockets.Handlers;

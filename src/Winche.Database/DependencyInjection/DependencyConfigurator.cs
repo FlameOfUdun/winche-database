@@ -3,12 +3,14 @@ using Winche.Database.Abstraction;
 using Winche.Database.AST.Models;
 using Winche.Database.Core.Models;
 using Winche.Database.Models;
-using WincheSentinel.DependencyInjection;
+using Winche.Sentinel.DependencyInjection;
 
 namespace Winche.Database.DependencyInjection;
 
 public sealed class DependencyConfigurator(IServiceCollection services)
 {
+    public IServiceCollection Services => services;
+
     public DependencyConfigurator AddDocumentAccessRule<TRule>() where TRule : DocumentAccessRule
     {
         services.ConfigureWincheSentinel<Document>(configurator =>

@@ -1,19 +1,15 @@
 ﻿using Microsoft.AspNetCore.Http;
-using Winche.Database.AspNetCore.WebSockets.Abstraction;
-using Winche.Database.Services;
+using Winche.Database.AspNetCore.Abstraction;
 
 namespace Winche.Database.AspNetCore.WebSockets.EndpointFilters;
 
 internal class CallerAccessor(
-    WsClaimsMapper mapper,
-    CallerContextAccessor accessor
+    DocumentClaimsAccessor accessor
 ) : IEndpointFilter
 {
     public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
     {
-        var claism = await mapper.MapClaims(context.HttpContext);
-        accessor.SetClaims(claism);
-
+        accessor.SetClaims(context.HttpContext);
         return await next(context);
     }
 }

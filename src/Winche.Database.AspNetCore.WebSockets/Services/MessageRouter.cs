@@ -1,11 +1,12 @@
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
-using WincheSentinel.Models;
+using Winche.Sentinel.Models;
 using Winche.Database.AspNetCore.WebSockets.Interfaces;
 using Winche.Database.AspNetCore.WebSockets.Messages;
-using Winche.Database.AspNetCore.WebSockets.Handlers;
 using Winche.Database.AspNetCore.WebSockets.Operands;
 using Winche.Database.Services;
+using Winche.Sentinel.Interfaces;
+using Winche.Database.AspNetCore.Abstraction;
 
 namespace Winche.Database.AspNetCore.WebSockets.Services;
 
@@ -30,13 +31,13 @@ public sealed class MessageRouter(
     IMessageHandler<SyncPushRequest> syncPushHandler,
     IMessageHandler<AggregateExecuteRequest> aggregateExecuteHandler,
     ILogger<MessageRouter> logger,
-    CallerContextAccessor callerContextAccessor
+    DocumentClaimsAccessor callerClaimsAccessor
 ) : IMessageRouter
 {
     public async Task HandleMessageAsync(string connectionId, WebSocketConnection connection, JsonDocument document, CancellationToken ct)
     {
         var claims = connectionClaimsStore.GetClaims(connectionId);
-        callerContextAccessor.SetClaims(claims);
+        callerClaimsAccessor.SetClaims(claims);
 
         ClientMessage? message;
         try

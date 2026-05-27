@@ -24,7 +24,7 @@ public static class WebApplicationExtensions
 
         configure?.Invoke(group);
 
-        group.AddEndpointFilter<CallerAccessor>();
+        group.AddEndpointFilter<ClaimsAccessor>();
         group.AddEndpointFilter<ExceptionHandler>();
 
         group.MapPut("/{path}", async (string path, JsonObject Data, IDocumentManager manager, CancellationToken ct = default) =>

@@ -1,7 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Npgsql;
-using WincheSentinel.Interfaces;
+using Winche.Sentinel.Interfaces;
 using Winche.Database.Interfaces;
 using Winche.Database.Core.Models;
 using Winche.Database.Constants;

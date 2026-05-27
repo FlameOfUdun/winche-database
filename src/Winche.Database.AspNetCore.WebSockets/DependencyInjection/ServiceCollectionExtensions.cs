@@ -9,11 +9,8 @@ namespace Winche.Database.AspNetCore.WebSockets.DependencyInjection;
 
 public static class ServiceCollectionExtensions
 {
-    public static IServiceCollection AddWincheDatabaseWsApi(this IServiceCollection services, Action<DependencyConfigurator>? configure = null)
+    public static IServiceCollection AddWincheDatabaseWsApi(this IServiceCollection services)
     {
-        var configurator = new DependencyConfigurator(services);
-        configure?.Invoke(configurator);
-
         services.AddSingleton<IConnectionRegistry, ConnectionRegistry>();
         services.AddSingleton<IConnectionClaimsStore, ConnectionClaimsStore>();
         services.AddSingleton<IConnectionManager, ConnectionManager>();
