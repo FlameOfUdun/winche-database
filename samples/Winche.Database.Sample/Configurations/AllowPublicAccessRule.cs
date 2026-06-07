@@ -1,5 +1,5 @@
-﻿using Winche.Database.Abstraction;
-using Winche.Database.Core.Models;
+using Winche.Database.Abstraction;
+using Winche.Database.Documents;
 using Winche.Sentinel.Models;
 
 namespace Winche.Database.Sample.Configurations;

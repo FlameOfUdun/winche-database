@@ -7,6 +7,8 @@ using Winche.Database.AspNetCore.WebSockets.Operands;
 using Winche.Database.Services;
 using Winche.Sentinel.Interfaces;
 using Winche.Database.AspNetCore.Abstraction;
+using Winche.Database.Querying.Planning;
+using Winche.Database.Values;
 
 namespace Winche.Database.AspNetCore.WebSockets.Services;
 
@@ -60,6 +62,7 @@ public sealed class MessageRouter(
             await connection.SendAsync(new SystemErrorResponse
             {
                 RequestId = document.RootElement.TryGetProperty("id", out var idProp) && idProp.ValueKind == JsonValueKind.String ? idProp.GetString()! : "",
+                Code = "invalid_request",
                 Message = ex.Message,
             }, ct);
             return;
@@ -112,6 +115,33 @@ public sealed class MessageRouter(
                 RequestId = message.Id,
                 Code = "permission_denied",
                 Message = "No rule matched the path"
+            }, ct);
+        }
+        catch (PlanValidationException ex)
+        {
+            await connection.SendAsync(new SystemErrorResponse
+            {
+                RequestId = message.Id,
+                Code = "invalid_query",
+                Message = ex.Message,
+            }, ct);
+        }
+        catch (WireFormatException ex)
+        {
+            await connection.SendAsync(new SystemErrorResponse
+            {
+                RequestId = message.Id,
+                Code = "invalid_value",
+                Message = ex.Message,
+            }, ct);
+        }
+        catch (ArgumentException ex)
+        {
+            await connection.SendAsync(new SystemErrorResponse
+            {
+                RequestId = message.Id,
+                Code = "invalid_path",
+                Message = ex.Message,
             }, ct);
         }
         catch (Exception ex)

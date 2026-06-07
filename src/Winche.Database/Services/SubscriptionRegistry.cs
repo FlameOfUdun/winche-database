@@ -1,8 +1,8 @@
 using System.Collections.Concurrent;
-using Winche.Database.AST.Models;
 using Winche.Database.Core.Infrastructure;
 using Winche.Database.Interfaces;
 using Winche.Database.Models;
+using Winche.Database.Querying.Ast;
 
 namespace Winche.Database.Services;
 
@@ -13,18 +13,20 @@ public sealed class SubscriptionRegistry : ISubscriptionRegistry
     private readonly SecondaryIndexMap<string> _byGroup = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _subscriptionToGroup = new(StringComparer.Ordinal);
 
-    public QueryGroup AddSubscription(string subscriptionId, Query query, QuerySnapshot snapshot, string groupKey)
+    public QueryGroup AddSubscription(string subscriptionId, QueryAst query, QuerySnapshot snapshot, string groupKey)
     {
         var group = _groups.GetOrAdd(groupKey, _ =>
         {
             _byCollection.Add(query.Collection, groupKey);
-            return new QueryGroup
+            var g = new QueryGroup
             {
                 Key = groupKey,
                 Collection = query.Collection,
                 Query = query,
                 Snapshot = snapshot,
             };
+            g.PreparePredicateFromQuery();
+            return g;
         });
 
         _byGroup.Add(groupKey, subscriptionId);

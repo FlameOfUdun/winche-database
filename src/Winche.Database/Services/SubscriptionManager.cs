@@ -1,7 +1,7 @@
-using Winche.Database.AST.Models;
 using Winche.Database.Interfaces;
-using Winche.Database.Infrastructure;
 using Winche.Database.Models;
+using Winche.Database.Querying;
+using Winche.Database.Querying.Ast;
 
 namespace Winche.Database.Services;
 
@@ -10,7 +10,7 @@ public sealed class SubscriptionManager(
     IDocumentManager manager
 ) : ISubscriptionManager
 {
-    public async Task<QuerySubscription> SubscribeAsync(Query query, CancellationToken ct = default)
+    public async Task<QuerySubscription> SubscribeAsync(QueryAst query, CancellationToken ct = default)
     {
         var result = await manager.QueryAsync(query, ct);
         var snapshot = new QuerySnapshot
@@ -19,7 +19,7 @@ public sealed class SubscriptionManager(
         };
 
         var id = Guid.NewGuid().ToString();
-        var groupKey = QuerySerializer.Serialize(query);
+        var groupKey = QueryKey.Compute(query);
         registry.AddSubscription(id, query, snapshot, groupKey);
 
         return new QuerySubscription

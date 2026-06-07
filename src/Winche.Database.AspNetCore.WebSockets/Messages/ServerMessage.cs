@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
-using Winche.Database.Core.Models;
+using Winche.Database.Documents;
 using Winche.Database.Models;
+using Winche.Database.Querying;
 
 namespace Winche.Database.AspNetCore.WebSockets.Messages;
 
@@ -110,7 +111,7 @@ public record QueryUnsubscribeResponse : ServerMessage
     public override string Type => "query:unsubscribe";
     public required string RequestId { get; init; }
 
-    [JsonPropertyName("subscriptionId")]    
+    [JsonPropertyName("subscriptionId")]
     public required string SubscriptionId { get; init; }
 }
 
@@ -221,5 +222,5 @@ public record AggregateExecuteResponse : ServerMessage
     public required string RequestId { get; init; }
 
     [JsonPropertyName("result")]
-    public required AggregateResult Result { get; init; }
+    public required PipelineResult Result { get; init; }
 }

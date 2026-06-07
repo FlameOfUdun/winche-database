@@ -1,12 +1,11 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Npgsql;
-using WincheDatabase.SQL;
-using Winche.Database.Interfaces;
-using Winche.Database.AST.Models;
 using Winche.Database.Constants;
+using Winche.Database.Documents;
+using Winche.Database.Interfaces;
 using Winche.Database.Models;
-using Winche.Database.SQL;
+using Winche.Database.Querying.Sql;
 
 namespace Winche.Database.Services;
 
@@ -23,11 +22,19 @@ public sealed class SchemaManager(
     public async Task EnsureCreatedAsync(CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = new TableSqlBuilder(_table).Build();
-        await cmd.ExecuteNonQueryAsync(ct);
-    }
 
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = SchemaSql.TableDdl(_table);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = SchemaSql.HelperFunctions(_schema);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+    }
 
     public async Task SyncIndexesAsync(CancellationToken ct = default)
     {
@@ -36,7 +43,7 @@ public sealed class SchemaManager(
         foreach (var index in _indexes)
         {
             await using var cmd = conn.CreateCommand();
-            IndexSqlBuilder.BuildCreate(index, _schema, _table).Apply(cmd);
+            cmd.CommandText = IndexSql.BuildCreate(index, _schema, _table);
             await cmd.ExecuteNonQueryAsync(ct);
         }
     }
@@ -45,7 +52,7 @@ public sealed class SchemaManager(
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = IndexSqlBuilder.BuildDrop(_schema, indexName);
+        cmd.CommandText = IndexSql.BuildDrop(_schema, indexName);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 }

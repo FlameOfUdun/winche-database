@@ -1,13 +1,13 @@
 using Npgsql;
-using System.Text.Json.Nodes;
 using Microsoft.Extensions.Options;
 using Winche.Database.Infrastructure;
-using Winche.Database.Operations;
 using Winche.Sentinel.Interfaces;
 using Winche.Sentinel.Models;
-using Winche.Database.AST.Models;
-using Winche.Database.Core.Models;
+using Winche.Database.Documents;
 using Winche.Database.Models;
+using Winche.Database.Querying;
+using Winche.Database.Querying.Ast;
+using Winche.Database.Values;
 
 namespace Winche.Database.Operands;
 
@@ -46,28 +46,28 @@ public class Transaction : IAsyncDisposable
     {
         Touch();
         await _evaluator.EvaluateAsync(AccessOperation.Read, path, null, (ct) => GetResourceAsync(path, ct), ct);
-        return await GetUnprotectedAsync(path, ct); ;
+        return await GetUnprotectedAsync(path, ct);
     }
 
-    public async Task<Document> SetAsync(string path, JsonObject data, CancellationToken ct = default)
+    public async Task<Document> SetAsync(string path, IReadOnlyDictionary<string, Value> fields, CancellationToken ct = default)
     {
         Touch();
-        await _evaluator.EvaluateAsync(AccessOperation.Write, path, data, (ct) => GetResourceAsync(path, ct), ct);
-        return await SetUnprotectedAsync(path, data, ct);
+        await _evaluator.EvaluateAsync(AccessOperation.Write, path, ValueSerializer.WriteFields(fields), (ct) => GetResourceAsync(path, ct), ct);
+        return await SetUnprotectedAsync(path, fields, ct);
     }
 
-    public async Task<Document?> UpdateAsync(string path, JsonObject data, CancellationToken ct = default)
+    public async Task<Document?> UpdateAsync(string path, IReadOnlyDictionary<string, Value> patch, CancellationToken ct = default)
     {
         Touch();
-        await _evaluator.EvaluateAsync(AccessOperation.Write, path, data, (ct) => GetResourceAsync(path, ct), ct);
-        return await UpdateUnprotectedAsync(path, data, ct);
+        await _evaluator.EvaluateAsync(AccessOperation.Write, path, ValueSerializer.WriteFields(patch), (ct) => GetResourceAsync(path, ct), ct);
+        return await UpdateUnprotectedAsync(path, patch, ct);
     }
 
     public async Task<bool> DeleteAsync(string path, CancellationToken ct = default)
     {
         Touch();
 
-        var op = new DeleteOperation(_connection, _transaction, _table);
+        var op = new DocumentOperations(_connection, _transaction, _table);
 
         var authorizedPaths = await op.SelectForUpdateAsync(path, ct);
         var authorizedSet = new HashSet<string>(authorizedPaths);
@@ -75,7 +75,7 @@ public class Transaction : IAsyncDisposable
         foreach (var p in authorizedPaths)
             await _evaluator.EvaluateAsync(AccessOperation.Delete, p, null, (ct) => GetResourceAsync(p, ct), ct);
 
-        var deleted = await op.ExecuteAsync(path, ct);
+        var deleted = await op.DeleteAsync(path, ct);
 
         var stowaways = deleted.Where(p => !authorizedSet.Contains(p)).ToList();
         if (stowaways.Count > 0)
@@ -88,7 +88,7 @@ public class Transaction : IAsyncDisposable
         return deleted.Count > 0;
     }
 
-    public async Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default)
+    public async Task<QueryResult> QueryAsync(QueryAst query, CancellationToken ct = default)
     {
         Touch();
         var result = await QueryUnprotectedAsync(query, ct);
@@ -113,32 +113,32 @@ public class Transaction : IAsyncDisposable
     public Task<Document?> GetUnprotectedAsync(string path, CancellationToken ct = default)
     {
         Touch();
-        return new GetOperation(_connection, _transaction, _table).ExecuteAsync(path, ct);
+        return new DocumentOperations(_connection, _transaction, _table).GetAsync(path, ct);
     }
 
-    public Task<Document> SetUnprotectedAsync(string path, JsonObject data, CancellationToken ct = default)
+    public Task<Document> SetUnprotectedAsync(string path, IReadOnlyDictionary<string, Value> fields, CancellationToken ct = default)
     {
         Touch();
-        return new SetOperation(_connection, _transaction, _table).ExecuteAsync(path, data, ct);
+        return new DocumentOperations(_connection, _transaction, _table).SetAsync(path, fields, ct);
     }
 
-    public Task<Document?> UpdateUnprotectedAsync(string path, JsonObject data, CancellationToken ct = default)
+    public Task<Document?> UpdateUnprotectedAsync(string path, IReadOnlyDictionary<string, Value> patch, CancellationToken ct = default)
     {
         Touch();
-        return new UpdateOperation(_connection, _transaction, _table).ExecuteAsync(path, data, ct);
+        return new DocumentOperations(_connection, _transaction, _table).UpdateAsync(path, patch, ct);
     }
 
     public async Task<bool> DeleteUnprotectedAsync(string path, CancellationToken ct = default)
     {
         Touch();
-        var deleted = await new DeleteOperation(_connection, _transaction, _table).ExecuteAsync(path, ct);
+        var deleted = await new DocumentOperations(_connection, _transaction, _table).DeleteAsync(path, ct);
         return deleted.Count > 0;
     }
 
-    public Task<QueryResult> QueryUnprotectedAsync(Query query, CancellationToken ct = default)
+    public Task<QueryResult> QueryUnprotectedAsync(QueryAst query, CancellationToken ct = default)
     {
         Touch();
-        return new QueryOperation(_connection, _transaction, _table).ExecuteAsync(query, ct);
+        return new QueryExecutor(_connection, _transaction, _table).ExecuteAsync(query, ct);
     }
 
     #endregion
@@ -171,7 +171,7 @@ public class Transaction : IAsyncDisposable
 
     private async Task<Document?> GetResourceAsync(string path, CancellationToken ct = default)
     {
-        return await new GetOperation(_connection, _transaction, _table).ExecuteAsync(path, ct);
+        return await new DocumentOperations(_connection, _transaction, _table).GetAsync(path, ct);
     }
 
     #endregion

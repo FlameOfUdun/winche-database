@@ -1,6 +1,6 @@
 using System.Threading.Channels;
 using Winche.Database.Abstraction;
-using Winche.Database.Core.Models;
+using Winche.Database.Documents;
 using Winche.Database.Interfaces;
 using Winche.Database.Models;
 using Winche.Sentinel.Interfaces;

@@ -1,6 +1,7 @@
-﻿using System.ComponentModel.DataAnnotations;
-using System.Text.Json.Nodes;
+using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization;
+using Winche.Database.Querying.Ast.Serialization;
+using Winche.Database.Values;
 
 namespace Winche.Database.Models
 {
@@ -21,8 +22,9 @@ namespace Winche.Database.Models
         [JsonPropertyName("type")]
         public required MutationType Type { get; init; }
 
-        [JsonPropertyName("data")]
-        public JsonObject? Data { get; init; }
+        [JsonPropertyName("fields")]
+        [JsonConverter(typeof(FieldsJsonConverter))]
+        public IReadOnlyDictionary<string, Value>? Fields { get; init; }
 
         [JsonPropertyName("baseVersion")]
         public long? BaseVersion { get; init; }

@@ -1,8 +1,9 @@
 using System.ComponentModel.DataAnnotations;
-using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
-using Winche.Database.AST.Models;
 using Winche.Database.Models;
+using Winche.Database.Querying.Ast;
+using Winche.Database.Querying.Ast.Serialization;
+using Winche.Database.Values;
 
 namespace Winche.Database.AspNetCore.WebSockets.Messages;
 
@@ -55,7 +56,8 @@ public record DocumentSetRequest : ClientMessage
 
     [Required]
     [JsonPropertyName("data")]
-    public required JsonObject Data { get; init; }
+    [JsonConverter(typeof(FieldsJsonConverter))]
+    public required IReadOnlyDictionary<string, Value> Data { get; init; }
 }
 public record DocumentUpdateRequest : ClientMessage
 {
@@ -65,7 +67,8 @@ public record DocumentUpdateRequest : ClientMessage
 
     [Required]
     [JsonPropertyName("data")]
-    public required JsonObject Data { get; init; }
+    [JsonConverter(typeof(FieldsJsonConverter))]
+    public required IReadOnlyDictionary<string, Value> Data { get; init; }
 }
 
 
@@ -73,13 +76,13 @@ public record QueryExecuteRequest : ClientMessage
 {
     [Required]
     [JsonPropertyName("query")]
-    public Query Query { get; init; } = null!;
+    public QueryAst Query { get; init; } = null!;
 }
 public record QuerySubscribeRequest : ClientMessage
 {
     [Required]
     [JsonPropertyName("query")]
-    public Query Query { get; init; } = null!;
+    public QueryAst Query { get; init; } = null!;
 }
 public record QueryUnsubscribeRequest : ClientMessage
 {
@@ -136,7 +139,8 @@ public record TransactionSetRequest : ClientMessage
 
     [Required]
     [JsonPropertyName("data")]
-    public required JsonObject Data { get; init; }
+    [JsonConverter(typeof(FieldsJsonConverter))]
+    public required IReadOnlyDictionary<string, Value> Data { get; init; }
 }
 public record TransactionUpdateRequest : ClientMessage
 {
@@ -150,7 +154,8 @@ public record TransactionUpdateRequest : ClientMessage
 
     [Required]
     [JsonPropertyName("data")]
-    public required JsonObject Data { get; init; }
+    [JsonConverter(typeof(FieldsJsonConverter))]
+    public required IReadOnlyDictionary<string, Value> Data { get; init; }
 }
 public record TransactionQueryRequest : ClientMessage
 {
@@ -160,7 +165,7 @@ public record TransactionQueryRequest : ClientMessage
 
     [Required]
     [JsonPropertyName("query")]
-    public Query Query { get; init; } = null!;
+    public QueryAst Query { get; init; } = null!;
 }
 
 public record BatchCommitRequest : ClientMessage
@@ -181,5 +186,5 @@ public record AggregateExecuteRequest : ClientMessage
 {
     [Required]
     [JsonPropertyName("pipeline")]
-    public AggregationPipeline Pipeline { get; init; } = null!;
+    public PipelineAst Pipeline { get; init; } = null!;
 }

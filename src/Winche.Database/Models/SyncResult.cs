@@ -1,5 +1,5 @@
-﻿using System.Text.Json.Serialization;
-using Winche.Database.Core.Models;
+using System.Text.Json.Serialization;
+using Winche.Database.Documents;
 
 namespace Winche.Database.Models
 {

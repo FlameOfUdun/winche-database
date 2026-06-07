@@ -1,4 +1,4 @@
-using Winche.Database.Core.Models;
+using Winche.Database.Documents;
 using Winche.Sentinel.AspNetCore.Abstraction;
 
 namespace Winche.Database.AspNetCore.Abstraction;

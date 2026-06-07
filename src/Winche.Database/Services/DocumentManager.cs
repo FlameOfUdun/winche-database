@@ -2,14 +2,14 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
-using System.Text.Json.Nodes;
-using Winche.Database.AST.Models;
 using Winche.Database.Constants;
-using Winche.Database.Core.Models;
+using Winche.Database.Documents;
 using Winche.Database.Infrastructure;
 using Winche.Database.Interfaces;
 using Winche.Database.Models;
-using Winche.Database.Operations;
+using Winche.Database.Querying;
+using Winche.Database.Querying.Ast;
+using Winche.Database.Values;
 using Winche.Sentinel.Interfaces;
 using Winche.Sentinel.Models;
 
@@ -28,18 +28,18 @@ public sealed class DocumentManager(
     public async Task<Document?> GetAsync(string path, CancellationToken ct = default)
     {
         await evaluator.EvaluateAsync(AccessOperation.Read, path: path, null, (ct) => GetResourceAsync(path, ct), ct);
-        return await GetUnprotectedAsync(path, ct); ;
+        return await GetUnprotectedAsync(path, ct);
     }
 
-    public async Task<Document> SetAsync(string path, JsonObject data, CancellationToken ct = default)
+    public async Task<Document> SetAsync(string path, IReadOnlyDictionary<string, Value> fields, CancellationToken ct = default)
     {
-        await evaluator.EvaluateAsync(AccessOperation.Write, path: path, data, (ct) => GetResourceAsync(path, ct), ct);
-        return await SetUnprotectedAsync(path, data, ct);
+        await evaluator.EvaluateAsync(AccessOperation.Write, path: path, ValueSerializer.WriteFields(fields), (ct) => GetResourceAsync(path, ct), ct);
+        return await SetUnprotectedAsync(path, fields, ct);
     }
 
-    public async Task<Document?> UpdateAsync(string path, JsonObject patch, CancellationToken ct = default)
+    public async Task<Document?> UpdateAsync(string path, IReadOnlyDictionary<string, Value> patch, CancellationToken ct = default)
     {
-        await evaluator.EvaluateAsync(AccessOperation.Write, path, patch, (ct) => GetResourceAsync(path, ct), ct);
+        await evaluator.EvaluateAsync(AccessOperation.Write, path, ValueSerializer.WriteFields(patch), (ct) => GetResourceAsync(path, ct), ct);
         return await UpdateUnprotectedAsync(path, patch, ct);
     }
 
@@ -50,7 +50,7 @@ public sealed class DocumentManager(
 
         try
         {
-            var op = new DeleteOperation(conn, tx, _table);
+            var op = new DocumentOperations(conn, tx, _table);
 
             var authorizedPaths = await op.SelectForUpdateAsync(path, ct);
             var authorizedSet = new HashSet<string>(authorizedPaths);
@@ -58,7 +58,7 @@ public sealed class DocumentManager(
             foreach (var p in authorizedPaths)
                 await evaluator.EvaluateAsync(AccessOperation.Delete, p, null, (ct) => GetResourceAsync(p, ct), ct);
 
-            var deleted = await op.ExecuteAsync(path, ct);
+            var deleted = await op.DeleteAsync(path, ct);
 
             var stowaways = deleted.Where(p => !authorizedSet.Contains(p)).ToList();
             if (stowaways.Count > 0)
@@ -80,11 +80,11 @@ public sealed class DocumentManager(
         }
         catch
         {
-            try 
-            { 
-                await tx.RollbackAsync(ct); 
-            } 
-            catch 
+            try
+            {
+                await tx.RollbackAsync(ct);
+            }
+            catch
             {
                 // Best effort to roll back, but if it fails, there's not much we can do.
             }
@@ -93,7 +93,7 @@ public sealed class DocumentManager(
         }
     }
 
-    public async Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default)
+    public async Task<QueryResult> QueryAsync(QueryAst query, CancellationToken ct = default)
     {
         var result = await QueryUnprotectedAsync(query, ct);
 
@@ -112,16 +112,16 @@ public sealed class DocumentManager(
         return result with { Documents = allowed };
     }
 
-    public async Task<AggregateResult> AggregateAsync(AggregationPipeline pipeline, CancellationToken ct = default)
+    public async Task<PipelineResult> AggregateAsync(PipelineAst pipeline, CancellationToken ct = default)
     {
-        foreach (PipelineStage stage in pipeline.Stages) 
-        { 
-            if (stage is MatchStage matchStage)
+        foreach (var stage in pipeline.Stages)
+        {
+            if (stage is MatchStageAst matchStage)
             {
                 await evaluator.EvaluateAsync(AccessOperation.Read, matchStage.Collection, null, _ => Task.FromResult<Document?>(null), ct);
                 continue;
             }
-            if (stage is LookupStage lookupStage)
+            if (stage is LookupStageAst lookupStage)
             {
                 await evaluator.EvaluateAsync(AccessOperation.Read, lookupStage.Collection, null, _ => Task.FromResult<Document?>(null), ct);
                 continue;
@@ -132,15 +132,19 @@ public sealed class DocumentManager(
 
     public async Task<CommitResult> CommitAsync(OperationBatch batch, CancellationToken ct = default)
     {
-        foreach (BatchOperation operation in batch.Operations) 
-        { 
+        foreach (BatchOperation operation in batch.Operations)
+        {
             switch (operation.Type)
             {
                 case BatchOperationType.Set:
-                    await evaluator.EvaluateAsync(AccessOperation.Write, operation.Path, operation.Data, (ct) => GetResourceAsync(operation.Path, ct), ct);
+                    await evaluator.EvaluateAsync(AccessOperation.Write, operation.Path,
+                        operation.Fields is null ? null : ValueSerializer.WriteFields(operation.Fields),
+                        (ct) => GetResourceAsync(operation.Path, ct), ct);
                     break;
                 case BatchOperationType.Update:
-                    await evaluator.EvaluateAsync(AccessOperation.Write, operation.Path, operation.Data, (ct) => GetResourceAsync(operation.Path, ct), ct);
+                    await evaluator.EvaluateAsync(AccessOperation.Write, operation.Path,
+                        operation.Fields is null ? null : ValueSerializer.WriteFields(operation.Fields),
+                        (ct) => GetResourceAsync(operation.Path, ct), ct);
                     break;
                 case BatchOperationType.Delete:
                     await evaluator.EvaluateAsync(AccessOperation.Delete, operation.Path, null, (ct) => GetResourceAsync(operation.Path, ct), ct);
@@ -158,15 +162,19 @@ public sealed class DocumentManager(
             switch (mutation.Type)
             {
                 case MutationType.Set:
-                    await evaluator.EvaluateAsync(AccessOperation.Write, batch.Path, mutation.Data, (ct) => GetResourceAsync(batch.Path, ct), ct);
+                    await evaluator.EvaluateAsync(AccessOperation.Write, batch.Path,
+                        mutation.Fields is null ? null : ValueSerializer.WriteFields(mutation.Fields),
+                        (ct) => GetResourceAsync(batch.Path, ct), ct);
                     break;
 
                 case MutationType.Update:
-                    await evaluator.EvaluateAsync(AccessOperation.Write, batch.Path, mutation.Data, (ct) => GetResourceAsync(batch.Path, ct), ct);
+                    await evaluator.EvaluateAsync(AccessOperation.Write, batch.Path,
+                        mutation.Fields is null ? null : ValueSerializer.WriteFields(mutation.Fields),
+                        (ct) => GetResourceAsync(batch.Path, ct), ct);
                     break;
 
                 case MutationType.Delete:
-                    await evaluator.EvaluateAsync(AccessOperation.Delete, batch.Path, null, (ct) => GetResourceAsync(batch.Path, ct), ct); 
+                    await evaluator.EvaluateAsync(AccessOperation.Delete, batch.Path, null, (ct) => GetResourceAsync(batch.Path, ct), ct);
                     break;
             }
         }
@@ -179,7 +187,7 @@ public sealed class DocumentManager(
     private async Task<Document?> GetResourceAsync(string path, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
-        return await new GetOperation(conn, null, _table).ExecuteAsync(path, ct);
+        return await new DocumentOperations(conn, null, _table).GetAsync(path, ct);
     }
 
     #endregion
@@ -189,22 +197,21 @@ public sealed class DocumentManager(
     public async Task<Document?> GetUnprotectedAsync(string path, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
-        return await new GetOperation(conn, null, _table)
-            .ExecuteAsync(path, ct);
+        return await new DocumentOperations(conn, null, _table).GetAsync(path, ct);
     }
 
-    public async Task<Document> SetUnprotectedAsync(string path, JsonObject data, CancellationToken ct = default)
+    public async Task<Document> SetUnprotectedAsync(string path, IReadOnlyDictionary<string, Value> fields, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
-        var doc = await new SetOperation(conn, null, _table).ExecuteAsync(path, data, ct);
+        var doc = await new DocumentOperations(conn, null, _table).SetAsync(path, fields, ct);
         hookDispatcher.Enqueue(path, (h, t) => h.OnDocumentSetAsync(path, doc, t));
         return doc;
     }
 
-    public async Task<Document?> UpdateUnprotectedAsync(string path, JsonObject patch, CancellationToken ct = default)
+    public async Task<Document?> UpdateUnprotectedAsync(string path, IReadOnlyDictionary<string, Value> patch, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
-        var doc = await new UpdateOperation(conn, null, _table).ExecuteAsync(path, patch, ct);
+        var doc = await new DocumentOperations(conn, null, _table).UpdateAsync(path, patch, ct);
         if (doc is not null) hookDispatcher.Enqueue(path, (h, t) => h.OnDocumentUpdatedAsync(path, doc, t));
         return doc;
     }
@@ -212,7 +219,7 @@ public sealed class DocumentManager(
     public async Task<bool> DeleteUnprotectedAsync(string path, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
-        var deleted = await new DeleteOperation(conn, null, _table).ExecuteAsync(path, ct);
+        var deleted = await new DocumentOperations(conn, null, _table).DeleteAsync(path, ct);
 
         foreach (var p in deleted)
             hookDispatcher.Enqueue(p, (h, t) => h.OnDocumentDeletedAsync(p, t));
@@ -220,17 +227,16 @@ public sealed class DocumentManager(
         return deleted.Count > 0;
     }
 
-    public async Task<QueryResult> QueryUnprotectedAsync(Query query, CancellationToken ct = default)
+    public async Task<QueryResult> QueryUnprotectedAsync(QueryAst query, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
-        return await new QueryOperation(conn, null, _table)
-            .ExecuteAsync(query, ct);
+        return await new QueryExecutor(conn, null, _table).ExecuteAsync(query, ct);
     }
 
-    public async Task<AggregateResult> AggregateUnprotectedAsync(AggregationPipeline pipeline, CancellationToken ct = default)
+    public async Task<PipelineResult> AggregateUnprotectedAsync(PipelineAst pipeline, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
-        return await new AggregateOperation(conn, null, _table).ExecuteAsync(pipeline, ct);
+        return await new PipelineExecutor(conn, null, _table).ExecuteAsync(pipeline, ct);
     }
 
     public async Task<CommitResult> CommitUnprotectedAsync(OperationBatch batch, CancellationToken ct = default)
@@ -250,19 +256,19 @@ public sealed class DocumentManager(
                     switch (operation.Type)
                     {
                         case BatchOperationType.Set:
-                            var setResult = await new SetOperation(conn, tx, _table).ExecuteAsync(operation.Path, operation.Data!, ct);
+                            var setResult = await new DocumentOperations(conn, tx, _table).SetAsync(operation.Path, operation.Fields!, ct);
                             documents.Add(setResult);
                             deletedPathsByOp.Add(null);
                             break;
 
                         case BatchOperationType.Update:
-                            var updateResult = await new UpdateOperation(conn, tx, _table).ExecuteAsync(operation.Path, operation.Data!, ct);
+                            var updateResult = await new DocumentOperations(conn, tx, _table).UpdateAsync(operation.Path, operation.Fields!, ct);
                             documents.Add(updateResult);
                             deletedPathsByOp.Add(null);
                             break;
 
                         case BatchOperationType.Delete:
-                            var deleteResult = await new DeleteOperation(conn, tx, _table).ExecuteAsync(operation.Path, ct);
+                            var deleteResult = await new DocumentOperations(conn, tx, _table).DeleteAsync(operation.Path, ct);
                             documents.Add(null);
                             deletedPathsByOp.Add(deleteResult);
                             break;
@@ -321,7 +327,7 @@ public sealed class DocumentManager(
 
         try
         {
-            var current = await new GetOperation(conn, tx, _table).ExecuteAsync(path, ct);
+            var current = await new DocumentOperations(conn, tx, _table).GetAsync(path, ct);
 
             var firstMutation = mutations[0];
             if (firstMutation.BaseVersion.HasValue
@@ -347,15 +353,15 @@ public sealed class DocumentManager(
                 switch (mutation.Type)
                 {
                     case MutationType.Set:
-                        current = await new SetOperation(conn, tx, _table).ExecuteAsync(path, mutation.Data!, ct);
+                        current = await new DocumentOperations(conn, tx, _table).SetAsync(path, mutation.Fields!, ct);
                         break;
 
                     case MutationType.Update:
-                        current = await new UpdateOperation(conn, tx, _table).ExecuteAsync(path, mutation.Data!, ct);
+                        current = await new DocumentOperations(conn, tx, _table).UpdateAsync(path, mutation.Fields!, ct);
                         break;
 
                     case MutationType.Delete:
-                        var deleted = await new DeleteOperation(conn, tx, _table).ExecuteAsync(path, ct);
+                        var deleted = await new DocumentOperations(conn, tx, _table).DeleteAsync(path, ct);
                         foreach (var p in deleted)
                             cascadeDeletedPaths.Add(p);
                         current = null;
@@ -393,7 +399,7 @@ public sealed class DocumentManager(
 
             await tx.DisposeAsync();
 
-            var serverDoc = await new GetOperation(conn, null, _table).ExecuteAsync(path, ct);
+            var serverDoc = await new DocumentOperations(conn, null, _table).GetAsync(path, ct);
             return new SyncResult
             {
                 Path = path,

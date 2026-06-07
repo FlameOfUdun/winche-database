@@ -1,13 +1,15 @@
-﻿using Winche.Database.AST.Models;
+using Winche.Database.Documents;
+using Winche.Database.Querying.Ast;
 
 namespace Winche.Database.Sample.Configurations;
 
-public sealed class WildcardIndexDefinition : IndexDefinition
+public class WildcardIndexDefinition : IndexDefinition
 {
-    public override string Collection => "orders/{region}";
+    public override string Collection => "users";
 
-    public override List<SortNode> Fields => 
+    public override IReadOnlyList<IndexField> Fields =>
     [
-        new SortNode("finishedAt", SortDirection.Desc, FieldType.Timestamp),
+        new IndexField("name"),
+        new IndexField("age", SortDirection.Desc),
     ];
 }

@@ -1,8 +1,6 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using Winche.Database.Abstraction;
-using Winche.Database.AST.Models;
-using Winche.Database.Core.Models;
-using Winche.Database.Models;
+using Winche.Database.Documents;
 using Winche.Sentinel.DependencyInjection;
 
 namespace Winche.Database.DependencyInjection;

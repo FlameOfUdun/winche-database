@@ -1,6 +1,7 @@
-﻿using System.ComponentModel.DataAnnotations;
-using System.Text.Json.Nodes;
+using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization;
+using Winche.Database.Querying.Ast.Serialization;
+using Winche.Database.Values;
 
 namespace Winche.Database.Models
 {
@@ -15,7 +16,7 @@ namespace Winche.Database.Models
         Delete
     }
 
-    public record BatchOperation
+    public sealed record BatchOperation
     {
         [Required]
         [JsonPropertyName("type")]
@@ -25,7 +26,8 @@ namespace Winche.Database.Models
         [JsonPropertyName("path")]
         public required string Path { get; init; }
 
-        [JsonPropertyName("data")]
-        public JsonObject? Data { get; init; }
+        [JsonPropertyName("fields")]
+        [JsonConverter(typeof(FieldsJsonConverter))]
+        public IReadOnlyDictionary<string, Value>? Fields { get; init; }
     }
 }

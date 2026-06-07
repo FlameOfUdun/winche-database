@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Winche.Database.AspNetCore.Abstraction;
-using Winche.Database.Core.Models;
+using Winche.Database.Documents;
 using Winche.Database.DependencyInjection;
 using Winche.Sentinel.DependencyInjection;
 using Winche.Sentinel.Interfaces;

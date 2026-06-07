@@ -4,7 +4,6 @@ using Microsoft.AspNetCore.Routing;
 using Winche.Database.AspNetCore.WebSockets.EndpointFilters;
 using Winche.Database.AspNetCore.Abstraction;
 using Winche.Database.AspNetCore.WebSockets.Interfaces;
-using Winche.Database.Core.Models;
 
 namespace Winche.Database.AspNetCore.WebSockets.DependencyInjection;
 

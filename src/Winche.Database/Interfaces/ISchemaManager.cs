@@ -1,5 +1,3 @@
-﻿using WincheDatabase.SQL;
-
 namespace Winche.Database.Interfaces;
 
 public interface ISchemaManager

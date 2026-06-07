@@ -8,5 +8,8 @@
   <Folder Name="/samples/">
     <Project Path="samples/Winche.Database.Sample/Winche.Database.Sample.csproj" />
   </Folder>
-  <Folder Name="/tests/" />
+  <Folder Name="/tests/">
+    <Project Path="tests/Winche.Database.Tests/Winche.Database.Tests.csproj" />
+    <Project Path="tests/Winche.Database.IntegrationTests/Winche.Database.IntegrationTests.csproj" />
+  </Folder>
 </Solution>

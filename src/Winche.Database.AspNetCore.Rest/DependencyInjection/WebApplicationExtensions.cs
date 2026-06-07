@@ -1,12 +1,15 @@
-﻿using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using System.Text;
-using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using Winche.Database.AspNetCore.Rest.EndpointFilters;
-using Winche.Database.AST.Models;
 using Winche.Database.Interfaces;
 using Winche.Database.Models;
+using Winche.Database.Querying;
+using Winche.Database.Querying.Ast;
+using Winche.Database.Querying.Ast.Serialization;
+using Winche.Database.Values;
 
 namespace Winche.Database.AspNetCore.Rest.DependencyInjection;
 
@@ -27,10 +30,10 @@ public static class WebApplicationExtensions
         group.AddEndpointFilter<ClaimsAccessor>();
         group.AddEndpointFilter<ExceptionHandler>();
 
-        group.MapPut("/{path}", async (string path, JsonObject Data, IDocumentManager manager, CancellationToken ct = default) =>
+        group.MapPut("/{path}", async (string path, DocumentPayload body, IDocumentManager manager, CancellationToken ct = default) =>
         {
             var decoded = DecodeBase64(path);
-            var document = await manager.SetAsync(decoded, Data, ct);
+            var document = await manager.SetAsync(decoded, body.Fields, ct);
             return Results.Json(document, statusCode: 200, contentType: "application/json");
         });
 
@@ -48,10 +51,10 @@ public static class WebApplicationExtensions
             return deleted ? Results.NoContent() : Results.NotFound();
         });
 
-        group.MapPatch("/{path}", async (string path, JsonObject Data, IDocumentManager manager, CancellationToken ct = default) =>
+        group.MapPatch("/{path}", async (string path, DocumentPayload body, IDocumentManager manager, CancellationToken ct = default) =>
         {
             var decoded = DecodeBase64(path);
-            var document = await manager.UpdateAsync(decoded, Data, ct);
+            var document = await manager.UpdateAsync(decoded, body.Fields, ct);
             return document is null ? Results.NotFound() : Results.Json(document, statusCode: 200, contentType: "application/json");
         });
 
@@ -67,13 +70,13 @@ public static class WebApplicationExtensions
             return Results.Json(result, statusCode: 200, contentType: "application/json");
         });
 
-        group.MapPost("/aggregate", async (AggregationPipeline pipeline, IDocumentManager manager, CancellationToken ct = default) =>
+        group.MapPost("/aggregate", async (PipelineAst pipeline, IDocumentManager manager, CancellationToken ct = default) =>
         {
             var result = await manager.AggregateAsync(pipeline, ct);
             return Results.Json(result, statusCode: 200, contentType: "application/json");
         });
 
-        group.MapPost("/query", async (Query query, IDocumentManager manager, CancellationToken ct = default) =>
+        group.MapPost("/query", async (QueryAst query, IDocumentManager manager, CancellationToken ct = default) =>
         {
             var result = await manager.QueryAsync(query, ct);
             return Results.Json(result, statusCode: 200, contentType: "application/json");
@@ -86,4 +89,11 @@ public static class WebApplicationExtensions
 
         return app;
     }
+}
+
+public sealed record DocumentPayload
+{
+    [JsonPropertyName("fields")]
+    [JsonConverter(typeof(FieldsJsonConverter))]
+    public required IReadOnlyDictionary<string, Value> Fields { get; init; }
 }

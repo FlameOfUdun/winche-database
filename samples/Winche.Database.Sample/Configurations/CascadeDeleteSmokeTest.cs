@@ -1,5 +1,5 @@
-using System.Text.Json.Nodes;
 using Winche.Database.Interfaces;
+using Winche.Database.Values;
 
 namespace Winche.Database.Sample.Configurations;
 
@@ -33,11 +33,11 @@ public static class CascadeDeleteSmokeTest
     {
         Banner("Scenario 1: delete a document that has sub-collections");
 
-        await manager.SetUnprotectedAsync("users/alice", Obj(("name", "Alice")));
-        await manager.SetUnprotectedAsync("users/alice/posts/p1", Obj(("title", "Hello")));
-        await manager.SetUnprotectedAsync("users/alice/posts/p2", Obj(("title", "World")));
-        await manager.SetUnprotectedAsync("users/alice/posts/p1/likes/l1", Obj(("by", "bob")));
-        await manager.SetUnprotectedAsync("users/bob", Obj(("name", "Bob")));
+        await manager.SetUnprotectedAsync("users/alice", Fields(("name", new StringValue("Alice"))));
+        await manager.SetUnprotectedAsync("users/alice/posts/p1", Fields(("title", new StringValue("Hello"))));
+        await manager.SetUnprotectedAsync("users/alice/posts/p2", Fields(("title", new StringValue("World"))));
+        await manager.SetUnprotectedAsync("users/alice/posts/p1/likes/l1", Fields(("by", new StringValue("bob"))));
+        await manager.SetUnprotectedAsync("users/bob", Fields(("name", new StringValue("Bob"))));
 
         Console.WriteLine("Seeded:");
         await PrintExistence(manager, [
@@ -74,14 +74,14 @@ public static class CascadeDeleteSmokeTest
     {
         Banner("Scenario 2: delete a collection that has documents with sub-collections");
 
-        await manager.SetUnprotectedAsync("orgs/acme", Obj(("name", "ACME")));
-        await manager.SetUnprotectedAsync("orgs/acme/teams/t1", Obj(("name", "Team 1")));
-        await manager.SetUnprotectedAsync("orgs/acme/teams/t1/members/m1", Obj(("name", "Member 1")));
-        await manager.SetUnprotectedAsync("orgs/acme/teams/t1/members/m2", Obj(("name", "Member 2")));
-        await manager.SetUnprotectedAsync("orgs/acme/teams/t2", Obj(("name", "Team 2")));
-        await manager.SetUnprotectedAsync("orgs/acme/teams/t2/members/m3", Obj(("name", "Member 3")));
-        await manager.SetUnprotectedAsync("orgs/acme/projects/pr1", Obj(("name", "Project 1")));
-        await manager.SetUnprotectedAsync("orgs/other", Obj(("name", "Other Org")));
+        await manager.SetUnprotectedAsync("orgs/acme", Fields(("name", new StringValue("ACME"))));
+        await manager.SetUnprotectedAsync("orgs/acme/teams/t1", Fields(("name", new StringValue("Team 1"))));
+        await manager.SetUnprotectedAsync("orgs/acme/teams/t1/members/m1", Fields(("name", new StringValue("Member 1"))));
+        await manager.SetUnprotectedAsync("orgs/acme/teams/t1/members/m2", Fields(("name", new StringValue("Member 2"))));
+        await manager.SetUnprotectedAsync("orgs/acme/teams/t2", Fields(("name", new StringValue("Team 2"))));
+        await manager.SetUnprotectedAsync("orgs/acme/teams/t2/members/m3", Fields(("name", new StringValue("Member 3"))));
+        await manager.SetUnprotectedAsync("orgs/acme/projects/pr1", Fields(("name", new StringValue("Project 1"))));
+        await manager.SetUnprotectedAsync("orgs/other", Fields(("name", new StringValue("Other Org"))));
 
         Console.WriteLine("Seeded:");
         await PrintExistence(manager, [
@@ -148,10 +148,10 @@ public static class CascadeDeleteSmokeTest
         Console.WriteLine(new string('=', Math.Max(40, title.Length + 4)));
     }
 
-    private static JsonObject Obj(params (string Key, JsonNode? Value)[] entries)
+    private static IReadOnlyDictionary<string, Value> Fields(params (string Key, Value Value)[] entries)
     {
-        var o = new JsonObject();
-        foreach (var (k, v) in entries) o[k] = v;
-        return o;
+        var d = new Dictionary<string, Value>();
+        foreach (var (k, v) in entries) d[k] = v;
+        return d;
     }
 }

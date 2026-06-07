@@ -1,6 +1,6 @@
-﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Winche.Database.Core.Models;
+using Winche.Database.Documents;
 using Winche.Database.Services;
 using Winche.Database.Interfaces;
 using Winche.Database.BackgroundServices;

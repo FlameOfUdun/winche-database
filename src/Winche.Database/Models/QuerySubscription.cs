@@ -1,4 +1,5 @@
-﻿using System.Text.Json.Serialization;
+using System.Text.Json.Serialization;
+using Winche.Database.Querying;
 
 namespace Winche.Database.Models
 {
@@ -8,6 +9,6 @@ namespace Winche.Database.Models
         public string Id { get; init; } = string.Empty;
 
         [JsonPropertyName("result")]
-        public QueryResult Result { get; init; } = new();
+        public QueryResult Result { get; init; } = new([], false);
     }
 }

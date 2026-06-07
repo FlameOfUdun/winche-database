@@ -1,8 +1,7 @@
-using System.Text.Json.Nodes;
 using Winche.Database.AspNetCore.Abstraction;
-using Winche.Database.AST.Models;
 using Winche.Database.Interfaces;
-using Winche.Database.Models;
+using Winche.Database.Querying.Ast;
+using Winche.Database.Values;
 
 namespace Winche.Database.Sample.Configurations;
 
@@ -39,9 +38,9 @@ public static class AccessRuleSmokeTest
         Banner("Scenario 1: QueryAsync filters results per-document access rule");
 
         // Seed three users
-        await manager.SetUnprotectedAsync("smoke-users/alice", Obj(("name", "Alice")));
-        await manager.SetUnprotectedAsync("smoke-users/bob",   Obj(("name", "Bob")));
-        await manager.SetUnprotectedAsync("smoke-users/charlie", Obj(("name", "Charlie")));
+        await manager.SetUnprotectedAsync("smoke-users/alice", Fields(("name", new StringValue("Alice"))));
+        await manager.SetUnprotectedAsync("smoke-users/bob",   Fields(("name", new StringValue("Bob"))));
+        await manager.SetUnprotectedAsync("smoke-users/charlie", Fields(("name", new StringValue("Charlie"))));
 
         // OwnerReadRule: smoke-users/{userId} allows Read only when uid claim == userId.
         // AllowPublicAccessRule (**) also matches and returns true, so both rules must pass.
@@ -50,7 +49,7 @@ public static class AccessRuleSmokeTest
         claimsAccessor.SetClaims(new Dictionary<string, object?> { ["uid"] = "alice" });
         Console.WriteLine("Caller: uid = \"alice\"");
 
-        var query = new Query { Collection = "smoke-users", Limit = 10 };
+        var query = new QueryAst("smoke-users", Limit: 10);
 
         var protectedResult   = await manager.QueryAsync(query);
         var unprotectedResult = await manager.QueryUnprotectedAsync(query);
@@ -81,14 +80,14 @@ public static class AccessRuleSmokeTest
     {
         Banner("Scenario 2: QueryAsync silently drops documents denied by rules");
 
-        await manager.SetUnprotectedAsync("smoke-users/alice", Obj(("name", "Alice")));
-        await manager.SetUnprotectedAsync("smoke-users/bob",   Obj(("name", "Bob")));
+        await manager.SetUnprotectedAsync("smoke-users/alice", Fields(("name", new StringValue("Alice"))));
+        await manager.SetUnprotectedAsync("smoke-users/bob",   Fields(("name", new StringValue("Bob"))));
 
         // uid = "bob" — alice is denied, bob is allowed.
         claimsAccessor.SetClaims(new Dictionary<string, object?> { ["uid"] = "bob" });
         Console.WriteLine("Caller: uid = \"bob\"");
 
-        var query = new Query { Collection = "smoke-users", Limit = 10 };
+        var query = new QueryAst("smoke-users", Limit: 10);
         var result = await manager.QueryAsync(query);
 
         Console.WriteLine($"  QueryAsync result: {result.Documents.Count} doc(s)");
@@ -109,9 +108,9 @@ public static class AccessRuleSmokeTest
     {
         Banner("Scenario 3: AggregateAsync enforces collection-level access, not per-row");
 
-        await manager.SetUnprotectedAsync("smoke-users/alice", Obj(("name", "Alice")));
-        await manager.SetUnprotectedAsync("smoke-users/bob",   Obj(("name", "Bob")));
-        await manager.SetUnprotectedAsync("smoke-users/charlie", Obj(("name", "Charlie")));
+        await manager.SetUnprotectedAsync("smoke-users/alice", Fields(("name", new StringValue("Alice"))));
+        await manager.SetUnprotectedAsync("smoke-users/bob",   Fields(("name", new StringValue("Bob"))));
+        await manager.SetUnprotectedAsync("smoke-users/charlie", Fields(("name", new StringValue("Charlie"))));
 
         // uid = "alice" — OwnerReadRule would deny bob and charlie at document level.
         // But AggregateAsync only checks the collection path "smoke-users", which
@@ -124,19 +123,16 @@ public static class AccessRuleSmokeTest
         Console.WriteLine("Caller: uid = \"alice\" (OwnerReadRule would restrict per-document reads)");
         Console.WriteLine("  Collection-level check: 'smoke-users' matches AllowPublicAccessRule -> allowed");
 
-        var pipeline = new AggregationPipeline
-        {
-            Stages = [new MatchStage("smoke-users", null)]
-        };
+        var pipeline = new PipelineAst([new MatchStageAst("smoke-users", null)]);
 
         var result = await manager.AggregateAsync(pipeline);
 
-        Console.WriteLine($"  AggregateAsync result: {result.Count} row(s)");
+        Console.WriteLine($"  AggregateAsync result: {result.Rows.Count} row(s)");
 
-        Assert("all 3 rows returned (no per-row filtering in aggregation)", result.Count == 3);
+        Assert("all 3 rows returned (no per-row filtering in aggregation)", result.Rows.Count == 3);
 
         // Contrast: QueryAsync on the same data returns only alice's doc.
-        var query = new Query { Collection = "smoke-users", Limit = 10 };
+        var query = new QueryAst("smoke-users", Limit: 10);
         var queryResult = await manager.QueryAsync(query);
 
         Console.WriteLine($"  QueryAsync on same data:          {queryResult.Documents.Count} doc(s)");
@@ -145,7 +141,7 @@ public static class AccessRuleSmokeTest
             queryResult.Documents.Count == 1);
 
         Assert("aggregation returns more rows than filtered query",
-            result.Count > queryResult.Documents.Count);
+            result.Rows.Count > queryResult.Documents.Count);
 
         claimsAccessor.SetClaims(new Dictionary<string, object?>());
     }
@@ -175,10 +171,10 @@ public static class AccessRuleSmokeTest
         Console.WriteLine(new string('=', Math.Max(40, title.Length + 4)));
     }
 
-    private static JsonObject Obj(params (string Key, JsonNode? Value)[] entries)
+    private static IReadOnlyDictionary<string, Value> Fields(params (string Key, Value Value)[] entries)
     {
-        var o = new JsonObject();
-        foreach (var (k, v) in entries) o[k] = v;
-        return o;
+        var d = new Dictionary<string, Value>();
+        foreach (var (k, v) in entries) d[k] = v;
+        return d;
     }
 }

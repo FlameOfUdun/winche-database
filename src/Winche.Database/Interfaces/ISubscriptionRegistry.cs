@@ -1,11 +1,11 @@
-﻿using Winche.Database.AST.Models;
 using Winche.Database.Models;
+using Winche.Database.Querying.Ast;
 
 namespace Winche.Database.Interfaces;
 
 public interface ISubscriptionRegistry
 {
-    QueryGroup AddSubscription(string subscriptionId, Query query, QuerySnapshot snapshot, string groupKey);
+    QueryGroup AddSubscription(string subscriptionId, QueryAst query, QuerySnapshot snapshot, string groupKey);
     bool TryRemove(string subscriptionId);
     IEnumerable<QueryGroup> GetGroupsByCollection(string collection);
     QueryGroup? TryGetGroup(string groupKey);

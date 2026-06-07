@@ -1,9 +1,9 @@
 using Microsoft.Extensions.Logging;
 using System.Collections.Immutable;
+using Winche.Database.Documents;
 using Winche.Database.Interfaces;
 using Winche.Database.Models;
-using Winche.Database.Core.Models;
-using Winche.Database.Infrastructure;
+using Winche.Database.Querying.Matching;
 
 namespace Winche.Database.Services;
 
@@ -26,7 +26,7 @@ public sealed class ChangeProcessor(
         {
             var document = await manager.GetUnprotectedAsync(change.Path, ct);
             if (document != null)
-                change = change with { Data = document.Data };
+                change = change with { Fields = document.Fields };
         }
 
         var options = new ParallelOptions
@@ -50,7 +50,8 @@ public sealed class ChangeProcessor(
 
     private async Task ProcessGroupAsync(QueryGroup group, DocumentChange change, CancellationToken ct)
     {
-        if (!QueryMatcher.CouldAffect(group.Query, group.Snapshot, change))
+        if (!ChangeMatcher.CouldAffect(group, group.Snapshot.DocumentIds,
+                change.Id, change.Type == DocumentChangeType.Removed, change.Path, change.Fields))
             return;
 
         while (true)
