@@ -10,42 +10,11 @@ namespace Winche.Database.Querying.Sql;
 public static class SchemaSql
 {
     /// <summary>
-    /// Table DDL: trigger function, table, three standard indexes, and the trigger.
-    /// Ported from the old TableSqlBuilder minus the parse_timestamp helper (no longer used).
+    /// Table DDL: table, three standard indexes. The notify_document_change trigger was removed
+    /// in Plan 3 (the durable changes feed is the only notifier now; see ChangesDdl).
+    /// Cleanup lines drop the old trigger/function on existing databases.
     /// </summary>
     public static string TableDdl(string table) => $$"""
-        CREATE OR REPLACE FUNCTION public.notify_document_change() RETURNS TRIGGER AS $$
-
-        DECLARE payload JSONB;
-        BEGIN
-            IF TG_OP = 'DELETE' THEN
-                payload := jsonb_build_object(
-                    'type',       'removed',
-                    'path',       OLD.path,
-                    'collection', OLD.collection,
-                    'id',         OLD.id,
-                    'created_at', OLD.created_at,
-                    'updated_at', OLD.updated_at,
-                    'version',    OLD.version
-                );
-            ELSE
-                payload := jsonb_build_object(
-                    'type',  CASE WHEN TG_OP = 'INSERT' THEN 'added' ELSE 'modified' END,
-                    'path',       NEW.path,
-                    'collection', NEW.collection,
-                    'id',         NEW.id,
-                    'created_at', NEW.created_at,
-                    'updated_at', NEW.updated_at,
-                    'version',    NEW.version
-                );
-            END IF;
-
-            PERFORM pg_notify('document_changes', payload::text);
-            RETURN COALESCE(NEW, OLD);
-        END;
-        $$ LANGUAGE plpgsql
-        SET search_path = public;
-
         CREATE TABLE IF NOT EXISTS {{table}} (
             path        TEXT        PRIMARY KEY,
             id          TEXT        NOT NULL,
@@ -66,9 +35,38 @@ public static class SchemaSql
             ON {{table}} USING GIN(data);
 
         DROP TRIGGER IF EXISTS document_change_trigger ON {{table}};
-        CREATE TRIGGER document_change_trigger
-        AFTER INSERT OR UPDATE OR DELETE ON {{table}}
-        FOR EACH ROW EXECUTE FUNCTION public.notify_document_change();
+        DROP FUNCTION IF EXISTS public.notify_document_change() CASCADE;
+        """;
+
+    /// <summary>
+    /// The durable change feed: one row per affected document, appended in the SAME
+    /// transaction as the write (WriteApplier). The trigger emits pg_notify as a
+    /// wake-up only — the rows are the durable truth (spec §2/§4).
+    /// </summary>
+    public static string ChangesDdl(string table, string schema = "public") => $"""
+        CREATE TABLE IF NOT EXISTS {schema}.{table}_changes (
+            seq         BIGSERIAL PRIMARY KEY,
+            type        TEXT NOT NULL,
+            path        TEXT NOT NULL,
+            collection  TEXT NOT NULL,
+            version     BIGINT NOT NULL,
+            commit_time TIMESTAMPTZ NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_{table}_changes_commit_time
+            ON {schema}.{table}_changes (commit_time);
+
+        CREATE OR REPLACE FUNCTION {schema}.winche_notify_change() RETURNS TRIGGER AS $t$
+        BEGIN
+            PERFORM pg_notify('winche_changes', NEW.seq::text);
+            RETURN NEW;
+        END;
+        $t$ LANGUAGE plpgsql;
+
+        DROP TRIGGER IF EXISTS winche_changes_trigger ON {schema}.{table}_changes;
+        CREATE TRIGGER winche_changes_trigger
+        AFTER INSERT ON {schema}.{table}_changes
+        FOR EACH ROW EXECUTE FUNCTION {schema}.winche_notify_change();
         """;
 
     public static string HelperFunctions(string schema = "public") => $"""

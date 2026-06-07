@@ -29,6 +29,11 @@ public sealed class PostgresFixture : IAsyncLifetime
             cmd.CommandText = SchemaSql.HelperFunctions();
             await cmd.ExecuteNonQueryAsync();
         }
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = SchemaSql.ChangesDdl(Table);
+            await cmd.ExecuteNonQueryAsync();
+        }
     }
 
     public async Task DisposeAsync()
@@ -43,6 +48,31 @@ public sealed class PostgresFixture : IAsyncLifetime
         await using var conn = await DataSource.OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"TRUNCATE {Table}";
+        await cmd.ExecuteNonQueryAsync();
+        await ResetChangesAsync();
+    }
+
+    /// <summary>Reads all change rows after seq, in order.</summary>
+    public async Task<List<(long Seq, string Type, string Path, string Collection, long Version, DateTimeOffset CommitTime)>>
+        ReadChangesAsync(long afterSeq = 0)
+    {
+        await using var conn = await DataSource.OpenConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"SELECT seq, type, path, collection, version, commit_time FROM {Table}_changes WHERE seq > $1 ORDER BY seq";
+        cmd.Parameters.AddWithValue(afterSeq);
+        var rows = new List<(long, string, string, string, long, DateTimeOffset)>();
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            rows.Add((reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
+                      reader.GetInt64(4), reader.GetFieldValue<DateTimeOffset>(5)));
+        return rows;
+    }
+
+    public async Task ResetChangesAsync()
+    {
+        await using var conn = await DataSource.OpenConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"TRUNCATE {Table}_changes RESTART IDENTITY";
         await cmd.ExecuteNonQueryAsync();
     }
 }

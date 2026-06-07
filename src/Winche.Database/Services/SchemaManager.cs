@@ -34,6 +34,12 @@ public sealed class SchemaManager(
             cmd.CommandText = SchemaSql.HelperFunctions(_schema);
             await cmd.ExecuteNonQueryAsync(ct);
         }
+
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = SchemaSql.ChangesDdl(_table, _schema);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
     }
 
     public async Task SyncIndexesAsync(CancellationToken ct = default)

@@ -13,20 +13,22 @@ file sealed class CityIndex : IndexDefinition
 [Collection("postgres")]
 public class IndexSyncTests(PostgresFixture fx) : QueryTestBase(fx)
 {
+    private readonly PostgresFixture _fx = fx;
+
     [Fact]
     public async Task CreateAndDrop_RoundTrip()
     {
-        await using var conn = await fx.DataSource.OpenConnectionAsync();
+        await using var conn = await _fx.DataSource.OpenConnectionAsync();
         await using (var create = conn.CreateCommand())
         {
-            create.CommandText = IndexSql.BuildCreate(new CityIndex(), "public", fx.Table);
+            create.CommandText = IndexSql.BuildCreate(new CityIndex(), "public", _fx.Table);
             await create.ExecuteNonQueryAsync();
         }
 
         string discoveredName;
         await using (var check = conn.CreateCommand())
         {
-            check.CommandText = $"SELECT indexname FROM pg_indexes WHERE indexname LIKE 'idx_{fx.Table}_c_%' AND tablename = '{fx.Table}'";
+            check.CommandText = $"SELECT indexname FROM pg_indexes WHERE indexname LIKE 'idx_{_fx.Table}_c_%' AND tablename = '{_fx.Table}'";
             var result = await check.ExecuteScalarAsync();
             Assert.NotNull(result);
             discoveredName = (string)result!;

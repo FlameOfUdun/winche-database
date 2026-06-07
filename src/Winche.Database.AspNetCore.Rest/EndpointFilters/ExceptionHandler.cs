@@ -43,6 +43,20 @@ internal class ExceptionHandler : IEndpointFilter
         {
             return Results.Json(new { error = ex.Message, code = "invalid_path" }, statusCode: 400, contentType: "application/json");
         }
+        catch (Runtime.RuntimeException ex)
+        {
+            var status = ex.Status switch
+            {
+                Runtime.RuntimeStatus.NotFound => 404,
+                Runtime.RuntimeStatus.AlreadyExists => 409,
+                Runtime.RuntimeStatus.Aborted => 409,
+                Runtime.RuntimeStatus.FailedPrecondition => 412,
+                Runtime.RuntimeStatus.DeadlineExceeded => 504,
+                _ => 400,
+            };
+            var code = ex.Status.ToString().ToLowerInvariant();
+            return Results.Json(new { error = ex.Message, code }, statusCode: status, contentType: "application/json");
+        }
         catch (Exception ex)
         {
             return Results.Json(new { error = "Unexpected error", detail = ex.Message }, statusCode: 500, contentType: "application/json");

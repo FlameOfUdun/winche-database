@@ -4,10 +4,10 @@ using Microsoft.AspNetCore.Routing;
 using System.Text;
 using System.Text.Json.Serialization;
 using Winche.Database.AspNetCore.Rest.EndpointFilters;
-using Winche.Database.Interfaces;
-using Winche.Database.Models;
-using Winche.Database.Querying;
 using Winche.Database.Querying.Ast;
+using Winche.Database.Runtime;
+using Winche.Database.Runtime.Writes;
+using Winche.Database.Documents;
 using Winche.Database.Querying.Ast.Serialization;
 using Winche.Database.Values;
 
@@ -30,55 +30,49 @@ public static class WebApplicationExtensions
         group.AddEndpointFilter<ClaimsAccessor>();
         group.AddEndpointFilter<ExceptionHandler>();
 
-        group.MapPut("/{path}", async (string path, DocumentPayload body, IDocumentManager manager, CancellationToken ct = default) =>
+        group.MapPut("/{path}", async (string path, DocumentPayload body, IDocumentDatabase db, CancellationToken ct = default) =>
         {
             var decoded = DecodeBase64(path);
-            var document = await manager.SetAsync(decoded, body.Fields, ct);
-            return Results.Json(document, statusCode: 200, contentType: "application/json");
+            await db.WriteAsync([new SetWrite { Path = decoded, Fields = body.Fields }], ct);
+            var doc = await db.GetAsync(decoded, ct);
+            return Results.Json(doc, statusCode: 200, contentType: "application/json");
         });
 
-        group.MapGet("/{path}", async (string path, IDocumentManager manager, CancellationToken ct = default) =>
+        group.MapGet("/{path}", async (string path, IDocumentDatabase db, CancellationToken ct = default) =>
         {
             var decoded = DecodeBase64(path);
-            var document = await manager.GetAsync(decoded, ct);
+            var document = await db.GetAsync(decoded, ct);
             return document is null ? Results.NotFound() : Results.Json(document, statusCode: 200, contentType: "application/json");
         });
 
-        group.MapDelete("/{path}", async (string path, IDocumentManager manager, CancellationToken ct = default) =>
+        group.MapDelete("/{path}", async (string path, IDocumentDatabase db, CancellationToken ct = default) =>
         {
             var decoded = DecodeBase64(path);
-            var deleted = await manager.DeleteAsync(decoded, ct);
-            return deleted ? Results.NoContent() : Results.NotFound();
+            if (await db.GetAsync(decoded, ct) is null) return Results.NotFound();
+            await db.WriteAsync([new DeleteWrite { Path = decoded, Cascade = true }], ct);
+            return Results.NoContent();
         });
 
-        group.MapPatch("/{path}", async (string path, DocumentPayload body, IDocumentManager manager, CancellationToken ct = default) =>
+        group.MapPatch("/{path}", async (string path, DocumentPayload body, IDocumentDatabase db, CancellationToken ct = default) =>
         {
             var decoded = DecodeBase64(path);
-            var document = await manager.UpdateAsync(decoded, body.Fields, ct);
-            return document is null ? Results.NotFound() : Results.Json(document, statusCode: 200, contentType: "application/json");
+            var updateFields = body.Fields.ToDictionary(
+                kv => FieldPath.Parse(kv.Key),
+                kv => kv.Value);
+            await db.WriteAsync([new UpdateWrite { Path = decoded, Fields = updateFields }], ct);
+            var doc = await db.GetAsync(decoded, ct);
+            return doc is null ? Results.NotFound() : Results.Json(doc, statusCode: 200, contentType: "application/json");
         });
 
-        group.MapPost("/synchronize", async (MutationBatch batch, IDocumentManager manager, CancellationToken ct = default) =>
+        group.MapPost("/aggregate", async (PipelineAst pipeline, IDocumentDatabase db, CancellationToken ct = default) =>
         {
-            var result = await manager.SyncAsync(batch, ct);
+            var result = await db.AggregateAsync(pipeline, ct);
             return Results.Json(result, statusCode: 200, contentType: "application/json");
         });
 
-        group.MapPost("/commit", async (OperationBatch batch, IDocumentManager manager, CancellationToken ct = default) =>
+        group.MapPost("/query", async (QueryAst query, IDocumentDatabase db, CancellationToken ct = default) =>
         {
-            var result = await manager.CommitAsync(batch, ct);
-            return Results.Json(result, statusCode: 200, contentType: "application/json");
-        });
-
-        group.MapPost("/aggregate", async (PipelineAst pipeline, IDocumentManager manager, CancellationToken ct = default) =>
-        {
-            var result = await manager.AggregateAsync(pipeline, ct);
-            return Results.Json(result, statusCode: 200, contentType: "application/json");
-        });
-
-        group.MapPost("/query", async (QueryAst query, IDocumentManager manager, CancellationToken ct = default) =>
-        {
-            var result = await manager.QueryAsync(query, ct);
+            var result = await db.QueryAsync(query, ct);
             return Results.Json(result, statusCode: 200, contentType: "application/json");
         });
 

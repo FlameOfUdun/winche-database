@@ -1,12 +1,18 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Winche.Database.Documents;
-using Winche.Database.Services;
-using Winche.Database.Interfaces;
-using Winche.Database.BackgroundServices;
+using Microsoft.Extensions.Options;
+using Npgsql;
 using Winche.Database.Constants;
+using Winche.Database.Documents;
+using Winche.Database.Interfaces;
 using Winche.Database.Models;
+using Winche.Database.Runtime;
+using Winche.Database.Runtime.ChangeFeed;
+using Winche.Database.Runtime.Hosting;
+using Winche.Database.Runtime.Listening;
+using Winche.Database.Services;
 using Winche.Sentinel.DependencyInjection;
+using Winche.Sentinel.Interfaces;
 
 namespace Winche.Database.DependencyInjection;
 
@@ -26,19 +32,30 @@ public static class ServiceCollectionExtensions
 
         services.AddNpgsqlDataSource(connectionString, serviceKey: ServiceKeys.DATA_SOURCE_KEY);
 
-        services.AddSingleton<IEventChannel, EventChannel>();
-        services.AddSingleton<ISubscriptionRegistry, SubscriptionRegistry>();
-        services.AddSingleton<ITransactionRegistry, TransactionRegistry>();
-        services.AddSingleton<IDocumentManager, DocumentManager>();
-        services.AddSingleton<ISchemaManager, SchemaManager>();
-        services.AddSingleton<IChangeProcessor, ChangeProcessor>();
-        services.AddSingleton<ISubscriptionManager, SubscriptionManager>();
-        services.AddSingleton<ITransactionManager, TransactionManager>();
-        services.AddSingleton<HookInvocationDispatcher>();
+        // Core runtime (spec architecture): rule-free core + guard as the public surface
+        services.AddSingleton<ListenerRegistry>(sp => new ListenerRegistry(
+            sp.GetRequiredKeyedService<NpgsqlDataSource>(ServiceKeys.DATA_SOURCE_KEY),
+            sp.GetRequiredService<IOptions<StoreOptions>>()));
+        services.AddSingleton<DocumentDatabase>(sp => new DocumentDatabase(
+            sp.GetRequiredKeyedService<NpgsqlDataSource>(ServiceKeys.DATA_SOURCE_KEY),
+            sp.GetRequiredService<IOptions<StoreOptions>>(),
+            sp.GetRequiredService<ListenerRegistry>()));
+        services.AddSingleton<IDocumentDatabase>(sp => new GuardedDocumentDatabase(
+            sp.GetRequiredService<DocumentDatabase>(),
+            sp.GetRequiredService<IAccessRuleEvaluator<Document>>()));
 
-        services.AddHostedService<ChangeNotifier>();
-        services.AddHostedService<TransactionInvalidator>();
-        services.AddHostedService<EventNotifier>();
+        services.AddSingleton<ISchemaManager, SchemaManager>();
+        services.AddSingleton<HookInvocationDispatcher>();
+        services.AddSingleton<IHookInvocationDispatcher>(sp => sp.GetRequiredService<HookInvocationDispatcher>());
+
+        // Change feed consumers
+        services.AddSingleton<IChangeFeedConsumer>(sp => sp.GetRequiredService<ListenerRegistry>());
+        services.AddSingleton<IChangeFeedConsumer>(sp => new HookFeedConsumer(
+            sp.GetRequiredService<HookInvocationDispatcher>()));
+
+        services.AddHostedService<ChangeFeedHostedService>();
+        services.AddHostedService<RetentionPruner>();
+        services.AddHostedService<TransactionSweeper>();
         services.AddHostedService<HookInvocationProcessor>();
 
         return services;

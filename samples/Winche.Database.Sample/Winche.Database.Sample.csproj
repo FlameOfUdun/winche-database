@@ -17,7 +17,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Winche.Database\Winche.Database.csproj" />
     <ProjectReference Include="..\..\src\Winche.Database.AspNetCore.Rest\Winche.Database.AspNetCore.Rest.csproj" />
-    <ProjectReference Include="..\..\src\Winche.Database.AspNetCore.WebSockets\Winche.Database.AspNetCore.WebSockets.csproj" />
   </ItemGroup>
 
 </Project>

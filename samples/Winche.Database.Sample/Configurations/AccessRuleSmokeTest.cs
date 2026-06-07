@@ -1,6 +1,8 @@
+using Microsoft.Extensions.DependencyInjection;
 using Winche.Database.AspNetCore.Abstraction;
-using Winche.Database.Interfaces;
 using Winche.Database.Querying.Ast;
+using Winche.Database.Runtime;
+using Winche.Database.Runtime.Writes;
 using Winche.Database.Values;
 
 namespace Winche.Database.Sample.Configurations;
@@ -10,21 +12,22 @@ public static class AccessRuleSmokeTest
     public static async Task RunAsync(IServiceProvider services)
     {
         using var scope = services.CreateScope();
-        var manager = scope.ServiceProvider.GetRequiredService<IDocumentManager>();
+        var db = scope.ServiceProvider.GetRequiredService<IDocumentDatabase>();
+        var core = scope.ServiceProvider.GetRequiredService<DocumentDatabase>();
         var claimsAccessor = scope.ServiceProvider.GetRequiredService<DocumentClaimsAccessor>();
 
         Banner("ACCESS RULE SMOKE TESTS");
 
-        await CleanSlateAsync(manager);
-        await ScenarioQueryFiltersPerDocument(manager, claimsAccessor);
+        await CleanSlateAsync(core);
+        await ScenarioQueryFiltersPerDocument(db, core, claimsAccessor);
 
-        await CleanSlateAsync(manager);
-        await ScenarioQueryNoMatchingRuleDenies(manager, claimsAccessor);
+        await CleanSlateAsync(core);
+        await ScenarioQueryNoMatchingRuleDenies(db, claimsAccessor);
 
-        await CleanSlateAsync(manager);
-        await ScenarioAggregationCollectionLevelOnly(manager, claimsAccessor);
+        await CleanSlateAsync(core);
+        await ScenarioAggregationCollectionLevelOnly(db, core, claimsAccessor);
 
-        await CleanSlateAsync(manager);
+        await CleanSlateAsync(core);
         Banner("DONE");
     }
 
@@ -33,14 +36,14 @@ public static class AccessRuleSmokeTest
     // -------------------------------------------------------------------------
 
     private static async Task ScenarioQueryFiltersPerDocument(
-        IDocumentManager manager, DocumentClaimsAccessor claimsAccessor)
+        IDocumentDatabase db, DocumentDatabase core, DocumentClaimsAccessor claimsAccessor)
     {
         Banner("Scenario 1: QueryAsync filters results per-document access rule");
 
-        // Seed three users
-        await manager.SetUnprotectedAsync("smoke-users/alice", Fields(("name", new StringValue("Alice"))));
-        await manager.SetUnprotectedAsync("smoke-users/bob",   Fields(("name", new StringValue("Bob"))));
-        await manager.SetUnprotectedAsync("smoke-users/charlie", Fields(("name", new StringValue("Charlie"))));
+        // Seed three users (unprotected)
+        await core.WriteAsync([new SetWrite { Path = "smoke-users/alice", Fields = Fields(("name", new StringValue("Alice"))) }]);
+        await core.WriteAsync([new SetWrite { Path = "smoke-users/bob",   Fields = Fields(("name", new StringValue("Bob"))) }]);
+        await core.WriteAsync([new SetWrite { Path = "smoke-users/charlie", Fields = Fields(("name", new StringValue("Charlie"))) }]);
 
         // OwnerReadRule: smoke-users/{userId} allows Read only when uid claim == userId.
         // AllowPublicAccessRule (**) also matches and returns true, so both rules must pass.
@@ -51,14 +54,14 @@ public static class AccessRuleSmokeTest
 
         var query = new QueryAst("smoke-users", Limit: 10);
 
-        var protectedResult   = await manager.QueryAsync(query);
-        var unprotectedResult = await manager.QueryUnprotectedAsync(query);
+        var protectedResult   = await db.QueryAsync(query);
+        var unprotectedResult = await core.QueryAsync(query);
 
         Console.WriteLine($"  QueryAsync (protected):           {protectedResult.Documents.Count} doc(s)");
         foreach (var doc in protectedResult.Documents)
             Console.WriteLine($"    -> {doc.Path}");
 
-        Console.WriteLine($"  QueryUnprotectedAsync (no rules): {unprotectedResult.Documents.Count} doc(s)");
+        Console.WriteLine($"  QueryAsync (unprotected):         {unprotectedResult.Documents.Count} doc(s)");
         foreach (var doc in unprotectedResult.Documents)
             Console.WriteLine($"    -> {doc.Path}");
 
@@ -76,19 +79,21 @@ public static class AccessRuleSmokeTest
     }
 
     private static async Task ScenarioQueryNoMatchingRuleDenies(
-        IDocumentManager manager, DocumentClaimsAccessor claimsAccessor)
+        IDocumentDatabase db, DocumentClaimsAccessor claimsAccessor)
     {
         Banner("Scenario 2: QueryAsync silently drops documents denied by rules");
 
-        await manager.SetUnprotectedAsync("smoke-users/alice", Fields(("name", new StringValue("Alice"))));
-        await manager.SetUnprotectedAsync("smoke-users/bob",   Fields(("name", new StringValue("Bob"))));
+        // Use db (guarded) for seeding here — write rules allow in sample config
+        // Actually write via WriteAsync on guarded (AllowPublicAccessRule allows writes)
+        await db.WriteAsync([new SetWrite { Path = "smoke-users/alice", Fields = Fields(("name", new StringValue("Alice"))) }]);
+        await db.WriteAsync([new SetWrite { Path = "smoke-users/bob",   Fields = Fields(("name", new StringValue("Bob"))) }]);
 
         // uid = "bob" — alice is denied, bob is allowed.
         claimsAccessor.SetClaims(new Dictionary<string, object?> { ["uid"] = "bob" });
         Console.WriteLine("Caller: uid = \"bob\"");
 
         var query = new QueryAst("smoke-users", Limit: 10);
-        var result = await manager.QueryAsync(query);
+        var result = await db.QueryAsync(query);
 
         Console.WriteLine($"  QueryAsync result: {result.Documents.Count} doc(s)");
         foreach (var doc in result.Documents)
@@ -104,13 +109,13 @@ public static class AccessRuleSmokeTest
     }
 
     private static async Task ScenarioAggregationCollectionLevelOnly(
-        IDocumentManager manager, DocumentClaimsAccessor claimsAccessor)
+        IDocumentDatabase db, DocumentDatabase core, DocumentClaimsAccessor claimsAccessor)
     {
         Banner("Scenario 3: AggregateAsync enforces collection-level access, not per-row");
 
-        await manager.SetUnprotectedAsync("smoke-users/alice", Fields(("name", new StringValue("Alice"))));
-        await manager.SetUnprotectedAsync("smoke-users/bob",   Fields(("name", new StringValue("Bob"))));
-        await manager.SetUnprotectedAsync("smoke-users/charlie", Fields(("name", new StringValue("Charlie"))));
+        await core.WriteAsync([new SetWrite { Path = "smoke-users/alice", Fields = Fields(("name", new StringValue("Alice"))) }]);
+        await core.WriteAsync([new SetWrite { Path = "smoke-users/bob",   Fields = Fields(("name", new StringValue("Bob"))) }]);
+        await core.WriteAsync([new SetWrite { Path = "smoke-users/charlie", Fields = Fields(("name", new StringValue("Charlie"))) }]);
 
         // uid = "alice" — OwnerReadRule would deny bob and charlie at document level.
         // But AggregateAsync only checks the collection path "smoke-users", which
@@ -125,7 +130,7 @@ public static class AccessRuleSmokeTest
 
         var pipeline = new PipelineAst([new MatchStageAst("smoke-users", null)]);
 
-        var result = await manager.AggregateAsync(pipeline);
+        var result = await db.AggregateAsync(pipeline);
 
         Console.WriteLine($"  AggregateAsync result: {result.Rows.Count} row(s)");
 
@@ -133,7 +138,7 @@ public static class AccessRuleSmokeTest
 
         // Contrast: QueryAsync on the same data returns only alice's doc.
         var query = new QueryAst("smoke-users", Limit: 10);
-        var queryResult = await manager.QueryAsync(query);
+        var queryResult = await db.QueryAsync(query);
 
         Console.WriteLine($"  QueryAsync on same data:          {queryResult.Documents.Count} doc(s)");
 
@@ -150,9 +155,9 @@ public static class AccessRuleSmokeTest
     // Helpers
     // -------------------------------------------------------------------------
 
-    private static async Task CleanSlateAsync(IDocumentManager manager)
+    private static async Task CleanSlateAsync(DocumentDatabase core)
     {
-        await manager.DeleteUnprotectedAsync("smoke-users");
+        await core.WriteAsync([new DeleteWrite { Path = "smoke-users", Cascade = true }]);
     }
 
     private static void Assert(string label, bool ok)

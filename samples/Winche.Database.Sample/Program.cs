@@ -1,6 +1,5 @@
 using Winche.Database.AspNetCore.DependencyInjection;
 using Winche.Database.AspNetCore.Rest.DependencyInjection;
-using Winche.Database.AspNetCore.WebSockets.DependencyInjection;
 using Winche.Database.DependencyInjection;
 using Winche.Database.Sample.Configurations;
 
@@ -15,8 +14,7 @@ builder.Services
         config.AddDocumentStoreHook<DocumentUpdateHook>();
         config.AddIndexDefinition<WildcardIndexDefinition>();
         config.SetCallerClaimsAccessor<CallerClaimsAccessor>();
-    })
-    .AddWincheDatabaseWsApi();
+    });
 
 builder.Services.AddOpenApi();
 
@@ -30,7 +28,6 @@ else
     app.UseHttpsRedirection();
 }
 app.UseWincheDatabase();
-app.UseWincheDatabaseWsApi();
 app.UseWincheDatabaseRestApi();
 
 await CascadeDeleteSmokeTest.RunAsync(app.Services);

@@ -32,14 +32,6 @@ public class WireSmokeTests
         Assert.Equal("2", (string)node["rows"]![0]!["n"]!["integerValue"]!);
     }
 
-    [Fact]
-    public void ClientMessages_Deserialize()
-    {
-        var set = JsonSerializer.Deserialize<Winche.Database.AspNetCore.WebSockets.Messages.ClientMessage>(
-            """{"type":"document:set","id":"1","path":"c/a","data":{"x":{"integerValue":"1"}}}""");
-        var q = JsonSerializer.Deserialize<Winche.Database.AspNetCore.WebSockets.Messages.ClientMessage>(
-            """{"type":"query:execute","id":"2","query":{"collection":"c"}}""");
-        Assert.NotNull(set);
-        Assert.NotNull(q);
-    }
+    // ClientMessages_Deserialize was removed: WS project is unloaded from the solution
+    // (its refactor is a separate cycle). WireSmokeTests for WS wire format move to the WS project.
 }
