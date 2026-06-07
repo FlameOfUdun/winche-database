@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Winche.Database.Models;
+using Winche.Database.DependencyInjection;
 using Winche.Database.Runtime.ChangeFeed;
 using Winche.Database.Runtime.Writes;
 using Winche.Database.Values;
@@ -54,7 +54,7 @@ public class ChangeFeedPumpTests(PostgresFixture fx) : QueryTestBase(fx)
     private (ChangeFeedPump Pump, CollectingConsumer Consumer, CancellationTokenSource Cts, Task Run) StartPump()
     {
         var consumer = new CollectingConsumer();
-        var pump = new ChangeFeedPump(Fx.DataSource, Fx.Table, [consumer],
+        var pump = new ChangeFeedPump(Fx.DataSource, [consumer],
             new ChangeFeedConfig { PollInterval = TimeSpan.FromMilliseconds(250) },
             NullLogger<ChangeFeedPump>.Instance);
         var cts = new CancellationTokenSource();
@@ -65,7 +65,7 @@ public class ChangeFeedPumpTests(PostgresFixture fx) : QueryTestBase(fx)
     [Fact]
     public async Task Pump_DeliversBatches_WithSharedDocs_LiveOnly()
     {
-        var applier = new WriteApplier(Fx.DataSource, Fx.Table);
+        var applier = new WriteApplier(Fx.DataSource);
         await applier.ApplyAsync([new SetWrite { Path = "c/before", Fields = Map() }]);   // pre-boot: must NOT arrive
 
         var (_, consumer, cts, run) = StartPump();
@@ -104,7 +104,7 @@ public class ChangeFeedPumpTests(PostgresFixture fx) : QueryTestBase(fx)
     {
         var bad = new ThrowingConsumer();
         var good = new CollectingConsumer();
-        var pump = new ChangeFeedPump(Fx.DataSource, Fx.Table, [bad, good],
+        var pump = new ChangeFeedPump(Fx.DataSource, [bad, good],
             new ChangeFeedConfig { PollInterval = TimeSpan.FromMilliseconds(250) },
             NullLogger<ChangeFeedPump>.Instance);
         var cts = new CancellationTokenSource();
@@ -112,7 +112,7 @@ public class ChangeFeedPumpTests(PostgresFixture fx) : QueryTestBase(fx)
         try
         {
             await Task.Delay(500);
-            await new WriteApplier(Fx.DataSource, Fx.Table).ApplyAsync(
+            await new WriteApplier(Fx.DataSource).ApplyAsync(
                 [new SetWrite { Path = "c/x", Fields = Map() }]);
             Assert.True(await good.WaitForBatchAsync());                                  // bad consumer didn't kill delivery
         }
@@ -124,7 +124,7 @@ public class ChangeFeedPumpTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Pump_Idle_LogsNoErrors()
     {
         var logger = new RecordingLogger();
-        var pump = new ChangeFeedPump(Fx.DataSource, Fx.Table, [new CollectingConsumer()],
+        var pump = new ChangeFeedPump(Fx.DataSource, [new CollectingConsumer()],
             new ChangeFeedConfig { PollInterval = TimeSpan.FromMilliseconds(200) }, logger);
         var cts = new CancellationTokenSource();
         var run = Task.Run(() => pump.RunAsync(cts.Token));

@@ -13,4 +13,11 @@ public abstract class IndexDefinition
     public abstract string Collection { get; }
     public abstract IReadOnlyList<IndexField> Fields { get; }
     public virtual string? Name => null;
+
+    /// <summary>
+    /// Optional predicate for a filtered index (spec D). Must be expressible as a restricted
+    /// literal SQL fragment via <see cref="Querying.Sql.IndexPredicateSql"/>.
+    /// Null means no predicate (full-collection index).
+    /// </summary>
+    public virtual FilterAst? Where => null;
 }

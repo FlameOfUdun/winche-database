@@ -1,5 +1,4 @@
 using Npgsql;
-using Winche.Database.Core.Infrastructure;
 using Winche.Database.Documents;
 using Winche.Database.Querying.Matching;
 using Winche.Database.Querying.Sql;
@@ -18,7 +17,7 @@ namespace Winche.Database.Runtime.Writes;
 /// causes affected-rows = 0, which is detected and turned into ABORTED before commit.
 /// For rows held under FOR UPDATE the guard always passes — no behavior change.
 /// </summary>
-public sealed class WriteApplier(NpgsqlDataSource source, string table)
+public sealed class WriteApplier(NpgsqlDataSource source)
 {
     private sealed class DocState
     {
@@ -136,26 +135,79 @@ public sealed class WriteApplier(NpgsqlDataSource source, string table)
 
     private static WriteResult ApplySet(DocState doc, SetWrite s, DateTimeOffset commitTime)
     {
-        var sentinelKeys = s.Fields.Where(kv => kv.Value is DeleteFieldValue).Select(kv => kv.Key).ToList();
-        var data = s.Fields.Where(kv => kv.Value is not DeleteFieldValue)
-                           .ToDictionary(kv => kv.Key, kv => kv.Value);
+        // Tree-walk to separate sentinel paths from actual data.
+        // Sentinel segments are LITERAL map keys — never dotted-parsed.
+        // Short-circuit: validator guarantees no sentinels when !Merge.
+        var sentinelPaths = new List<string[]>();
+        var prunedData = s.Merge
+            ? PruneSentinels(s.Fields, [], sentinelPaths)
+            : s.Fields;
 
         IReadOnlyDictionary<string, Value> fields = s.Merge && doc.Exists
-            ? DocumentMerger.Merge(doc.Fields, data)
-            : data;
+            ? DocumentMerger.Merge(doc.Fields, prunedData)
+            : prunedData;
 
-        // Sentinel keys are LITERAL top-level map keys — do NOT parse as FieldPaths.
-        // merge-only (validator guarantees sentinels only appear with Merge=true)
-        if (sentinelKeys.Count > 0)
-        {
-            var mutable = fields.ToDictionary(kv => kv.Key, kv => kv.Value);
-            foreach (var key in sentinelKeys) mutable.Remove(key);
-            fields = mutable;
-        }
+        // Apply sentinel deletes using LITERAL segment paths (not FieldPath.Parse — keys may contain dots).
+        foreach (var segments in sentinelPaths)
+            fields = FieldMutator.Delete(fields, segments);
 
         var transformResults = ApplyTransforms(ref fields, s.Transforms, commitTime);
         Bump(doc, fields, commitTime);
         return new WriteResult(commitTime, transformResults);
+    }
+
+    /// <summary>
+    /// Recursively walks a fields map, collecting sentinel leaf paths (as literal segment arrays)
+    /// and returning the pruned data (sentinels excluded). Nested MapValues are recursed;
+    /// all other values pass through unchanged.
+    ///
+    /// <para>Firestore mask semantics for all-sentinel maps: if a MapValue had ≥1 entry before
+    /// pruning and ALL entries pruned away (sentinel leaves or recursively-emptied child maps),
+    /// the key is dropped entirely from the result — so a merge-set of
+    /// <c>m: {drop: delete}</c> against a doc without <c>m</c> does NOT create a phantom <c>m: {}</c>,
+    /// and against a doc with a scalar <c>m: 5</c> does NOT replace it with <c>m: {}</c>.
+    /// A user-written literal empty map (<c>{}</c> with zero entries originally) is a real value
+    /// and is kept.</para>
+    /// </summary>
+    private static IReadOnlyDictionary<string, Value> PruneSentinels(
+        IReadOnlyDictionary<string, Value> fields,
+        IReadOnlyList<string> parentSegments,
+        List<string[]> sentinelPaths)
+    {
+        var result = new Dictionary<string, Value>(fields.Count);
+        foreach (var (key, value) in fields)
+        {
+            if (value is DeleteFieldValue)
+            {
+                // Record the full literal path to this sentinel
+                var path = new string[parentSegments.Count + 1];
+                for (var i = 0; i < parentSegments.Count; i++) path[i] = parentSegments[i];
+                path[parentSegments.Count] = key;
+                sentinelPaths.Add(path);
+                // Exclude from pruned data
+            }
+            else if (value is MapValue m)
+            {
+                // Recurse into nested maps
+                var childSegments = new string[parentSegments.Count + 1];
+                for (var i = 0; i < parentSegments.Count; i++) childSegments[i] = parentSegments[i];
+                childSegments[parentSegments.Count] = key;
+                var pruned = PruneSentinels(m.Fields, childSegments, sentinelPaths);
+
+                // Drop this key if the map had entries before pruning and ALL of them pruned
+                // away — Firestore mask semantics (phantom map / scalar-destroy prevention).
+                // A literal empty map (m.Fields.Count == 0) is a real value and is kept.
+                if (m.Fields.Count > 0 && pruned.Count == 0)
+                    continue;
+
+                result[key] = new MapValue(pruned);
+            }
+            else
+            {
+                result[key] = value;
+            }
+        }
+        return result;
     }
 
     private static WriteResult ApplyUpdate(DocState doc, UpdateWrite u, DateTimeOffset commitTime)
@@ -230,7 +282,7 @@ public sealed class WriteApplier(NpgsqlDataSource source, string table)
 
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-        WriteSql.LockAll(table, exactPaths, cascadeRoots).Apply(cmd);
+        WriteSql.LockAll(exactPaths, cascadeRoots).Apply(cmd);
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
             state[reader.GetString(0)] = ReadDocState(reader);
@@ -274,7 +326,7 @@ public sealed class WriteApplier(NpgsqlDataSource source, string table)
             {
                 await using var cmd = conn.CreateCommand();
                 cmd.Transaction = tx;
-                WriteSql.Upsert(table, path, info.Id!, info.Collection,
+                WriteSql.Upsert(path, info.Id!, info.Collection,
                     StorageCodec.Encode(doc.Fields), doc.CreatedAt, doc.UpdatedAt, doc.Version,
                     doc.VersionBefore).Apply(cmd);
                 var affected = await cmd.ExecuteNonQueryAsync(ct);
@@ -298,7 +350,7 @@ public sealed class WriteApplier(NpgsqlDataSource source, string table)
         {
             await using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
-            WriteSql.DeletePaths(table, deletes).Apply(cmd);
+            WriteSql.DeletePaths(deletes).Apply(cmd);
             await cmd.ExecuteNonQueryAsync(ct);
         }
 
@@ -306,7 +358,7 @@ public sealed class WriteApplier(NpgsqlDataSource source, string table)
         {
             await using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
-            WriteSql.InsertChanges(table, changeTypes, changePaths, changeCollections, changeVersions, commitTime).Apply(cmd);
+            WriteSql.InsertChanges(changeTypes, changePaths, changeCollections, changeVersions, commitTime).Apply(cmd);
             await cmd.ExecuteNonQueryAsync(ct);
         }
     }

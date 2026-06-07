@@ -1,8 +1,6 @@
 using System.Threading.Channels;
-using Microsoft.Extensions.Options;
 using Npgsql;
 using Winche.Database.Documents;
-using Winche.Database.Models;
 using Winche.Database.Querying;
 using Winche.Database.Querying.Ast;
 using Winche.Database.Querying.Matching;
@@ -15,10 +13,9 @@ namespace Winche.Database.Runtime.Listening;
 /// As an IChangeFeedConsumer it: checks relevance per group (cached predicate / membership),
 /// requeries ONCE per batch, diffs ordered state, and broadcasts coalescing snapshots (spec §4).
 /// </summary>
-public sealed class ListenerRegistry(NpgsqlDataSource source, IOptions<StoreOptions> options) : IChangeFeedConsumer
+public sealed class ListenerRegistry(NpgsqlDataSource source) : IChangeFeedConsumer
 {
-    private readonly string _table = options.Value.TableName;
-    private readonly ChangeFeedReader _reader = new(source, options.Value.TableName);
+    private readonly ChangeFeedReader _reader = new(source);
     private readonly Dictionary<string, ListenerGroup> _groups = new(StringComparer.Ordinal);
     private readonly Dictionary<string, HashSet<string>> _byCollection = new(StringComparer.Ordinal);
     private readonly object _gate = new();
@@ -231,7 +228,7 @@ public sealed class ListenerRegistry(NpgsqlDataSource source, IOptions<StoreOpti
     private async Task<QueryResult> RunQueryAsync(QueryAst query, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
-        return await new QueryExecutor(conn, null, _table).ExecuteAsync(query, ct);
+        return await new QueryExecutor(conn, null).ExecuteAsync(query, ct);
     }
 
     // ── Group / handle ────────────────────────────────────────────────────────

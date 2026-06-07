@@ -18,6 +18,14 @@ public static class FieldMutator
         IReadOnlyDictionary<string, Value> fields, FieldPath path) =>
         DeleteSegments(fields, path.Segments, 0);
 
+    /// <summary>
+    /// Deletes a field by LITERAL segments (not dotted-parsed FieldPath). Use this when
+    /// the segments are map keys that may themselves contain dots (merge-set nested sentinels).
+    /// </summary>
+    public static Dictionary<string, Value> Delete(
+        IReadOnlyDictionary<string, Value> fields, IReadOnlyList<string> segments) =>
+        DeleteSegments(fields, segments, 0);
+
     private static Dictionary<string, Value> SetSegments(
         IReadOnlyDictionary<string, Value> fields, IReadOnlyList<string> segments, int i, Value value)
     {

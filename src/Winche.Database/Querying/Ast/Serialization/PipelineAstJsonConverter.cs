@@ -11,7 +11,7 @@ public sealed class PipelineAstJsonConverter : JsonConverter<PipelineAst>
         if (JsonNode.Parse(ref reader) is not JsonObject obj)
             throw new JsonException("Pipeline must be a JSON object");
         try { return PipelineParser.Parse(obj); }
-        catch (QueryParseException ex) { throw new JsonException(ex.Message); }
+        catch (QueryParseException ex) { throw new JsonException(ex.Message, ex); }
     }
 
     public override void Write(Utf8JsonWriter writer, PipelineAst value, JsonSerializerOptions options) =>

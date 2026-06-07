@@ -1,15 +1,28 @@
 using Npgsql;
+using Winche.Database.Constants;
 
 namespace Winche.Database.Runtime.ChangeFeed;
 
-/// <summary>Reads the durable feed. Identifiers from config only; every value is a parameter.</summary>
-public sealed class ChangeFeedReader(NpgsqlDataSource source, string table)
+/// <summary>Reads the durable feed.</summary>
+public sealed class ChangeFeedReader(NpgsqlDataSource source)
 {
+    /// <summary>
+    /// Reads up to <paramref name="limit"/> change records with seq &gt; <paramref name="afterSeq"/>, ordered by seq.
+    ///
+    /// <para><b>Known seq/commit-order race:</b> PostgreSQL assigns <c>seq</c> values from a sequence before
+    /// a transaction commits. Two concurrent write transactions can therefore commit out of seq order:
+    /// transaction A (seq 5) may commit <em>after</em> transaction B (seq 6). A reader that drains
+    /// immediately after B commits will process seq 6 and advance its cursor past 5; when A subsequently
+    /// commits, seq 5 is never re-read and the cursor permanently skips it (the skip is persisted via
+    /// <see cref="SaveCursorAsync"/>). The window is the p99 write transaction duration — typically
+    /// sub-millisecond on a healthy cluster. Proper fencing (e.g. snapshot-xmin) is out of scope;
+    /// consumers that require strict exactly-once semantics must perform idempotency checks by version.</para>
+    /// </summary>
     public async Task<IReadOnlyList<ChangeRecord>> ReadAfterAsync(long afterSeq, int limit, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT seq, type, path, collection, version, commit_time FROM {table}_changes WHERE seq > $1 ORDER BY seq LIMIT $2";
+        cmd.CommandText = $"SELECT seq, type, path, collection, version, commit_time FROM {WincheTables.Changes} WHERE seq > $1 ORDER BY seq LIMIT $2";
         cmd.Parameters.AddWithValue(afterSeq);
         cmd.Parameters.AddWithValue(limit);
 
@@ -38,7 +51,7 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source, string table)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT COALESCE(MAX(seq), 0) FROM {table}_changes";
+        cmd.CommandText = $"SELECT COALESCE(MAX(seq), 0) FROM {WincheTables.Changes}";
         return (long)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
@@ -47,7 +60,7 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source, string table)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT EXISTS(SELECT 1 FROM {table}_changes WHERE seq > $1 AND collection = $2)";
+        cmd.CommandText = $"SELECT EXISTS(SELECT 1 FROM {WincheTables.Changes} WHERE seq > $1 AND collection = $2)";
         cmd.Parameters.AddWithValue(afterSeq);
         cmd.Parameters.AddWithValue(collection);
         return (bool)(await cmd.ExecuteScalarAsync(ct))!;
@@ -58,8 +71,32 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source, string table)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT COALESCE(MIN(seq), 0) FROM {table}_changes";
+        cmd.CommandText = $"SELECT COALESCE(MIN(seq), 0) FROM {WincheTables.Changes}";
         return (long)(await cmd.ExecuteScalarAsync(ct))!;
+    }
+
+    public async Task<long?> GetCursorAsync(string consumer, CancellationToken ct = default)
+    {
+        await using var conn = await source.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"SELECT seq FROM {WincheTables.FeedCursors} WHERE consumer = $1";
+        cmd.Parameters.AddWithValue(consumer);
+        return await cmd.ExecuteScalarAsync(ct) is long seq ? seq : null;
+    }
+
+    public async Task SaveCursorAsync(string consumer, long seq, CancellationToken ct = default)
+    {
+        await using var conn = await source.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        // GREATEST guard: a backwards save (due to the seq/commit-order race) can only cause
+        // redelivery (cursor stays at the higher value), never a permanent skip.
+        cmd.CommandText = $"""
+            INSERT INTO {WincheTables.FeedCursors} (consumer, seq, updated_at) VALUES ($1, $2, now())
+            ON CONFLICT (consumer) DO UPDATE SET seq = GREATEST({WincheTables.FeedCursors}.seq, EXCLUDED.seq), updated_at = now()
+            """;
+        cmd.Parameters.AddWithValue(consumer);
+        cmd.Parameters.AddWithValue(seq);
+        await cmd.ExecuteNonQueryAsync(ct);
     }
 
     /// <summary>Retention: deletes rows with commit_time older than the cutoff. Returns rows deleted.</summary>
@@ -67,7 +104,7 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source, string table)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"DELETE FROM {table}_changes WHERE commit_time < $1";
+        cmd.CommandText = $"DELETE FROM {WincheTables.Changes} WHERE commit_time < $1";
         cmd.Parameters.AddWithValue(cutoff);
         return await cmd.ExecuteNonQueryAsync(ct);
     }

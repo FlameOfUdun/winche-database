@@ -7,8 +7,13 @@ namespace Winche.Database.Querying.Sql;
 /// <summary>Maps operand Values to typed SQL parameter fragments.</summary>
 internal static class ValueSql
 {
+    /// <summary>Epoch-microseconds from a timestamp value (shared with IndexPredicateSql).</summary>
     internal static long EpochMicros(TimestampValue t) =>
         (t.Value.UtcTicks - DateTimeOffset.UnixEpoch.UtcTicks) / 10;
+
+    /// <summary>Shortest round-trip string for a finite double (shared with IndexPredicateSql).</summary>
+    internal static string DoubleRoundTrip(double d) =>
+        d.ToString("R", CultureInfo.InvariantCulture);
 
     /// <summary>Numeric-comparable operand (matches winche_num's normalization).</summary>
     internal static string NumOperand(Value v, ParameterBag bag) => v switch

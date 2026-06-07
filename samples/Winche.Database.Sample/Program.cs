@@ -1,20 +1,27 @@
 using Winche.Database.AspNetCore.DependencyInjection;
 using Winche.Database.AspNetCore.Rest.DependencyInjection;
+using Winche.Database.AspNetCore.WebSockets.DependencyInjection;
 using Winche.Database.DependencyInjection;
 using Winche.Database.Sample.Configurations;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services
-    .AddWincheDatabase(builder.Configuration, (config) =>
+    .AddWincheDatabase(opts =>
     {
-        config.AddDocumentAccessRule<AllowPublicAccessRule>();
-        config.AddDocumentAccessRule<SmokeUsersCollectionReadRule>();
-        config.AddDocumentAccessRule<OwnerReadRule>();
-        config.AddDocumentStoreHook<DocumentUpdateHook>();
-        config.AddIndexDefinition<WildcardIndexDefinition>();
-        config.SetCallerClaimsAccessor<CallerClaimsAccessor>();
+        opts.ConnectionString =
+            builder.Configuration.GetConnectionString("WincheDatabase") ??
+            builder.Configuration.GetConnectionString("DefaultConnection") ??
+            throw new InvalidOperationException("No connection string found for WincheDatabase.");
+            
+        opts.AddDocumentAccessRule<AllowPublicAccessRule>();
+        opts.AddDocumentAccessRule<SmokeUsersCollectionReadRule>();
+        opts.AddDocumentAccessRule<OwnerReadRule>();
+        opts.AddDocumentStoreHook<DocumentUpdateHook>();
+        opts.AddIndexDefinition<WildcardIndexDefinition>();
+        opts.SetCallerClaimsAccessor<CallerClaimsAccessor>();
     });
+builder.Services.AddWincheDatabaseWsApi();
 
 builder.Services.AddOpenApi();
 
@@ -27,8 +34,9 @@ else
 {
     app.UseHttpsRedirection();
 }
-app.UseWincheDatabase();
-app.UseWincheDatabaseRestApi();
+await app.InitializeWincheDatabaseAsync();
+app.MapWincheDatabaseWsApi();
+app.MapWincheDatabaseRestApi();
 
 await CascadeDeleteSmokeTest.RunAsync(app.Services);
 await AccessRuleSmokeTest.RunAsync(app.Services);

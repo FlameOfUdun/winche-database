@@ -78,6 +78,7 @@ public sealed class GuardedDocumentDatabase(IDocumentDatabase inner, IAccessRule
 
     public async Task<Document?> GetAsync(string transactionId, string path, CancellationToken ct = default)
     {
+        // TODO: rule fetch doubles the read; consider passing the recorded read through
         await evaluator.EvaluateAsync(AccessOperation.Read, path, null, c => inner.GetAsync(path, c), ct);
         return await inner.GetAsync(transactionId, path, ct);
     }
@@ -123,8 +124,34 @@ public sealed class GuardedDocumentDatabase(IDocumentDatabase inner, IAccessRule
     }
 
     private static JsonObject? WireData(IReadOnlyDictionary<string, Value> fields) =>
-        ValueSerializer.WriteFields(fields.Where(kv => kv.Value is not DeleteFieldValue)
-            .ToDictionary(kv => kv.Key, kv => kv.Value));
+        ValueSerializer.WriteFields(PruneSentinels(fields));
+
+    /// <summary>
+    /// Recursively strips DeleteFieldValue sentinels from a field map (for access-rule wire data).
+    /// Nested maps may contain sentinels when the write is a merge-set (spec C).
+    /// </summary>
+    private static IReadOnlyDictionary<string, Value> PruneSentinels(IReadOnlyDictionary<string, Value> fields)
+    {
+        Dictionary<string, Value>? result = null;
+        foreach (var (key, value) in fields)
+        {
+            if (value is DeleteFieldValue)
+            {
+                result ??= fields.ToDictionary(kv => kv.Key, kv => kv.Value);
+                result.Remove(key);
+            }
+            else if (value is MapValue m)
+            {
+                var pruned = PruneSentinels(m.Fields);
+                if (!ReferenceEquals(pruned, m.Fields))
+                {
+                    result ??= fields.ToDictionary(kv => kv.Key, kv => kv.Value);
+                    result[key] = new MapValue(pruned);
+                }
+            }
+        }
+        return result ?? fields;
+    }
 
     /// <summary>
     /// Update guard data is DOT-KEYED ({"a.b": …}), not nested — rule authors inspecting

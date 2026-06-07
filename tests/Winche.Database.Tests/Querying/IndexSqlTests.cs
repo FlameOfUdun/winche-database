@@ -41,7 +41,7 @@ public class IndexSqlTests
     [Fact]
     public void BuildCreate_EmitsExpressionFamilyAndPartialClause()
     {
-        var sql = IndexSql.BuildCreate(new AgeIndex(), "public", "documents");
+        var sql = IndexSql.BuildCreate(new AgeIndex());
         Assert.Contains("CREATE INDEX IF NOT EXISTS", sql);
         Assert.Contains("winche_rank(", sql);
         Assert.Contains("winche_key(", sql);
@@ -57,20 +57,20 @@ public class IndexSqlTests
     [InlineData("a b")]
     [InlineData("")]
     public void BuildCreate_RejectsInvalidSegments(string path) =>
-        Assert.Throws<ArgumentException>(() => IndexSql.BuildCreate(new EvilIndex(path), "public", "documents"));
+        Assert.Throws<ArgumentException>(() => IndexSql.BuildCreate(new EvilIndex(path)));
 
     [Fact]
     public void BuildDrop_QuotesName()
     {
-        Assert.Equal("DROP INDEX IF EXISTS \"public\".\"idx_x\"", IndexSql.BuildDrop("public", "idx_x"));
-        Assert.Throws<ArgumentException>(() => IndexSql.BuildDrop("public", "bad\"name"));
+        Assert.Equal("DROP INDEX IF EXISTS \"idx_x\"", IndexSql.BuildDrop("idx_x"));
+        Assert.Throws<ArgumentException>(() => IndexSql.BuildDrop("bad\"name"));
     }
 
     [Fact]
     public void BuildCreate_DistinctDefinitions_ProduceDifferentNames()
     {
-        var sqlA = IndexSql.BuildCreate(new CollidingIndexA(), "public", "documents");
-        var sqlB = IndexSql.BuildCreate(new CollidingIndexB(), "public", "documents");
+        var sqlA = IndexSql.BuildCreate(new CollidingIndexA());
+        var sqlB = IndexSql.BuildCreate(new CollidingIndexB());
         // Extract names from the SQL (between the first pair of quotes after IF NOT EXISTS)
         static string ExtractName(string sql)
         {
@@ -83,5 +83,5 @@ public class IndexSqlTests
 
     [Fact]
     public void BuildCreate_EmptyFields_Throws() =>
-        Assert.Throws<ArgumentException>(() => IndexSql.BuildCreate(new EmptyFieldsIndex(), "public", "documents"));
+        Assert.Throws<ArgumentException>(() => IndexSql.BuildCreate(new EmptyFieldsIndex()));
 }

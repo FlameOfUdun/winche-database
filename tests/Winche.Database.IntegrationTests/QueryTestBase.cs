@@ -21,13 +21,13 @@ public abstract class QueryTestBase(PostgresFixture fx) : IAsyncLifetime
     protected async Task SeedDoc(string id, Dictionary<string, Value> fields, string collection = "c")
     {
         await using var conn = await Fx.DataSource.OpenConnectionAsync();
-        await new DocumentOperations(conn, null, Fx.Table).SetAsync($"{collection}/{id}", fields);
+        await new DocumentOperations(conn, null).SetAsync($"{collection}/{id}", fields);
     }
 
     protected async Task<QueryResult> Run(QueryAst query)
     {
         await using var conn = await Fx.DataSource.OpenConnectionAsync();
-        return await new QueryExecutor(conn, null, Fx.Table).ExecuteAsync(query);
+        return await new QueryExecutor(conn, null).ExecuteAsync(query);
     }
 
     protected async Task<List<string>> Ids(QueryAst query) =>

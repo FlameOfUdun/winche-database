@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Winche.Database.Constants;
-using Winche.Database.Models;
+using Winche.Database.DependencyInjection;
 using Winche.Database.Runtime.ChangeFeed;
 
 namespace Winche.Database.Runtime.Hosting;
@@ -12,12 +12,12 @@ namespace Winche.Database.Runtime.Hosting;
 /// <summary>Bounds the feed table: deletes rows older than ChangeFeed.Retention (spec §4).</summary>
 public sealed class RetentionPruner(
     [FromKeyedServices(ServiceKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source,
-    IOptions<StoreOptions> options,
+    IOptions<WincheDatabaseOptions> options,
     ILogger<RetentionPruner> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var reader = new ChangeFeedReader(source, options.Value.TableName);
+        var reader = new ChangeFeedReader(source);
         var config = options.Value.ChangeFeed;
         using var timer = new PeriodicTimer(config.PruneInterval);
         while (await Wait(timer, stoppingToken))

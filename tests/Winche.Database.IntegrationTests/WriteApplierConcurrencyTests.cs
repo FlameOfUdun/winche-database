@@ -8,13 +8,13 @@ namespace Winche.Database.IntegrationTests;
 [Collection("postgres")]
 public class WriteApplierConcurrencyTests(PostgresFixture fx) : QueryTestBase(fx)
 {
-    private WriteApplier Applier() => new(Fx.DataSource, Fx.Table);
+    private WriteApplier Applier() => new(Fx.DataSource);
     private static FieldPath FP(string p) => FieldPath.Parse(p);
 
     private async Task<Document?> Get(string path)
     {
         await using var conn = await Fx.DataSource.OpenConnectionAsync();
-        return await new DocumentOperations(conn, null, Fx.Table).GetAsync(path);
+        return await new DocumentOperations(conn, null).GetAsync(path);
     }
 
     [Fact]

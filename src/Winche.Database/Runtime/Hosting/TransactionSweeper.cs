@@ -1,14 +1,14 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Winche.Database.Models;
+using Winche.Database.DependencyInjection;
 
 namespace Winche.Database.Runtime.Hosting;
 
 /// <summary>Sweeps expired ledger entries (spec §3). Correctness never depends on it.</summary>
 public sealed class TransactionSweeper(
     DocumentDatabase core,
-    IOptions<StoreOptions> options,
+    IOptions<WincheDatabaseOptions> options,
     ILogger<TransactionSweeper> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

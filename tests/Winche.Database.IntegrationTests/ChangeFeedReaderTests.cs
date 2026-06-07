@@ -7,8 +7,8 @@ namespace Winche.Database.IntegrationTests;
 [Collection("postgres")]
 public class ChangeFeedReaderTests(PostgresFixture fx) : QueryTestBase(fx)
 {
-    private ChangeFeedReader Reader() => new(Fx.DataSource, Fx.Table);
-    private WriteApplier Applier() => new(Fx.DataSource, Fx.Table);
+    private ChangeFeedReader Reader() => new(Fx.DataSource);
+    private WriteApplier Applier() => new(Fx.DataSource);
     private static Dictionary<string, Value> Map() => new();
 
     [Fact]

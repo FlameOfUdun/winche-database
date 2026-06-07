@@ -1,10 +1,9 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using Winche.Database.Abstraction;
 using Winche.Database.Documents;
-using Winche.Database.Models;
+using Winche.Database.DependencyInjection;
 using Winche.Database.Runtime.ChangeFeed;
 using Winche.Database.Runtime.Writes;
-using Winche.Database.Services;
 using Winche.Database.Values;
 using Winche.Sentinel.Interfaces;
 using Winche.Sentinel.Models;
@@ -64,6 +63,62 @@ internal sealed class RecordingHook(string path) : DocumentStoreHook
     }
 }
 
+/// <summary>
+/// Hook that throws on the first N invocations, then succeeds. Used to exercise the
+/// DurableConsumerRunner's at-least-once retry path.
+/// </summary>
+internal sealed class FlakyHook(string path, int failCount) : DocumentStoreHook
+{
+    public override string Path => path;
+
+    private int _invocations;
+    private readonly List<(string Event, string HookPath, Document? Doc)> _events = [];
+    private readonly SemaphoreSlim _signal = new(0);
+
+    public int TotalInvocations => Volatile.Read(ref _invocations);
+    public IReadOnlyList<(string Event, string HookPath, Document? Doc)> Events
+    {
+        get { lock (_events) return _events.ToList(); }
+    }
+
+    public Task WaitForEventsAsync(int count, int timeoutMs = 15000)
+        => Task.Run(async () =>
+        {
+            for (var i = 0; i < count; i++)
+                if (!await _signal.WaitAsync(timeoutMs)) throw new TimeoutException($"FlakyHook: timed out waiting for event {i + 1}/{count}");
+        });
+
+    private void Record(string evt, string hookPath, Document? doc)
+    {
+        lock (_events) _events.Add((evt, hookPath, doc));
+        _signal.Release();
+    }
+
+    public override Task OnDocumentSetAsync(string path, Document document, CancellationToken ct)
+    {
+        var n = Interlocked.Increment(ref _invocations);
+        if (n <= failCount) throw new InvalidOperationException($"Flaky hook failure #{n}");
+        Record("set", path, document);
+        return Task.CompletedTask;
+    }
+
+    public override Task OnDocumentUpdatedAsync(string path, Document document, CancellationToken ct)
+    {
+        var n = Interlocked.Increment(ref _invocations);
+        if (n <= failCount) throw new InvalidOperationException($"Flaky hook failure #{n}");
+        Record("update", path, document);
+        return Task.CompletedTask;
+    }
+
+    public override Task OnDocumentDeletedAsync(string path, CancellationToken ct)
+    {
+        var n = Interlocked.Increment(ref _invocations);
+        if (n <= failCount) throw new InvalidOperationException($"Flaky hook failure #{n}");
+        Record("delete", path, null);
+        return Task.CompletedTask;
+    }
+}
+
 [Collection("postgres")]
 public class HookFeedTests(PostgresFixture fx) : QueryTestBase(fx)
 {
@@ -73,27 +128,20 @@ public class HookFeedTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task HookFeed_SetUpdateDelete_CallbacksArrive()
     {
         var hook = new RecordingHook("**");
-        var dispatcher = new HookInvocationDispatcher([hook], AlwaysMatchPathMatcher.Instance);
-        var consumer = new HookFeedConsumer(dispatcher);
+        var consumer = new HookFeedConsumer([hook], AlwaysMatchPathMatcher.Instance);
 
-        var pump = new ChangeFeedPump(Fx.DataSource, Fx.Table, [consumer],
+        var pump = new ChangeFeedPump(Fx.DataSource, [consumer],
             new ChangeFeedConfig { PollInterval = TimeSpan.FromMilliseconds(200) },
             NullLogger<ChangeFeedPump>.Instance);
 
         var cts = new CancellationTokenSource();
         var pumpRun = Task.Run(() => pump.RunAsync(cts.Token));
 
-        // Drain the dispatcher channels concurrently (simulating HookInvocationProcessor inline)
-        var drainCts = new CancellationTokenSource();
-        var drainTasks = dispatcher.Readers
-            .Select(r => DrainChannelAsync(r.Reader, drainCts.Token))
-            .ToList();
-
         try
         {
             await Task.Delay(400);   // let pump boot
 
-            var applier = new WriteApplier(Fx.DataSource, Fx.Table);
+            var applier = new WriteApplier(Fx.DataSource);
 
             // 1. Set (added)
             await applier.ApplyAsync([new SetWrite { Path = "h/doc", Fields = Map(("v", new IntegerValue(1))) }]);
@@ -113,24 +161,59 @@ public class HookFeedTests(PostgresFixture fx) : QueryTestBase(fx)
         finally
         {
             await cts.CancelAsync();
-            dispatcher.Complete();
             await pumpRun;
-            drainCts.Cancel();
-            await Task.WhenAll(drainTasks);
         }
     }
 
-    private static async Task DrainChannelAsync(
-        System.Threading.Channels.ChannelReader<HookInvocation> reader, CancellationToken ct)
+    /// <summary>
+    /// AT-LEAST-ONCE regression: a hook that throws on its first invocation causes the
+    /// DurableConsumerRunner to retry the same batch with backoff. After the failure the
+    /// hook eventually receives the call and records exactly one success. The cursor
+    /// advances only after the successful delivery.
+    /// </summary>
+    [Fact]
+    public async Task HookFeed_FlakyHook_RetriesAndEventuallySucceeds()
     {
+        // FlakyHook fails on the first invocation, succeeds from the second onwards.
+        var hook = new FlakyHook("**", failCount: 1);
+        var consumer = new HookFeedConsumer([hook], AlwaysMatchPathMatcher.Instance);
+
+        // Fast backoff so the test doesn't wait 1+ second for the real default.
+        var config = new ChangeFeedConfig
+        {
+            PollInterval = TimeSpan.FromMilliseconds(100),
+        };
+
+        var pump = new ChangeFeedPump(Fx.DataSource, [consumer],
+            config,
+            NullLogger<ChangeFeedPump>.Instance);
+
+        var cts = new CancellationTokenSource();
+        var pumpRun = Task.Run(() => pump.RunAsync(cts.Token));
+
         try
         {
-            await foreach (var invocation in reader.ReadAllAsync(CancellationToken.None).WithCancellation(ct))
-            {
-                try { await invocation.Invoke(ct); }
-                catch { /* ignore errors in test */ }
-            }
+            await Task.Delay(300);   // let pump boot and persist the initial cursor
+
+            var applier = new WriteApplier(Fx.DataSource);
+            await applier.ApplyAsync([new SetWrite { Path = "h/retry", Fields = Map(("v", new IntegerValue(42))) }]);
+
+            // Wait for the hook to record exactly one success (after retrying the failed batch).
+            await hook.WaitForEventsAsync(1, timeoutMs: 15000);
+
+            // Exactly one event recorded (idempotency: not duplicated)
+            Assert.Single(hook.Events);
+            Assert.Equal("set", hook.Events[0].Event);
+            Assert.Equal("h/retry", hook.Events[0].HookPath);
+
+            // The runner invoked the hook at least twice (once failing, once succeeding)
+            Assert.True(hook.TotalInvocations >= 2,
+                $"Expected at least 2 invocations (1 fail + 1 success) but got {hook.TotalInvocations}");
         }
-        catch (OperationCanceledException) { /* expected on teardown */ }
+        finally
+        {
+            await cts.CancelAsync();
+            await pumpRun;
+        }
     }
 }

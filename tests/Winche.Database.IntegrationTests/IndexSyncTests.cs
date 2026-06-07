@@ -1,3 +1,4 @@
+using Winche.Database.Constants;
 using Winche.Database.Documents;
 using Winche.Database.Querying.Ast;
 using Winche.Database.Querying.Sql;
@@ -21,14 +22,14 @@ public class IndexSyncTests(PostgresFixture fx) : QueryTestBase(fx)
         await using var conn = await _fx.DataSource.OpenConnectionAsync();
         await using (var create = conn.CreateCommand())
         {
-            create.CommandText = IndexSql.BuildCreate(new CityIndex(), "public", _fx.Table);
+            create.CommandText = IndexSql.BuildCreate(new CityIndex());
             await create.ExecuteNonQueryAsync();
         }
 
         string discoveredName;
         await using (var check = conn.CreateCommand())
         {
-            check.CommandText = $"SELECT indexname FROM pg_indexes WHERE indexname LIKE 'idx_{_fx.Table}_c_%' AND tablename = '{_fx.Table}'";
+            check.CommandText = $"SELECT indexname FROM pg_indexes WHERE indexname LIKE 'idx_{WincheTables.Documents}_c_%' AND tablename = '{WincheTables.Documents}'";
             var result = await check.ExecuteScalarAsync();
             Assert.NotNull(result);
             discoveredName = (string)result!;
@@ -36,7 +37,7 @@ public class IndexSyncTests(PostgresFixture fx) : QueryTestBase(fx)
 
         await using (var drop = conn.CreateCommand())
         {
-            drop.CommandText = IndexSql.BuildDrop("public", discoveredName);
+            drop.CommandText = IndexSql.BuildDrop(discoveredName);
             await drop.ExecuteNonQueryAsync();
         }
     }

@@ -3,6 +3,7 @@
     <Project Path="src/Winche.Database/Winche.Database.csproj" />
     <Project Path="src/Winche.Database.AspNetCore/Winche.Database.AspNetCore.csproj" />
     <Project Path="src/Winche.Database.AspNetCore.Rest/Winche.Database.AspNetCore.Rest.csproj" />
+    <Project Path="src/Winche.Database.AspNetCore.WebSockets/Winche.Database.AspNetCore.WebSockets.csproj" />
   </Folder>
   <Folder Name="/samples/">
     <Project Path="samples/Winche.Database.Sample/Winche.Database.Sample.csproj" />

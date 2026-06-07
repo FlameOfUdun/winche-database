@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Winche.Database.Documents;
 using Winche.Database.Values;
 
@@ -38,5 +39,7 @@ public enum TransformKind { ServerTimestamp, Increment, Maximum, Minimum, ArrayU
 public sealed record FieldTransform(FieldPath Field, TransformKind Kind, Value? Operand = null);
 
 public sealed record WriteResult(
-    DateTimeOffset UpdateTime,
+    [property: JsonPropertyName("updateTime")] DateTimeOffset UpdateTime,
+    [property: JsonPropertyName("transformResults")]
+    [property: JsonConverter(typeof(FieldPathValueDictionaryJsonConverter))]
     IReadOnlyDictionary<FieldPath, Value>? TransformResults = null);

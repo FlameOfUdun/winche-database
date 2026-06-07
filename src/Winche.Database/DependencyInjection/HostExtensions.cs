@@ -1,19 +1,17 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Winche.Database.Interfaces;
+using Winche.Database.Schema;
 
 namespace Winche.Database.DependencyInjection;
 
 public static class HostExtensions
 {
-    public static IHost UseWincheDatabase(this IHost host)
+    /// <summary>Creates the winche_* tables/functions (idempotent) and syncs index definitions.</summary>
+    public static async Task InitializeWincheDatabaseAsync(this IHost host, CancellationToken ct = default)
     {
         using var scope = host.Services.CreateScope();
-        var service = scope.ServiceProvider.GetRequiredService<ISchemaManager>()!;
-        service.EnsureCreatedAsync().GetAwaiter().GetResult();
-        service.SyncIndexesAsync().GetAwaiter().GetResult();
-
-        return host;
+        var schema = scope.ServiceProvider.GetRequiredService<ISchemaManager>();
+        await schema.EnsureCreatedAsync(ct);
+        await schema.SyncIndexesAsync(ct);
     }
 }
-

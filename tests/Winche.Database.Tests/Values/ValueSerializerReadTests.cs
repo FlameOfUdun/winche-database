@@ -80,4 +80,12 @@ public class ValueSerializerReadTests
     {
         Assert.Throws<WireFormatException>(() => Read("""{"bytesValue":"!!!not base64!!!"}"""));
     }
+
+    [Fact]
+    public void NullValue_NonNullPayload_Throws()
+    {
+        Assert.Throws<WireFormatException>(() => Read("""{"nullValue":1}"""));
+        Assert.Throws<WireFormatException>(() => Read("""{"nullValue":"NULL_VALUE"}"""));
+        Assert.Equal(new NullValue(), Read("""{"nullValue":null}"""));
+    }
 }

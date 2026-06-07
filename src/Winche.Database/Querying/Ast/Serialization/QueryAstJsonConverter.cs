@@ -11,7 +11,7 @@ public sealed class QueryAstJsonConverter : JsonConverter<QueryAst>
         if (JsonNode.Parse(ref reader) is not JsonObject obj)
             throw new JsonException("Query must be a JSON object");
         try { return QueryParser.Parse(obj); }
-        catch (QueryParseException ex) { throw new JsonException(ex.Message); }
+        catch (QueryParseException ex) { throw new JsonException(ex.Message, ex); }
     }
 
     public override void Write(Utf8JsonWriter writer, QueryAst value, JsonSerializerOptions options) =>

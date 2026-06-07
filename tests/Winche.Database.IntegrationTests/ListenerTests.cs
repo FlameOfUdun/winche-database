@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
-using Winche.Database.Models;
+using Winche.Database.DependencyInjection;
 using Winche.Database.Querying.Ast;
 using Winche.Database.Runtime;
 using Winche.Database.Runtime.ChangeFeed;
@@ -27,10 +27,10 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
 
     private Rig Start()
     {
-        var opts = Options.Create(new StoreOptions { TableName = Fx.Table });
-        var registry = new ListenerRegistry(Fx.DataSource, opts);
+        var opts = Options.Create(new WincheDatabaseOptions());
+        var registry = new ListenerRegistry(Fx.DataSource);
         var db = new DocumentDatabase(Fx.DataSource, opts, registry);
-        var pump = new ChangeFeedPump(Fx.DataSource, Fx.Table, [registry],
+        var pump = new ChangeFeedPump(Fx.DataSource, [registry],
             new ChangeFeedConfig { PollInterval = TimeSpan.FromMilliseconds(200) },
             NullLogger<ChangeFeedPump>.Instance);
         var cts = new CancellationTokenSource();
@@ -224,7 +224,7 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         // write then prune everything — token is now too old
         await rig.Db.WriteAsync([new SetWrite { Path = "c/b", Fields = Map() }]);
         await Task.Delay(400);
-        var reader = new ChangeFeedReader(Fx.DataSource, Fx.Table);
+        var reader = new ChangeFeedReader(Fx.DataSource);
         await reader.PruneBeforeAsync(DateTimeOffset.UtcNow.AddMinutes(1));
 
         // resume with too-old token → must NOT be suppressed (initial snapshot arrives)

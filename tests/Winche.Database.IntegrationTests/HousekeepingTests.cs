@@ -1,5 +1,5 @@
 using Microsoft.Extensions.Options;
-using Winche.Database.Models;
+using Winche.Database.DependencyInjection;
 using Winche.Database.Runtime;
 using Winche.Database.Runtime.ChangeFeed;
 using Winche.Database.Runtime.Writes;
@@ -13,10 +13,10 @@ public class HousekeepingTests(PostgresFixture fx) : QueryTestBase(fx)
     [Fact]
     public async Task Pruner_Logic_DeletesOnlyOldRows()
     {
-        await new WriteApplier(Fx.DataSource, Fx.Table).ApplyAsync(
+        await new WriteApplier(Fx.DataSource).ApplyAsync(
             [new SetWrite { Path = "c/fresh", Fields = new Dictionary<string, Value>() }]);
 
-        var reader = new ChangeFeedReader(Fx.DataSource, Fx.Table);
+        var reader = new ChangeFeedReader(Fx.DataSource);
         Assert.Equal(0, await reader.PruneBeforeAsync(DateTimeOffset.UtcNow.AddDays(-7))); // nothing that old
         Assert.Single(await reader.ReadAfterAsync(0, 10));
         Assert.Equal(1, await reader.PruneBeforeAsync(DateTimeOffset.UtcNow.AddMinutes(1)));
@@ -25,9 +25,8 @@ public class HousekeepingTests(PostgresFixture fx) : QueryTestBase(fx)
     [Fact]
     public async Task Sweeper_Logic_RemovesExpiredLedgerEntries()
     {
-        var db = new DocumentDatabase(Fx.DataSource, Options.Create(new StoreOptions
+        var db = new DocumentDatabase(Fx.DataSource, Options.Create(new WincheDatabaseOptions
         {
-            TableName = Fx.Table,
             TransactionConfig = new TransactionConfig { IdleTimeoutSpan = TimeSpan.FromMilliseconds(50) },
         }));
         await db.BeginTransactionAsync();

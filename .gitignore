@@ -20,12 +20,10 @@ nupkgs/
 .vs/
 .vscode/
 .claude/
+docs/superpowers/
 
 # Rider
 .idea/
-
-# VS Code (uncomment to ignore local IDE settings)
-# .vscode/
 
 # Environment-specific appsettings (may contain secrets)
 appsettings.Development.json

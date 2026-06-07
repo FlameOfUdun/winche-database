@@ -1,6 +1,6 @@
 // src/Winche.Database/Querying/Planning/PipelineNormalizer.cs
 using System.Text.RegularExpressions;
-using Winche.Database.Core.Infrastructure;
+using Winche.Database.Documents;
 using Winche.Database.Querying.Ast;
 
 namespace Winche.Database.Querying.Planning;

@@ -1,3 +1,5 @@
+using Winche.Database.Constants;
+
 namespace Winche.Database.Querying.Sql;
 
 /// <summary>
@@ -6,6 +8,7 @@ namespace Winche.Database.Querying.Sql;
 /// &lt; string(50) &lt; bytes(60) &lt; reference(70) &lt; geopoint(80) &lt; array(90) &lt; map(100).
 /// Phase 1 ships scalar ordering; winche_key (arrays/maps) ships in Phase 2.
 /// Reference ordering compares full path bytes (not per-segment); diverges from Firestore only for ids containing chars below '/' (0x2F).
+/// IMMUTABLE note: winche_num/winche_rank cast text→timestamptz, which is only truly immutable for offset-bearing strings; the engine always writes 'Z'-suffixed timestamps, so expression indexes are safe — externally-written offset-less strings would not be.
 /// </summary>
 public static class SchemaSql
 {
@@ -14,8 +17,8 @@ public static class SchemaSql
     /// in Plan 3 (the durable changes feed is the only notifier now; see ChangesDdl).
     /// Cleanup lines drop the old trigger/function on existing databases.
     /// </summary>
-    public static string TableDdl(string table) => $$"""
-        CREATE TABLE IF NOT EXISTS {{table}} (
+    public static string TableDdl() => $$"""
+        CREATE TABLE IF NOT EXISTS {{WincheTables.Documents}} (
             path        TEXT        PRIMARY KEY,
             id          TEXT        NOT NULL,
             collection  TEXT        NOT NULL,
@@ -25,16 +28,16 @@ public static class SchemaSql
             version     BIGINT      NOT NULL DEFAULT 1
         );
 
-        CREATE INDEX IF NOT EXISTS idx_{{table}}_id
-            ON {{table}}(id);
+        CREATE INDEX IF NOT EXISTS idx_{{WincheTables.Documents}}_id
+            ON {{WincheTables.Documents}}(id);
 
-        CREATE INDEX IF NOT EXISTS idx_{{table}}_collection_id
-            ON {{table}}(collection, id ASC);
+        CREATE INDEX IF NOT EXISTS idx_{{WincheTables.Documents}}_collection_id
+            ON {{WincheTables.Documents}}(collection, id ASC);
 
-        CREATE INDEX IF NOT EXISTS idx_{{table}}_data
-            ON {{table}} USING GIN(data);
+        CREATE INDEX IF NOT EXISTS idx_{{WincheTables.Documents}}_data
+            ON {{WincheTables.Documents}} USING GIN(data);
 
-        DROP TRIGGER IF EXISTS document_change_trigger ON {{table}};
+        DROP TRIGGER IF EXISTS document_change_trigger ON {{WincheTables.Documents}};
         DROP FUNCTION IF EXISTS public.notify_document_change() CASCADE;
         """;
 
@@ -43,8 +46,8 @@ public static class SchemaSql
     /// transaction as the write (WriteApplier). The trigger emits pg_notify as a
     /// wake-up only — the rows are the durable truth (spec §2/§4).
     /// </summary>
-    public static string ChangesDdl(string table, string schema = "public") => $"""
-        CREATE TABLE IF NOT EXISTS {schema}.{table}_changes (
+    public static string ChangesDdl() => $$"""
+        CREATE TABLE IF NOT EXISTS {{WincheTables.Changes}} (
             seq         BIGSERIAL PRIMARY KEY,
             type        TEXT NOT NULL,
             path        TEXT NOT NULL,
@@ -53,24 +56,30 @@ public static class SchemaSql
             commit_time TIMESTAMPTZ NOT NULL
         );
 
-        CREATE INDEX IF NOT EXISTS idx_{table}_changes_commit_time
-            ON {schema}.{table}_changes (commit_time);
+        CREATE INDEX IF NOT EXISTS idx_{{WincheTables.Changes}}_commit_time
+            ON {{WincheTables.Changes}} (commit_time);
 
-        CREATE OR REPLACE FUNCTION {schema}.winche_notify_change() RETURNS TRIGGER AS $t$
+        CREATE TABLE IF NOT EXISTS {{WincheTables.FeedCursors}} (
+            consumer   TEXT PRIMARY KEY,
+            seq        BIGINT NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+
+        CREATE OR REPLACE FUNCTION winche_notify_change() RETURNS TRIGGER AS $t$
         BEGIN
             PERFORM pg_notify('winche_changes', NEW.seq::text);
             RETURN NEW;
         END;
         $t$ LANGUAGE plpgsql;
 
-        DROP TRIGGER IF EXISTS winche_changes_trigger ON {schema}.{table}_changes;
+        DROP TRIGGER IF EXISTS winche_changes_trigger ON {{WincheTables.Changes}};
         CREATE TRIGGER winche_changes_trigger
-        AFTER INSERT ON {schema}.{table}_changes
-        FOR EACH ROW EXECUTE FUNCTION {schema}.winche_notify_change();
+        AFTER INSERT ON {{WincheTables.Changes}}
+        FOR EACH ROW EXECUTE FUNCTION winche_notify_change();
         """;
 
-    public static string HelperFunctions(string schema = "public") => $"""
-        CREATE OR REPLACE FUNCTION {schema}.winche_rank(v jsonb) RETURNS smallint AS $f$
+    public static string HelperFunctions() => $"""
+        CREATE OR REPLACE FUNCTION winche_rank(v jsonb) RETURNS smallint AS $f$
         SELECT CASE
             WHEN v ? 'nullValue' THEN 10
             WHEN v ? 'booleanValue' THEN 20
@@ -86,7 +95,7 @@ public static class SchemaSql
         END::smallint
         $f$ LANGUAGE sql IMMUTABLE STRICT;
 
-        CREATE OR REPLACE FUNCTION {schema}.winche_num(v jsonb) RETURNS numeric AS $f$
+        CREATE OR REPLACE FUNCTION winche_num(v jsonb) RETURNS numeric AS $f$
         SELECT CASE
             WHEN v ? 'booleanValue' THEN CASE WHEN (v->>'booleanValue')::boolean THEN 1 ELSE 0 END
             WHEN v ? 'integerValue' THEN (v->>'integerValue')::numeric
@@ -100,26 +109,26 @@ public static class SchemaSql
         END
         $f$ LANGUAGE sql IMMUTABLE STRICT;
 
-        CREATE OR REPLACE FUNCTION {schema}.winche_num2(v jsonb) RETURNS numeric AS $f$
+        CREATE OR REPLACE FUNCTION winche_num2(v jsonb) RETURNS numeric AS $f$
         SELECT (v->'geoPointValue'->>'longitude')::numeric
         $f$ LANGUAGE sql IMMUTABLE STRICT;
 
         -- winche_text returns text under the database's default collation.
         -- Firestore orders strings by UTF-8 byte order: ORDER BY / comparison sites
         -- MUST apply COLLATE "C" (the Phase 2 compiler emits this; tests do too).
-        CREATE OR REPLACE FUNCTION {schema}.winche_text(v jsonb) RETURNS text AS $f$
+        CREATE OR REPLACE FUNCTION winche_text(v jsonb) RETURNS text AS $f$
         SELECT CASE
             WHEN v ? 'stringValue' THEN v->>'stringValue'
             WHEN v ? 'referenceValue' THEN v->>'referenceValue'
         END
         $f$ LANGUAGE sql IMMUTABLE STRICT;
 
-        CREATE OR REPLACE FUNCTION {schema}.winche_bytes(v jsonb) RETURNS bytea AS $f$
+        CREATE OR REPLACE FUNCTION winche_bytes(v jsonb) RETURNS bytea AS $f$
         SELECT decode(v->>'bytesValue', 'base64')
         $f$ LANGUAGE sql IMMUTABLE STRICT;
 
         -- Order-preserving 8-byte encoding of a float8 (IEEE sign-flip trick).
-        CREATE OR REPLACE FUNCTION {schema}.winche_f8key(d float8) RETURNS bytea AS $f$
+        CREATE OR REPLACE FUNCTION winche_f8key(d float8) RETURNS bytea AS $f$
         DECLARE b bytea := float8send(d); i int;
         BEGIN
             IF get_byte(b, 0) >= 128 THEN
@@ -131,7 +140,7 @@ public static class SchemaSql
         END $f$ LANGUAGE plpgsql IMMUTABLE STRICT;
 
         -- Escape 0x00 as 0x00 0xFF and terminate with 0x00 0x00 (prefix-safe var-length encoding).
-        CREATE OR REPLACE FUNCTION {schema}.winche_eskey(b bytea) RETURNS bytea AS $f$
+        CREATE OR REPLACE FUNCTION winche_eskey(b bytea) RETURNS bytea AS $f$
         DECLARE r bytea := '\x'::bytea; i int;
         BEGIN
             FOR i IN 0..octet_length(b) - 1 LOOP
@@ -144,9 +153,9 @@ public static class SchemaSql
 
         -- Recursive order-preserving key for ANY tagged value. bytea comparison of keys
         -- equals Firestore value ordering (numbers approximated via float8 beyond 2^53).
-        CREATE OR REPLACE FUNCTION {schema}.winche_key(v jsonb) RETURNS bytea AS $f$
+        CREATE OR REPLACE FUNCTION winche_key(v jsonb) RETURNS bytea AS $f$
         DECLARE
-            r int := {schema}.winche_rank(v);
+            r int := winche_rank(v);
             res bytea;
             e jsonb;
             k text;
@@ -157,24 +166,24 @@ public static class SchemaSql
                 WHEN 10, 29 THEN RETURN res;                          -- null, NaN: rank byte only
                 WHEN 20 THEN RETURN res || set_byte('\x00'::bytea, 0,
                     CASE WHEN (v->>'booleanValue')::boolean THEN 1 ELSE 0 END);
-                WHEN 30 THEN RETURN res || {schema}.winche_f8key({schema}.winche_num(v)::float8);
-                WHEN 40 THEN RETURN res || int8send(({schema}.winche_num(v))::int8 # -9223372036854775808);
-                WHEN 50 THEN RETURN res || {schema}.winche_eskey(convert_to(v->>'stringValue', 'UTF8'));
-                WHEN 60 THEN RETURN res || {schema}.winche_eskey(decode(v->>'bytesValue', 'base64'));
-                WHEN 70 THEN RETURN res || {schema}.winche_eskey(convert_to(v->>'referenceValue', 'UTF8'));
+                WHEN 30 THEN RETURN res || winche_f8key(winche_num(v)::float8);
+                WHEN 40 THEN RETURN res || int8send((winche_num(v))::int8 # -9223372036854775808);
+                WHEN 50 THEN RETURN res || winche_eskey(convert_to(v->>'stringValue', 'UTF8'));
+                WHEN 60 THEN RETURN res || winche_eskey(decode(v->>'bytesValue', 'base64'));
+                WHEN 70 THEN RETURN res || winche_eskey(convert_to(v->>'referenceValue', 'UTF8'));
                 WHEN 80 THEN RETURN res
-                    || {schema}.winche_f8key((v->'geoPointValue'->>'latitude')::float8)
-                    || {schema}.winche_f8key((v->'geoPointValue'->>'longitude')::float8);
+                    || winche_f8key((v->'geoPointValue'->>'latitude')::float8)
+                    || winche_f8key((v->'geoPointValue'->>'longitude')::float8);
                 WHEN 90 THEN
                     FOR e IN SELECT * FROM jsonb_array_elements(v->'arrayValue'->'values') LOOP
-                        res := res || {schema}.winche_key(e);
+                        res := res || winche_key(e);
                     END LOOP;
                     RETURN res || '\x00'::bytea;
                 WHEN 100 THEN
                     FOR k IN SELECT k2 FROM jsonb_object_keys(v->'mapValue'->'fields') AS t(k2)
                              ORDER BY convert_to(k2, 'UTF8') LOOP
-                        res := res || {schema}.winche_eskey(convert_to(k, 'UTF8'))
-                                   || {schema}.winche_key(v->'mapValue'->'fields'->k);
+                        res := res || winche_eskey(convert_to(k, 'UTF8'))
+                                   || winche_key(v->'mapValue'->'fields'->k);
                     END LOOP;
                     RETURN res || '\x00'::bytea;
             END CASE;

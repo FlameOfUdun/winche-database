@@ -1,5 +1,6 @@
 using Npgsql;
 using Testcontainers.PostgreSql;
+using Winche.Database.Constants;
 using Winche.Database.Querying.Sql;
 
 namespace Winche.Database.IntegrationTests;
@@ -11,17 +12,19 @@ public sealed class PostgresFixture : IAsyncLifetime
         .Build();
 
     public NpgsqlDataSource DataSource { get; private set; } = null!;
-    public string Table => "documents";
+    /// <summary>Raw connection string captured at startup — safe even if NpgsqlDataSource.ConnectionString is unavailable.</summary>
+    public string ConnectionString { get; private set; } = null!;
 
     public async Task InitializeAsync()
     {
         await _container.StartAsync();
-        DataSource = NpgsqlDataSource.Create(_container.GetConnectionString());
+        ConnectionString = _container.GetConnectionString();
+        DataSource = NpgsqlDataSource.Create(ConnectionString);
 
         await using var conn = await DataSource.OpenConnectionAsync();
         await using (var cmd = conn.CreateCommand())
         {
-            cmd.CommandText = SchemaSql.TableDdl(Table);
+            cmd.CommandText = SchemaSql.TableDdl();
             await cmd.ExecuteNonQueryAsync();
         }
         await using (var cmd = conn.CreateCommand())
@@ -31,7 +34,7 @@ public sealed class PostgresFixture : IAsyncLifetime
         }
         await using (var cmd = conn.CreateCommand())
         {
-            cmd.CommandText = SchemaSql.ChangesDdl(Table);
+            cmd.CommandText = SchemaSql.ChangesDdl();
             await cmd.ExecuteNonQueryAsync();
         }
     }
@@ -47,9 +50,12 @@ public sealed class PostgresFixture : IAsyncLifetime
     {
         await using var conn = await DataSource.OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"TRUNCATE {Table}";
+        cmd.CommandText = $"TRUNCATE {WincheTables.Documents}";
         await cmd.ExecuteNonQueryAsync();
         await ResetChangesAsync();
+        await using var cmd2 = conn.CreateCommand();
+        cmd2.CommandText = $"TRUNCATE {WincheTables.FeedCursors}";
+        await cmd2.ExecuteNonQueryAsync();
     }
 
     /// <summary>Reads all change rows after seq, in order.</summary>
@@ -58,7 +64,7 @@ public sealed class PostgresFixture : IAsyncLifetime
     {
         await using var conn = await DataSource.OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT seq, type, path, collection, version, commit_time FROM {Table}_changes WHERE seq > $1 ORDER BY seq";
+        cmd.CommandText = $"SELECT seq, type, path, collection, version, commit_time FROM {WincheTables.Changes} WHERE seq > $1 ORDER BY seq";
         cmd.Parameters.AddWithValue(afterSeq);
         var rows = new List<(long, string, string, string, long, DateTimeOffset)>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -72,7 +78,7 @@ public sealed class PostgresFixture : IAsyncLifetime
     {
         await using var conn = await DataSource.OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"TRUNCATE {Table}_changes RESTART IDENTITY";
+        cmd.CommandText = $"TRUNCATE {WincheTables.Changes} RESTART IDENTITY";
         await cmd.ExecuteNonQueryAsync();
     }
 }

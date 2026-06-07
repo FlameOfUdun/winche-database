@@ -7,12 +7,12 @@ using Winche.Database.Querying.Sql;
 namespace Winche.Database.Querying;
 
 /// <summary>The pipeline path end-to-end: normalize → compile → execute → decode.</summary>
-public sealed class PipelineExecutor(NpgsqlConnection conn, NpgsqlTransaction? tx, string table)
+public sealed class PipelineExecutor(NpgsqlConnection conn, NpgsqlTransaction? tx)
 {
     public async Task<PipelineResult> ExecuteAsync(PipelineAst pipeline, CancellationToken ct = default)
     {
         var plan = PipelineNormalizer.Normalize(pipeline);
-        var (compiled, schema) = PipelineCompiler.Compile(plan, table);
+        var (compiled, schema) = PipelineCompiler.Compile(plan);
 
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;

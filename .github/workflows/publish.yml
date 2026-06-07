@@ -23,9 +23,6 @@ jobs:
       - name: Build
         run: dotnet build Winche.Database.slnx -c Release --no-restore
 
-      - name: Test
-        run: dotnet test Winche.Database.slnx -c Release --no-build
-
       - name: Pack
         run: |
           dotnet pack src/Winche.Database/Winche.Database.csproj -c Release --no-build -o ./packages

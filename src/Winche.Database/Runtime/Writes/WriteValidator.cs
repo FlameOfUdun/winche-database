@@ -1,4 +1,3 @@
-using Winche.Database.Core.Infrastructure;
 using Winche.Database.Documents;
 using Winche.Database.Values;
 
@@ -44,7 +43,7 @@ public static class WriteValidator
                     if (value is DeleteFieldValue && !s.Merge)
                         throw Invalid($"deleteField ('{key}') requires SetWrite(Merge: true).");
                     if (value is not DeleteFieldValue)
-                        RejectNestedSentinel(value, key);
+                        RejectIllegalSentinels(value, key, allowInMaps: s.Merge);
                 }
                 ValidateTransforms(s.Transforms);
                 break;
@@ -54,7 +53,7 @@ public static class WriteValidator
                     throw Invalid("UpdateWrite needs at least one field or transform.");
                 foreach (var (path, value) in u.Fields)
                     if (value is not DeleteFieldValue)
-                        RejectNestedSentinel(value, path.ToString());
+                        RejectIllegalSentinels(value, path.ToString(), allowInMaps: false);
                 ValidateTransforms(u.Transforms);
                 break;
         }
@@ -83,23 +82,32 @@ public static class WriteValidator
                 case TransformKind.ArrayUnion or TransformKind.ArrayRemove:
                     if (t.Operand is not ArrayValue arr)
                         throw Invalid($"{t.Kind} requires an array operand.");
-                    RejectNestedSentinel(arr, t.Field.ToString());
+                    RejectIllegalSentinels(arr, t.Field.ToString(), allowInMaps: false);
                     break;
             }
         }
     }
 
-    private static void RejectNestedSentinel(Value value, string where)
+    /// <summary>
+    /// Validates nested sentinels in a value:
+    /// - allowInMaps=true (merge-set): sentinel directly or under MapValue chains is OK;
+    ///   sentinel inside any ArrayValue (at any depth) is rejected.
+    /// - allowInMaps=false (non-merge set, update nested values): any nested sentinel is invalid.
+    /// </summary>
+    private static void RejectIllegalSentinels(Value value, string where, bool allowInMaps)
     {
         switch (value)
         {
             case DeleteFieldValue:
-                throw Invalid($"deleteField is not allowed nested inside '{where}'.");
+                if (!allowInMaps)
+                    throw Invalid($"deleteField is not allowed nested inside '{where}'.");
+                break;
             case ArrayValue a:
-                foreach (var e in a.Values) RejectNestedSentinel(e, where);
+                // Arrays always reject sentinels, even in merge-sets
+                foreach (var e in a.Values) RejectIllegalSentinels(e, where, allowInMaps: false);
                 break;
             case MapValue m:
-                foreach (var v in m.Fields.Values) RejectNestedSentinel(v, where);
+                foreach (var v in m.Fields.Values) RejectIllegalSentinels(v, where, allowInMaps);
                 break;
         }
     }

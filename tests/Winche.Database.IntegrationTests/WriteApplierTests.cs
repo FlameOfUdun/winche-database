@@ -8,14 +8,14 @@ namespace Winche.Database.IntegrationTests;
 [Collection("postgres")]
 public class WriteApplierTests(PostgresFixture fx) : QueryTestBase(fx)
 {
-    private WriteApplier Applier() => new(Fx.DataSource, Fx.Table);
+    private WriteApplier Applier() => new(Fx.DataSource);
     private static FieldPath FP(string p) => FieldPath.Parse(p);
     private static Dictionary<string, Value> Map(params (string K, Value V)[] e) => e.ToDictionary(x => x.K, x => x.V);
 
     private async Task<Document?> Get(string path)
     {
         await using var conn = await Fx.DataSource.OpenConnectionAsync();
-        return await new DocumentOperations(conn, null, Fx.Table).GetAsync(path);
+        return await new DocumentOperations(conn, null).GetAsync(path);
     }
 
     private static async Task<RuntimeException> ThrowsStatus(RuntimeStatus status, Func<Task> act)
@@ -203,6 +203,36 @@ public class WriteApplierTests(PostgresFixture fx) : QueryTestBase(fx)
         Assert.Equal(new IntegerValue(15), results[0].TransformResults![FP("n")]);
     }
 
+    [Fact]
+    public async Task SetMerge_NestedSentinel_DeletesNestedKey_PreservesSiblings()
+    {
+        await Applier().ApplyAsync([new SetWrite { Path = "c/nest", Fields = Map(
+            ("m", new MapValue(Map(("drop", new IntegerValue(1)), ("keep", new IntegerValue(2))))),
+            ("top", new IntegerValue(3))) }]);
+
+        await Applier().ApplyAsync([new SetWrite { Path = "c/nest", Merge = true, Fields = Map(
+            ("m", new MapValue(Map(("drop", DeleteFieldValue.Instance), ("added", new IntegerValue(4)))))) }]);
+
+        var doc = await Get("c/nest");
+        var m = Assert.IsType<MapValue>(doc!.Fields["m"]);
+        Assert.False(m.Fields.ContainsKey("drop"));
+        Assert.Equal(new IntegerValue(2), m.Fields["keep"]);
+        Assert.Equal(new IntegerValue(4), m.Fields["added"]);
+        Assert.Equal(new IntegerValue(3), doc.Fields["top"]);
+    }
+
+    [Fact]
+    public async Task SetMerge_NestedSentinel_MapKeyWithDot_IsLiteralSegment()
+    {
+        await Applier().ApplyAsync([new SetWrite { Path = "c/dotnest", Fields = Map(
+            ("m", new MapValue(Map(("a.b", new IntegerValue(1)), ("c", new IntegerValue(2)))))) }]);
+        await Applier().ApplyAsync([new SetWrite { Path = "c/dotnest", Merge = true, Fields = Map(
+            ("m", new MapValue(Map(("a.b", DeleteFieldValue.Instance))))) }]);
+        var m = Assert.IsType<MapValue>((await Get("c/dotnest"))!.Fields["m"]);
+        Assert.False(m.Fields.ContainsKey("a.b"));
+        Assert.True(m.Fields.ContainsKey("c"));
+    }
+
     // I3 — Merge-set sentinel must remove the LITERAL top-level key (not parse as FieldPath)
     [Fact]
     public async Task SetMerge_Sentinel_DottedKeyIsLiteral()
@@ -217,6 +247,34 @@ public class WriteApplierTests(PostgresFixture fx) : QueryTestBase(fx)
         Assert.False(doc!.Fields.ContainsKey("a.b"));               // literal key removed
         var a = Assert.IsType<MapValue>(doc.Fields["a"]);
         Assert.Equal(new IntegerValue(2), a.Fields["b"]);           // nested a.b untouched
+    }
+
+    // I5 — Phantom/destructive empty maps from pruned sentinels
+
+    [Fact]
+    public async Task SetMerge_PureSentinelMap_DoesNotCreatePhantomMap()
+    {
+        await Applier().ApplyAsync([new SetWrite { Path = "c/ph", Fields = Map(("top", new IntegerValue(1))) }]);
+        await Applier().ApplyAsync([new SetWrite { Path = "c/ph", Merge = true, Fields = Map(
+            ("m", new MapValue(Map(("drop", DeleteFieldValue.Instance))))) }]);
+        Assert.False((await Get("c/ph"))!.Fields.ContainsKey("m"));
+    }
+
+    [Fact]
+    public async Task SetMerge_PureSentinelMap_DoesNotDestroyScalar()
+    {
+        await Applier().ApplyAsync([new SetWrite { Path = "c/sc", Fields = Map(("m", new IntegerValue(5))) }]);
+        await Applier().ApplyAsync([new SetWrite { Path = "c/sc", Merge = true, Fields = Map(
+            ("m", new MapValue(Map(("drop", DeleteFieldValue.Instance))))) }]);
+        Assert.Equal(new IntegerValue(5), (await Get("c/sc"))!.Fields["m"]);   // scalar untouched (Firestore no-op)
+    }
+
+    [Fact]
+    public async Task SetMerge_LiteralEmptyMap_IsStillWritten()
+    {
+        await Applier().ApplyAsync([new SetWrite { Path = "c/em", Merge = true, Fields = Map(
+            ("m", new MapValue(new Dictionary<string, Value>()))) }]);
+        Assert.IsType<MapValue>((await Get("c/em"))!.Fields["m"]);
     }
 
     // M5 — Semantic pins

@@ -1,5 +1,6 @@
 // src/Winche.Database/Querying/Sql/PipelineCompiler.cs
 using System.Text;
+using Winche.Database.Constants;
 using Winche.Database.Querying.Planning;
 
 namespace Winche.Database.Querying.Sql;
@@ -11,12 +12,11 @@ namespace Winche.Database.Querying.Sql;
 /// one unit so ordering never crosses a CTE boundary unguaranteed; a trailing unit attaches
 /// to the outer SELECT. Limits without any reachable sort select arbitrary rows (documented contract).
 /// </summary>
-/// <remarks>`table` is an identifier from server configuration — never user input.</remarks>
 internal static class PipelineCompiler
 {
     private const string DocColumns = "path, id, collection, data, created_at, updated_at, version";
 
-    internal static (CompiledSql Sql, StageSchema FinalSchema) Compile(LogicalPlan plan, string table)
+    internal static (CompiledSql Sql, StageSchema FinalSchema) Compile(LogicalPlan plan)
     {
         if (plan.Nodes.Count == 0 || plan.Nodes[0] is not CollectionScan scan)
             throw new InvalidOperationException("Pipeline plan must start with CollectionScan.");
@@ -25,7 +25,7 @@ internal static class PipelineCompiler
         var ctes = new List<string>();
         StageSchema schema = DocumentSchema.Plain;
 
-        ctes.Add($"s0 AS (SELECT {DocColumns} FROM {table} WHERE collection = {bag.Add(scan.Collection)})");
+        ctes.Add($"s0 AS (SELECT {DocColumns} FROM {WincheTables.Documents} WHERE collection = {bag.Add(scan.Collection)})");
         var prev = "s0";
         var idx = 1;
 
@@ -63,7 +63,7 @@ internal static class PipelineCompiler
                 continue;
             }
 
-            var (body, outSchema) = CompileStage(nodes[i], prev, schema, bag, table);
+            var (body, outSchema) = CompileStage(nodes[i], prev, schema, bag);
             ctes.Add($"s{idx} AS ({body})");
             prev = $"s{idx}"; idx++;
             schema = outSchema;
@@ -90,7 +90,7 @@ internal static class PipelineCompiler
     }
 
     private static (string Body, StageSchema Out) CompileStage(
-        PlanNode node, string prev, StageSchema schema, ParameterBag bag, string table)
+        PlanNode node, string prev, StageSchema schema, ParameterBag bag)
     {
         var resolver = new SchemaResolver(schema, prev);
 
@@ -132,7 +132,7 @@ internal static class PipelineCompiler
                         "SELECT jsonb_build_object('arrayValue', jsonb_build_object('values', " +
                         "COALESCE(jsonb_agg(_sub.doc ORDER BY _sub.ord), '[]'::jsonb))) " +
                         $"FROM (SELECT {Doc} AS doc, ROW_NUMBER() OVER (ORDER BY {orderClause}) AS ord " +
-                        $"FROM {table} _f " +
+                        $"FROM {WincheTables.Documents} _f " +
                         $"WHERE _f.collection = {bag.Add(l.Collection)} AND {joinCond}{filterSql} " +
                         $"ORDER BY ord LIMIT {bag.Add(l.Limit)}) _sub";
                 }
@@ -141,7 +141,7 @@ internal static class PipelineCompiler
                     sub =
                         "SELECT jsonb_build_object('arrayValue', jsonb_build_object('values', " +
                         "COALESCE(jsonb_agg(_sub.doc), '[]'::jsonb))) " +
-                        $"FROM (SELECT {Doc} AS doc FROM {table} _f " +
+                        $"FROM (SELECT {Doc} AS doc FROM {WincheTables.Documents} _f " +
                         $"WHERE _f.collection = {bag.Add(l.Collection)} AND {joinCond}{filterSql} " +
                         $"LIMIT {bag.Add(l.Limit)}) _sub";
                 }

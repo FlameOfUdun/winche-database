@@ -1,8 +1,12 @@
-﻿namespace Winche.Database.Constants;
+namespace Winche.Database.Constants;
 
+/// <summary>
+/// Contains constant keys used for service registration in the Winche Database system.
+/// </summary>
 internal sealed class ServiceKeys
 {
-    public const string DATA_SOURCE_KEY = "DocumentManager";
-    public const string CONFIG_SECTION_KEY = "WincheDatabase";
-    public const string CONN_STRING_KEY = "WincheDatabase";
+    /// <summary>
+    /// The keyed-service key under which the store's NpgsqlDataSource is registered.
+    /// </summary>
+    public const string DATA_SOURCE_KEY = "WincheDatabase";
 }

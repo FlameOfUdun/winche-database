@@ -13,7 +13,7 @@ public class DocumentOperationsTests(PostgresFixture fx) : IAsyncLifetime
     private async Task<T> WithOps<T>(Func<DocumentOperations, Task<T>> action)
     {
         await using var conn = await fx.DataSource.OpenConnectionAsync();
-        return await action(new DocumentOperations(conn, null, fx.Table));
+        return await action(new DocumentOperations(conn, null));
     }
 
     private static Dictionary<string, Value> AllTypesFields() => new()

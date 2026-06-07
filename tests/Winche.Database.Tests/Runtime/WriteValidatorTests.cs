@@ -55,10 +55,32 @@ public class WriteValidatorTests
     [Fact]
     public void Sentinel_Nested_Throws()
     {
-        Throws(new SetWrite { Path = "c/a", Merge = true,
-            Fields = Fields(("m", new MapValue(Fields(("x", DeleteFieldValue.Instance))))) });
+        // Spec-driven flip (Task 3 / C): merge-set with nested map sentinel is now VALID.
+        // The old rejection arm is removed. Remaining arms: array and update-nested still reject.
         Throws(new UpdateWrite { Path = "c/a", Fields = new Dictionary<FieldPath, Value>
             { [F("a")] = new ArrayValue([DeleteFieldValue.Instance]) } });
+        // Non-merge set with nested map sentinel still rejects.
+        Throws(new SetWrite { Path = "c/a", Merge = false,
+            Fields = Fields(("m", new MapValue(Fields(("x", DeleteFieldValue.Instance))))) });
+        // Array inside merge-set still rejects.
+        Throws(new SetWrite { Path = "c/a", Merge = true,
+            Fields = Fields(("arr", new ArrayValue([DeleteFieldValue.Instance]))) });
+        Throws(new SetWrite { Path = "c/a", Merge = true,
+            Fields = Fields(("m", new MapValue(Fields(("arr", new ArrayValue([DeleteFieldValue.Instance])))))) });
+    }
+
+    [Fact]
+    public void Sentinel_NestedInMap_AllowedInMergeSet_OnlyThere()
+    {
+        var nested = new MapValue(Fields(("inner", DeleteFieldValue.Instance)));
+        WriteValidator.Validate([new SetWrite { Path = "c/a", Merge = true, Fields = Fields(("m", nested)) }]);
+        Throws(new SetWrite { Path = "c/a", Merge = false, Fields = Fields(("m", nested)) });
+        Throws(new UpdateWrite { Path = "c/a", Fields = new Dictionary<FieldPath, Value> { [F("m")] = nested } });
+        // arrays still always reject
+        Throws(new SetWrite { Path = "c/a", Merge = true,
+            Fields = Fields(("arr", new ArrayValue([DeleteFieldValue.Instance]))) });
+        Throws(new SetWrite { Path = "c/a", Merge = true,
+            Fields = Fields(("m", new MapValue(Fields(("arr", new ArrayValue([DeleteFieldValue.Instance])))))) });
     }
 
     [Fact]

@@ -1,5 +1,5 @@
 using System.Collections.Concurrent;
-using Winche.Database.Models;
+using Winche.Database.DependencyInjection;
 
 namespace Winche.Database.Runtime.Transactions;
 

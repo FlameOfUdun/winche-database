@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Winche.Database.Documents;
-using Winche.Database.Models;
+using Winche.Database.DependencyInjection;
 using Winche.Database.Querying;
 using Winche.Database.Querying.Ast;
 using Winche.Database.Runtime.Listening;
@@ -18,16 +18,14 @@ namespace Winche.Database.Runtime;
 public sealed class DocumentDatabase : IDocumentDatabase
 {
     private readonly NpgsqlDataSource _source;
-    private readonly string _table;
     private readonly WriteApplier _applier;
     private readonly TransactionLedger _ledger;
     private readonly ListenerRegistry? _listeners;
 
-    public DocumentDatabase(NpgsqlDataSource source, IOptions<StoreOptions> options, ListenerRegistry? listeners = null)
+    public DocumentDatabase(NpgsqlDataSource source, IOptions<WincheDatabaseOptions> options, ListenerRegistry? listeners = null)
     {
         _source = source;
-        _table = options.Value.TableName;
-        _applier = new WriteApplier(source, _table);
+        _applier = new WriteApplier(source);
         _ledger = new TransactionLedger(options.Value.TransactionConfig);
         _listeners = listeners;
     }
@@ -40,29 +38,33 @@ public sealed class DocumentDatabase : IDocumentDatabase
     public async Task<Document?> GetAsync(string path, CancellationToken ct = default)
     {
         await using var conn = await _source.OpenConnectionAsync(ct);
-        return await new DocumentOperations(conn, null, _table).GetAsync(path, ct);
+        return await new DocumentOperations(conn, null).GetAsync(path, ct);
     }
 
     public async Task<IReadOnlyList<Document?>> GetAllAsync(IReadOnlyList<string> paths, CancellationToken ct = default)
     {
-        await using var conn = await _source.OpenConnectionAsync(ct);
-        var ops = new DocumentOperations(conn, null, _table);
-        var docs = new List<Document?>(paths.Count);
+        // Validate each path before querying — mirrors the per-path validation in GetAsync
+        // (DocumentOperations.GetAsync calls ValidateDocumentPath → ArgumentException).
         foreach (var path in paths)
-            docs.Add(await ops.GetAsync(path, ct));
-        return docs;                                              // input order preserved
+        {
+            if (!DocumentPathParser.IsValidDocumentPath(path, out var error))
+                throw new ArgumentException(error);
+        }
+        await using var conn = await _source.OpenConnectionAsync(ct);
+        var map = await new DocumentOperations(conn, null).GetManyAsync(paths.Distinct(StringComparer.Ordinal).ToList(), ct);
+        return [.. paths.Select(p => map.GetValueOrDefault(p))];
     }
 
     public async Task<QueryResult> QueryAsync(QueryAst query, CancellationToken ct = default)
     {
         await using var conn = await _source.OpenConnectionAsync(ct);
-        return await new QueryExecutor(conn, null, _table).ExecuteAsync(query, ct);
+        return await new QueryExecutor(conn, null).ExecuteAsync(query, ct);
     }
 
     public async Task<PipelineResult> AggregateAsync(PipelineAst pipeline, CancellationToken ct = default)
     {
         await using var conn = await _source.OpenConnectionAsync(ct);
-        return await new PipelineExecutor(conn, null, _table).ExecuteAsync(pipeline, ct);
+        return await new PipelineExecutor(conn, null).ExecuteAsync(pipeline, ct);
     }
 
     // ── Writes ────────────────────────────────────────────────────────────────

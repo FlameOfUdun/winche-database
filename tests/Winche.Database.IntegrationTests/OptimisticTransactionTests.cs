@@ -1,5 +1,5 @@
 using Microsoft.Extensions.Options;
-using Winche.Database.Models;
+using Winche.Database.DependencyInjection;
 using Winche.Database.Querying.Ast;
 using Winche.Database.Runtime;
 using Winche.Database.Runtime.Transactions;
@@ -12,7 +12,7 @@ namespace Winche.Database.IntegrationTests;
 public class OptimisticTransactionTests(PostgresFixture fx) : QueryTestBase(fx)
 {
     private DocumentDatabase Db(TransactionConfig? tx = null) => new(Fx.DataSource,
-        Options.Create(new StoreOptions { TableName = Fx.Table, TransactionConfig = tx ?? new TransactionConfig() }));
+        Options.Create(new WincheDatabaseOptions { TransactionConfig = tx ?? new TransactionConfig() }));
 
     private static Dictionary<string, Value> Map(params (string K, Value V)[] e) => e.ToDictionary(x => x.K, x => x.V);
 

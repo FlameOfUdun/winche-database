@@ -23,5 +23,11 @@ internal sealed class ParameterBag
         return $"${_params.Count}";
     }
 
+    public string AddTextArray(string[] values)
+    {
+        _params.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text, Value = values });
+        return $"${_params.Count}";
+    }
+
     public NpgsqlParameter[] ToArray() => [.. _params];
 }

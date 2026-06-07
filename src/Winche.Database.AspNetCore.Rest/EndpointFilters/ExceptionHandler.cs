@@ -1,9 +1,5 @@
 using Microsoft.AspNetCore.Http;
-using System.Text.Json;
-using Winche.Database.Querying.Ast;
-using Winche.Database.Querying.Planning;
-using Winche.Database.Values;
-using Winche.Sentinel.Models;
+using Winche.Database.Wire;
 
 namespace Winche.Database.AspNetCore.Rest.EndpointFilters;
 
@@ -15,51 +11,27 @@ internal class ExceptionHandler : IEndpointFilter
         {
             return await next(context);
         }
-        catch (AccessDeniedException ex)
+        catch (BadHttpRequestException ex)                      // body binding/JSON failures
         {
-            return Results.Json(new { error = ex.Message }, statusCode: 403, contentType: "application/json");
+            return Results.Json(new { status = "INVALID_ARGUMENT", message = ex.Message },
+                statusCode: 400, contentType: "application/json");
         }
-        catch (NoRulesMatchedException ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return Results.Json(new { error = ex.Message }, statusCode: 403, contentType: "application/json");
-        }
-        catch (QueryParseException ex)
-        {
-            return Results.Json(new { error = ex.Message, code = "invalid_query", path = ex.JsonPath }, statusCode: 400, contentType: "application/json");
-        }
-        catch (PlanValidationException ex)
-        {
-            return Results.Json(new { error = ex.Message, code = "invalid_query", detail = ex.Code }, statusCode: 400, contentType: "application/json");
-        }
-        catch (WireFormatException ex)
-        {
-            return Results.Json(new { error = ex.Message, code = "invalid_value" }, statusCode: 400, contentType: "application/json");
-        }
-        catch (JsonException ex)
-        {
-            return Results.Json(new { error = ex.Message, code = "invalid_request" }, statusCode: 400, contentType: "application/json");
-        }
-        catch (ArgumentException ex)
-        {
-            return Results.Json(new { error = ex.Message, code = "invalid_path" }, statusCode: 400, contentType: "application/json");
-        }
-        catch (Runtime.RuntimeException ex)
-        {
-            var status = ex.Status switch
+            var error = ErrorMapper.Map(ex);
+            var http = error.Status switch
             {
-                Runtime.RuntimeStatus.NotFound => 404,
-                Runtime.RuntimeStatus.AlreadyExists => 409,
-                Runtime.RuntimeStatus.Aborted => 409,
-                Runtime.RuntimeStatus.FailedPrecondition => 412,
-                Runtime.RuntimeStatus.DeadlineExceeded => 504,
-                _ => 400,
+                "NOT_FOUND" => 404,
+                "ALREADY_EXISTS" or "ABORTED" => 409,
+                "FAILED_PRECONDITION" => 412,
+                "PERMISSION_DENIED" => 403,
+                "UNAUTHENTICATED" => 401,
+                "DEADLINE_EXCEEDED" => 504,
+                "INTERNAL" => 500,
+                _ => 400,                                       // INVALID_ARGUMENT / INVALID_QUERY
             };
-            var code = ex.Status.ToString().ToLowerInvariant();
-            return Results.Json(new { error = ex.Message, code }, statusCode: status, contentType: "application/json");
-        }
-        catch (Exception ex)
-        {
-            return Results.Json(new { error = "Unexpected error", detail = ex.Message }, statusCode: 500, contentType: "application/json");
+            return Results.Json(new { status = error.Status, message = error.Message, details = error.Details },
+                statusCode: http, contentType: "application/json");
         }
     }
 }

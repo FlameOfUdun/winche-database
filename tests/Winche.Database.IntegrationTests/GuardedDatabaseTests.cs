@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Options;
 using System.Text.Json.Nodes;
 using Winche.Database.Documents;
-using Winche.Database.Models;
+using Winche.Database.DependencyInjection;
 using Winche.Database.Querying.Ast;
 using Winche.Database.Runtime;
 using Winche.Database.Runtime.Writes;
@@ -32,7 +32,7 @@ public class GuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
         out DocumentDatabase core,
         out DenyListEvaluator rules)
     {
-        core = new DocumentDatabase(Fx.DataSource, Options.Create(new StoreOptions { TableName = Fx.Table }));
+        core = new DocumentDatabase(Fx.DataSource, Options.Create(new WincheDatabaseOptions()));
         rules = new DenyListEvaluator();
         guarded = new GuardedDocumentDatabase(core, rules);
     }

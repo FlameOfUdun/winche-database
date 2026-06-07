@@ -54,7 +54,9 @@ public static class ValueSerializer
         var (tag, payload) = obj.First();
         return tag switch
         {
-            "nullValue" => new NullValue(),
+            "nullValue" => payload is null
+                ? new NullValue()
+                : throw new WireFormatException("nullValue payload must be JSON null"),
             "booleanValue" => new BooleanValue(GetBool(payload)),
             "integerValue" => new IntegerValue(GetInt64(payload)),
             "doubleValue" => new DoubleValue(GetDouble(payload)),

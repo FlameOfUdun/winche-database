@@ -1,3 +1,4 @@
+using Winche.Database.Constants;
 using Winche.Database.Documents;
 using Winche.Database.Values;
 
@@ -13,7 +14,7 @@ public class WincheKeyTests(PostgresFixture fx) : IAsyncLifetime
     {
         await using var conn = await fx.DataSource.OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"INSERT INTO {fx.Table} (path, id, collection, data) VALUES ($1, $2, 'c', $3::jsonb)";
+        cmd.CommandText = $"INSERT INTO {WincheTables.Documents} (path, id, collection, data) VALUES ($1, $2, 'c', $3::jsonb)";
         cmd.Parameters.AddWithValue($"c/{id}");
         cmd.Parameters.AddWithValue(id);
         cmd.Parameters.AddWithValue(StorageCodec.Encode(new Dictionary<string, Value> { ["f"] = value }));
@@ -24,7 +25,7 @@ public class WincheKeyTests(PostgresFixture fx) : IAsyncLifetime
     {
         await using var conn = await fx.DataSource.OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT id FROM {fx.Table} ORDER BY winche_key(data->'f')";
+        cmd.CommandText = $"SELECT id FROM {WincheTables.Documents} ORDER BY winche_key(data->'f')";
         var ids = new List<string>();
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync()) ids.Add(reader.GetString(0));

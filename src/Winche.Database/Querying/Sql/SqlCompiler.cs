@@ -1,4 +1,5 @@
 using System.Text;
+using Winche.Database.Constants;
 using Winche.Database.Querying.Planning;
 
 namespace Winche.Database.Querying.Sql;
@@ -13,8 +14,7 @@ public static class SqlCompiler
     private const string Alias = "d";
     private const string Columns = "path, id, collection, data, created_at, updated_at, version";
 
-    /// <remarks>table is an identifier from server configuration — never user input.</remarks>
-    public static CompiledSql Compile(LogicalPlan plan, string table)
+    public static CompiledSql Compile(LogicalPlan plan)
     {
         CollectionScan? scan = null;
         FilterNode? filter = null;
@@ -42,7 +42,7 @@ public static class SqlCompiler
         var sb = new StringBuilder();
 
         sb.AppendLine($"SELECT {string.Join(", ", Columns.Split(", ").Select(c => $"{Alias}.{c}"))}");
-        sb.AppendLine($"FROM {table} {Alias}");
+        sb.AppendLine($"FROM {WincheTables.Documents} {Alias}");
         sb.AppendLine($"WHERE {Alias}.collection = {bag.Add(scan.Collection)}");
 
         if (filter is not null)

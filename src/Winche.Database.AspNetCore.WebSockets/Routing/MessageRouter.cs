@@ -1,0 +1,150 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using Winche.Database.AspNetCore.WebSockets.Connections;
+using Winche.Database.AspNetCore.WebSockets.Protocol;
+using Winche.Database.Runtime;
+using Winche.Database.Runtime.Listening;
+using Winche.Database.Runtime.Writes;
+using Winche.Database.Wire;
+
+namespace Winche.Database.AspNetCore.WebSockets.Routing;
+
+/// <summary>
+/// Dispatches one client message to one terminal frame (spec §1). Inbound processing is
+/// serial per connection (the endpoint awaits HandleAsync); listener events flow separately
+/// through the connection's send channel via SubscriptionPump.
+/// </summary>
+public sealed class MessageRouter(DependencyInjection.IWsAuthenticator authenticator)
+{
+    public async Task<ServerMessage> HandleAsync(
+        ConnectionScope scope, WsConnection conn, Microsoft.AspNetCore.Http.HttpContext httpContext,
+        ClientMessage message, CancellationToken ct)
+    {
+        var id = message.Id;
+        if (id is null && message is not HelloMessage)
+            return new ErrorMessage { Status = "INVALID_ARGUMENT", Message = "'id' is required." };
+
+        try
+        {
+            scope.ApplyClaims();
+            return message switch
+            {
+                PingMessage => Ok(id!, []),
+                AuthRefreshMessage refresh => await HandleAuthRefresh(scope, httpContext, refresh, ct),
+                DocGetMessage get => Ok(id!, new JsonObject { ["document"] = ToNode(await scope.Db.GetAsync(get.Path, ct)) }),
+                DocGetAllMessage getAll => Ok(id!, new JsonObject { ["documents"] = new JsonArray([.. (await scope.Db.GetAllAsync(getAll.Paths, ct)).Select(ToNode)]) }),
+                QueryMessage query => Ok(id!, ToNode(await scope.Db.QueryAsync(query.Query, ct))!.AsObject()),
+                AggregateMessage agg => Ok(id!, ToNode(await scope.Db.AggregateAsync(agg.Pipeline, ct))!.AsObject()),
+                WriteMessage write => Ok(id!, WriteResultsBody(await scope.Db.WriteAsync(WriteWireParser.Parse(write.Writes), ct))),
+                TxBeginMessage => await HandleTxBegin(scope, id!, ct),
+                TxGetMessage txGet => Ok(id!, new JsonObject { ["document"] = ToNode(await scope.Db.GetAsync(RequireTx(scope, txGet.TransactionId), txGet.Path, ct)) }),
+                TxQueryMessage txQuery => Ok(id!, ToNode(await scope.Db.QueryAsync(RequireTx(scope, txQuery.TransactionId), txQuery.Query, ct))!.AsObject()),
+                TxCommitMessage txCommit => await HandleTxCommit(scope, id!, txCommit, ct),
+                TxRollbackMessage txRollback => await HandleTxRollback(scope, id!, txRollback, ct),
+                ListenMessage listen => HandleListen(scope, conn, id!, listen),
+                UnlistenMessage unlisten => await HandleUnlisten(scope, id!, unlisten),
+                HelloMessage => new ErrorMessage { Id = id, Status = "INVALID_ARGUMENT", Message = "Already said hello." },
+                _ => new ErrorMessage { Id = id, Status = "INVALID_ARGUMENT", Message = $"Unknown message: {message.GetType().Name}" },
+            };
+        }
+        catch (Exception ex)
+        {
+            var error = ErrorMapper.Map(ex);
+            return new ErrorMessage { Id = id, Status = error.Status, Message = error.Message, Details = error.Details };
+        }
+    }
+
+    private async Task<ServerMessage> HandleAuthRefresh(
+        ConnectionScope scope, Microsoft.AspNetCore.Http.HttpContext httpContext, AuthRefreshMessage refresh, CancellationToken ct)
+    {
+        try
+        {
+            scope.SetClaims(await authenticator.AuthenticateAsync(httpContext, refresh.Token, ct));
+            return Ok(refresh.Id!, new JsonObject());
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return new ErrorMessage { Id = refresh.Id, Status = "UNAUTHENTICATED", Message = ex.Message };
+        }
+    }
+
+    private static async Task<ServerMessage> HandleTxBegin(ConnectionScope scope, string id, CancellationToken ct)
+    {
+        var handle = await scope.Db.BeginTransactionAsync(ct);
+        lock (scope.Gate) scope.Transactions.Add(handle.Id);
+        return Ok(id, new JsonObject { ["transactionId"] = handle.Id });
+    }
+
+    private static async Task<ServerMessage> HandleTxCommit(
+        ConnectionScope scope, string id, TxCommitMessage msg, CancellationToken ct)
+    {
+        var txId = RequireTx(scope, msg.TransactionId);
+        var writes = WriteWireParser.Parse(msg.Writes);
+        try
+        {
+            var results = await scope.Db.CommitTransactionAsync(txId, writes, ct);
+            return Ok(id, WriteResultsBody(results));
+        }
+        finally
+        {
+            lock (scope.Gate) scope.Transactions.Remove(txId);
+        }
+    }
+
+    private static async Task<ServerMessage> HandleTxRollback(
+        ConnectionScope scope,
+        string id,
+        TxRollbackMessage msg,
+        CancellationToken ct)
+    {
+        bool owned;
+        lock (scope.Gate) owned = scope.Transactions.Remove(msg.TransactionId);
+        if (owned)
+            await scope.Db.RollbackTransactionAsync(msg.TransactionId, ct);
+        return Ok(id, []);
+    }
+
+    private static ServerMessage HandleListen(ConnectionScope scope, WsConnection conn, string id, ListenMessage listen)
+    {
+        var subscriptionId = Guid.NewGuid().ToString("N");
+        var listener = scope.Db.Listen(listen.Query, listen.ResumeToken is { } seq ? new ListenOptions(ResumeFrom: seq) : null);
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(conn.Closed);
+        var pump = SubscriptionPump.RunAsync(subscriptionId, listener, scope, conn, cts.Token);
+        lock (scope.Gate) scope.Subscriptions[subscriptionId] = new ConnectionScope.Subscription(listener, pump, cts);
+        return Ok(id, new JsonObject { ["subscriptionId"] = subscriptionId });
+    }
+
+    private static async Task<ServerMessage> HandleUnlisten(ConnectionScope scope, string id, UnlistenMessage msg)
+    {
+        ConnectionScope.Subscription? sub;
+        lock (scope.Gate)
+        {
+            scope.Subscriptions.Remove(msg.SubscriptionId, out sub);
+        }
+        if (sub is not null)
+        {
+            sub.Cts.Cancel();
+            try { await sub.Listener.DisposeAsync(); } catch { }
+        }
+        return Ok(id, []);
+    }
+
+    private static string RequireTx(ConnectionScope scope, string transactionId)
+    {
+        lock (scope.Gate)
+        {
+            if (!scope.Transactions.Contains(transactionId))
+                throw new RuntimeException(RuntimeStatus.Aborted,
+                    $"Transaction '{transactionId}' is not active on this connection.");
+        }
+        return transactionId;
+    }
+
+    private static ResponseMessage Ok(string id, JsonObject result) => new() { Id = id, Result = result };
+
+    private static JsonObject WriteResultsBody(IReadOnlyList<WriteResult> results) =>
+        new() { ["writeResults"] = new JsonArray([.. results.Select(r => ToNode(r))]) };
+
+    private static JsonNode? ToNode<T>(T? value) =>
+        value is null ? null : JsonSerializer.SerializeToNode(value, value.GetType());
+}

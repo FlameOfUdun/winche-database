@@ -1,4 +1,5 @@
 using Npgsql;
+using Winche.Database.Constants;
 
 namespace Winche.Database.IntegrationTests;
 
@@ -18,7 +19,7 @@ public class ChangesFeedTests(PostgresFixture fx) : QueryTestBase(fx)
         await using (var conn = await Fx.DataSource.OpenConnectionAsync())
         await using (var cmd = conn.CreateCommand())
         {
-            cmd.CommandText = $"INSERT INTO {Fx.Table}_changes (type, path, collection, version, commit_time) VALUES ('added', 'c/x', 'c', 1, now())";
+            cmd.CommandText = $"INSERT INTO {WincheTables.Changes} (type, path, collection, version, commit_time) VALUES ('added', 'c/x', 'c', 1, now())";
             await cmd.ExecuteNonQueryAsync();
         }
 
@@ -36,7 +37,7 @@ public class ChangesFeedTests(PostgresFixture fx) : QueryTestBase(fx)
     [Fact]
     public async Task ChangeRows_SeqOrdersAcrossBatches()
     {
-        var applier = new Winche.Database.Runtime.Writes.WriteApplier(Fx.DataSource, Fx.Table);
+        var applier = new Winche.Database.Runtime.Writes.WriteApplier(Fx.DataSource);
         await applier.ApplyAsync([new Winche.Database.Runtime.Writes.SetWrite
             { Path = "c/first", Fields = new Dictionary<string, Winche.Database.Values.Value>() }]);
         await applier.ApplyAsync([new Winche.Database.Runtime.Writes.SetWrite

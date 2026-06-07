@@ -4,7 +4,7 @@ namespace Winche.Database.Runtime.ChangeFeed;
 
 public enum ChangeType { Added, Modified, Removed }
 
-/// <summary>One durable feed row ({table}_changes).</summary>
+/// <summary>One durable feed row (winche_changes).</summary>
 public sealed record ChangeRecord(
     long Seq, ChangeType Type, string Path, string Collection, long Version, DateTimeOffset CommitTime);
 
@@ -18,5 +18,11 @@ public sealed record ChangeBatch(
 
 public interface IChangeFeedConsumer
 {
+    /// <summary>
+    /// Non-null → durable consumer: a cursor row is persisted per this name; the pump
+    /// creates a <see cref="DurableConsumerRunner"/> for it. Null → ephemeral (current behaviour).
+    /// </summary>
+    string? DurableName => null;
+
     Task OnBatchAsync(ChangeBatch batch, CancellationToken ct);
 }
