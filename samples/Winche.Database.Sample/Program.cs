@@ -38,7 +38,11 @@ await app.InitializeWincheDatabaseAsync();
 app.MapWincheDatabaseWsApi();
 app.MapWincheDatabaseRestApi();
 
+// Start the host BEFORE the smoke tests: hooks are post-commit and delivered by the
+// change-feed hosted services, which only run once the host has started.
+await app.StartAsync();
+
 await CascadeDeleteSmokeTest.RunAsync(app.Services);
 await AccessRuleSmokeTest.RunAsync(app.Services);
 
-app.Run();
+await app.WaitForShutdownAsync();
