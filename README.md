@@ -201,7 +201,9 @@ public class AuditHook : DocumentStoreHook
 
 ## `IDocumentDatabase`
 
-The core service. Inject `IDocumentDatabase` to interact with the store directly from application code.
+The primary service. Inject `IDocumentDatabase` to interact with the store from application code.
+
+> **Guarded vs. core.** `IDocumentDatabase` is bound in DI to `GuardedDocumentDatabase`, which enforces access rules on every operation. The concrete `DocumentDatabase` is the **rule-free core** that the guard decorates — inject it *only* in trusted server-side code (seeding, migrations, internal jobs) that should deliberately bypass authorization. Application code subject to access rules must depend on `IDocumentDatabase`, **never** the concrete `DocumentDatabase`.
 
 ```csharp
 public interface IDocumentDatabase
