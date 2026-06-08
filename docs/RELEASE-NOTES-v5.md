@@ -49,6 +49,7 @@ The query and pipeline AST records no longer carry an `Ast` suffix (it was redun
 | `AggFuncExprAst` | `AggFuncExpr` |
 
 Notes:
+
 - **`FilterStageAst` → `Where`**, not `Filter` — `Filter` is the query filter-expression base in the same namespace. The `$filter` stage maps to the `Where` type; its predicate property is renamed from `Where` to **`Predicate`** (`new Where(predicate)`). The wire key is still `"filter"`.
 - Enums are unchanged (`AggFunction`, `CompositeOp`, `FilterOperator`, `SortDirection`, `UnaryOp`).
 - The serialization helper classes keep their names (`QueryAstWriter`, `QueryAstJsonConverter`, `PipelineAstWriter`, `PipelineAstJsonConverter`).
