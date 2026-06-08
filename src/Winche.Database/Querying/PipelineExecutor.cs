@@ -7,12 +7,14 @@ using Winche.Database.Querying.Sql;
 namespace Winche.Database.Querying;
 
 /// <summary>The pipeline path end-to-end: normalize → compile → execute → decode.</summary>
-public sealed class PipelineExecutor(NpgsqlConnection conn, NpgsqlTransaction? tx)
+public sealed class PipelineExecutor(NpgsqlConnection conn, NpgsqlTransaction? tx, IndexScopeResolver? scopes = null)
 {
     public async Task<PipelineResult> ExecuteAsync(Pipeline pipeline, CancellationToken ct = default)
     {
         var plan = PipelineNormalizer.Normalize(pipeline);
-        var (compiled, schema) = PipelineCompiler.Compile(plan);
+        var scanCollection = (plan.Nodes[0] as CollectionScan)?.Collection;
+        var scopeRegexes = scanCollection is null ? null : scopes?.ScopeRegexes(scanCollection);
+        var (compiled, schema) = PipelineCompiler.Compile(plan, scopeRegexes);
 
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;

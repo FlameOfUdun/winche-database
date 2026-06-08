@@ -72,4 +72,41 @@ public static class DocumentPathParser
         error = null;
         return true;
     }
+
+    /// <summary>True when the collection path contains a wildcard segment ('*').</summary>
+    public static bool IsCollectionPattern(string path) => path.Contains('*');
+
+    /// <summary>
+    /// Anchored POSIX regex for a wildcard collection pattern: each '*' segment → [^/]+,
+    /// literal segments verbatim (validated to a regex-safe charset by IsValidIndexPath).
+    /// </summary>
+    public static string CollectionPatternRegex(string path) =>
+        "^" + string.Join('/', path.Split('/').Select(s => s == "*" ? "[^/]+" : s)) + "$";
+
+    /// <summary>
+    /// Validates an index Path (exact or wildcard pattern) against the strict grammar.
+    /// Returns false + a specific error on violation (the caller throws InvalidPathPatternException).
+    /// </summary>
+    public static bool IsValidIndexPath(string path, out string? error)
+    {
+        if (string.IsNullOrEmpty(path)) { error = "path must be non-empty"; return false; }
+
+        var segs = path.Split('/');
+        if (segs.Length % 2 == 0) { error = "a collection path must have an odd number of segments"; return false; }
+
+        for (var i = 0; i < segs.Length; i++)
+        {
+            var seg = segs[i];
+            if (seg.Length == 0) { error = "segments must be non-empty (no leading/trailing or doubled '/')"; return false; }
+            if (seg == "*")
+            {
+                if (i % 2 == 0) { error = "'*' is only allowed at document-id positions, not collection-name positions"; return false; }
+            }
+            else if (seg.Contains('*')) { error = $"segment '{seg}' mixes a wildcard with text; '*' must be a whole segment"; return false; }
+            else if (!seg.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-')) { error = $"segment '{seg}' must match [A-Za-z0-9_-]+"; return false; }
+        }
+
+        error = null;
+        return true;
+    }
 }

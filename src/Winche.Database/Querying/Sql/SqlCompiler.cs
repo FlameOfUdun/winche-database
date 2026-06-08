@@ -14,7 +14,7 @@ internal static class SqlCompiler
     private const string Alias = "d";
     private const string Columns = "path, id, collection, data, created_at, updated_at, version";
 
-    public static CompiledSql Compile(LogicalPlan plan)
+    public static CompiledSql Compile(LogicalPlan plan, IReadOnlyList<string>? scopeRegexes = null)
     {
         CollectionScan? scan = null;
         FilterNode? filter = null;
@@ -44,6 +44,8 @@ internal static class SqlCompiler
         sb.AppendLine($"SELECT {string.Join(", ", Columns.Split(", ").Select(c => $"{Alias}.{c}"))}");
         sb.AppendLine($"FROM {WincheTables.Documents} {Alias}");
         sb.AppendLine($"WHERE {Alias}.collection = {bag.Add(scan.Collection)}");
+        foreach (var rx in scopeRegexes ?? [])
+            sb.AppendLine($"  AND {Alias}.collection ~ '{rx.Replace("'", "''")}'");
 
         if (filter is not null)
             sb.AppendLine($"  AND ({OperatorRegistry.Emit(filter.Predicate, bag, Alias)})");

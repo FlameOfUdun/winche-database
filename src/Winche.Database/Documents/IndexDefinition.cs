@@ -10,7 +10,12 @@ public sealed record IndexField(string Path, SortDirection Direction = SortDirec
 /// </summary>
 public abstract class IndexDefinition
 {
-    public abstract string Collection { get; }
+    /// <summary>
+    /// Collection path the index applies to: an exact path ("users",
+    /// "userData/alice/sessionHistory") or a wildcard pattern with '*' at document-id positions
+    /// ("userData/*/sessionHistory"). See <see cref="DocumentPathParser.IsValidIndexPath"/>.
+    /// </summary>
+    public abstract string Path { get; }
     public abstract IReadOnlyList<IndexField> Fields { get; }
     public virtual string? Name => null;
 

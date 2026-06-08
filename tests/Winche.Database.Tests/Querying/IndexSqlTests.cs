@@ -6,34 +6,46 @@ namespace Winche.Database.Tests.Querying;
 
 file sealed class AgeIndex : IndexDefinition
 {
-    public override string Collection => "users";
+    public override string Path => "users";
     public override IReadOnlyList<IndexField> Fields => [new("age"), new("addr.city", SortDirection.Desc)];
 }
 
 file sealed class EvilIndex(string path) : IndexDefinition
 {
     private readonly string _path = path;
-    public override string Collection => "users";
+    public override string Path => "users";
     public override IReadOnlyList<IndexField> Fields => [new(_path)];
 }
 
 // Two index definitions whose old (pre-hash) names would collide: "a.b"+"c" vs "a"+"b-c"
 file sealed class CollidingIndexA : IndexDefinition
 {
-    public override string Collection => "col";
+    public override string Path => "col";
     public override IReadOnlyList<IndexField> Fields => [new("a.b"), new("c")];
 }
 
 file sealed class CollidingIndexB : IndexDefinition
 {
-    public override string Collection => "col";
+    public override string Path => "col";
     public override IReadOnlyList<IndexField> Fields => [new("a"), new("b-c")];
 }
 
 file sealed class EmptyFieldsIndex : IndexDefinition
 {
-    public override string Collection => "col";
+    public override string Path => "col";
     public override IReadOnlyList<IndexField> Fields => [];
+}
+
+file sealed class SessionHistoryPatternIndex : IndexDefinition
+{
+    public override string Path => "userData/*/sessionHistory";
+    public override IReadOnlyList<IndexField> Fields => [new("startedAt", SortDirection.Desc)];
+}
+
+file sealed class BadCharsetIndex : IndexDefinition
+{
+    public override string Path => "user.Data/*/sessionHistory"; // '.' not allowed in literal segment
+    public override IReadOnlyList<IndexField> Fields => [new("name")];
 }
 
 public class IndexSqlTests
@@ -84,4 +96,30 @@ public class IndexSqlTests
     [Fact]
     public void BuildCreate_EmptyFields_Throws() =>
         Assert.Throws<ArgumentException>(() => IndexSql.BuildCreate(new EmptyFieldsIndex()));
+
+    [Fact]
+    public void BuildCreate_Pattern_EmitsCollectionLeadingKeyAndRegexPredicate()
+    {
+        var sql = IndexSql.BuildCreate(new SessionHistoryPatternIndex());
+        var open = sql.IndexOf('(', sql.IndexOf(" ON ", StringComparison.Ordinal));
+        Assert.StartsWith("collection,", sql[(open + 1)..].TrimStart());
+        Assert.Contains("winche_rank(data->'startedAt')", sql);
+        Assert.Contains(@"WHERE collection ~ '^userData/[^/]+/sessionHistory$'", sql);
+    }
+
+    [Fact]
+    public void BuildCreate_Exact_StillUsesCollectionEquality()
+    {
+        var sql = IndexSql.BuildCreate(new AgeIndex()); // Path => "users"
+        Assert.Contains("WHERE collection = 'users'", sql);
+        Assert.DoesNotContain("collection ~", sql);
+    }
+
+    [Fact]
+    public void BuildCreate_InvalidPath_ThrowsInvalidPathPatternException()
+    {
+        var ex = Assert.Throws<InvalidPathPatternException>(() => IndexSql.BuildCreate(new BadCharsetIndex()));
+        Assert.Equal("user.Data/*/sessionHistory", ex.Path);
+        Assert.False(string.IsNullOrEmpty(ex.Reason));
+    }
 }

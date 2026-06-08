@@ -16,7 +16,7 @@ internal static class PipelineCompiler
 {
     private const string DocColumns = "path, id, collection, data, created_at, updated_at, version";
 
-    internal static (CompiledSql Sql, StageSchema FinalSchema) Compile(LogicalPlan plan)
+    internal static (CompiledSql Sql, StageSchema FinalSchema) Compile(LogicalPlan plan, IReadOnlyList<string>? scopeRegexes = null)
     {
         if (plan.Nodes.Count == 0 || plan.Nodes[0] is not CollectionScan scan)
             throw new InvalidOperationException("Pipeline plan must start with CollectionScan.");
@@ -25,7 +25,8 @@ internal static class PipelineCompiler
         var ctes = new List<string>();
         StageSchema schema = DocumentSchema.Plain;
 
-        ctes.Add($"s0 AS (SELECT {DocColumns} FROM {WincheTables.Documents} WHERE collection = {bag.Add(scan.Collection)})");
+        var s0Scope = string.Concat((scopeRegexes ?? []).Select(rx => $" AND collection ~ '{rx.Replace("'", "''")}'"));
+        ctes.Add($"s0 AS (SELECT {DocColumns} FROM {WincheTables.Documents} WHERE collection = {bag.Add(scan.Collection)}{s0Scope})");
         var prev = "s0";
         var idx = 1;
 

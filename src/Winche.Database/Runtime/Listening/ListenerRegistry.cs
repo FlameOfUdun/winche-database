@@ -13,7 +13,7 @@ namespace Winche.Database.Runtime.Listening;
 /// As an IChangeFeedConsumer it: checks relevance per group (cached predicate / membership),
 /// requeries ONCE per batch, diffs ordered state, and broadcasts coalescing snapshots (spec §4).
 /// </summary>
-public sealed class ListenerRegistry(NpgsqlDataSource source) : IChangeFeedConsumer
+public sealed class ListenerRegistry(NpgsqlDataSource source, IndexScopeResolver? scopes = null) : IChangeFeedConsumer
 {
     private readonly ChangeFeedReader _reader = new(source);
     private readonly Dictionary<string, ListenerGroup> _groups = new(StringComparer.Ordinal);
@@ -228,7 +228,7 @@ public sealed class ListenerRegistry(NpgsqlDataSource source) : IChangeFeedConsu
     private async Task<QueryResult> RunQueryAsync(Query query, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
-        return await new QueryExecutor(conn, null).ExecuteAsync(query, ct);
+        return await new QueryExecutor(conn, null, scopes).ExecuteAsync(query, ct);
     }
 
     // ── Group / handle ────────────────────────────────────────────────────────

@@ -8,7 +8,7 @@ namespace Winche.Database.IntegrationTests;
 
 internal sealed class OpenOrdersIndex : IndexDefinition
 {
-    public override string Collection => "fidx";
+    public override string Path => "fidx";
     public override IReadOnlyList<IndexField> Fields => [new("amount")];
     public override Filter? Where =>
         new FieldFilter(FieldPath.Parse("status"), FilterOperator.Eq, new StringValue("open"));
@@ -19,7 +19,7 @@ public class FilteredIndexTests(PostgresFixture fx) : QueryTestBase(fx)
 {
     private sealed class OpenOrdersIndexNoWhere : IndexDefinition
     {
-        public override string Collection => "fidx";
+        public override string Path => "fidx";
         public override IReadOnlyList<IndexField> Fields => [new("amount")];
         // Where = null (unfiltered)
     }

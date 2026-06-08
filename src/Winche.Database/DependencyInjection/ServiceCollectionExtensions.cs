@@ -35,12 +35,15 @@ public static class ServiceCollectionExtensions
         services.AddNpgsqlDataSource(connectionString, serviceKey: ServiceKeys.DATA_SOURCE_KEY);
 
         // Core runtime (spec architecture): rule-free core + guard as the public surface
+        services.AddSingleton<Querying.IndexScopeResolver>();
         services.AddSingleton<ListenerRegistry>(sp => new ListenerRegistry(
-            sp.GetRequiredKeyedService<NpgsqlDataSource>(ServiceKeys.DATA_SOURCE_KEY)));
+            sp.GetRequiredKeyedService<NpgsqlDataSource>(ServiceKeys.DATA_SOURCE_KEY),
+            sp.GetRequiredService<Querying.IndexScopeResolver>()));
         services.AddSingleton<DocumentDatabase>(sp => new DocumentDatabase(
             sp.GetRequiredKeyedService<NpgsqlDataSource>(ServiceKeys.DATA_SOURCE_KEY),
             sp.GetRequiredService<IOptions<WincheDatabaseOptions>>(),
-            sp.GetRequiredService<ListenerRegistry>()));
+            sp.GetRequiredService<ListenerRegistry>(),
+            sp.GetRequiredService<Querying.IndexScopeResolver>()));
         services.AddSingleton<IDocumentDatabase>(sp => new GuardedDocumentDatabase(
             sp.GetRequiredService<DocumentDatabase>(),
             sp.GetRequiredService<IAccessRuleEvaluator<Document>>()));

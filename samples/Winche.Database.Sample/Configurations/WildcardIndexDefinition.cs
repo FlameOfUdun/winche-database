@@ -5,7 +5,7 @@ namespace Winche.Database.Sample.Configurations;
 
 public class WildcardIndexDefinition : IndexDefinition
 {
-    public override string Collection => "users";
+    public override string Path => "users";
 
     public override IReadOnlyList<IndexField> Fields =>
     [

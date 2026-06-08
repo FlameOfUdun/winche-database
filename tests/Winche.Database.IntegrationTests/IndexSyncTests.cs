@@ -7,7 +7,7 @@ namespace Winche.Database.IntegrationTests;
 
 file sealed class CityIndex : IndexDefinition
 {
-    public override string Collection => "c";
+    public override string Path => "c";
     public override IReadOnlyList<IndexField> Fields => [new("addr.city")];
 }
 

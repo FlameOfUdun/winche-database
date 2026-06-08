@@ -21,6 +21,9 @@ public static partial class IndexSql
     [GeneratedRegex("^[A-Za-z0-9_]{1,63}$")]
     private static partial Regex Identifier();
 
+    [GeneratedRegex("[^A-Za-z0-9_]")]
+    private static partial Regex NonIdentifierChar();
+
     private static string StableHash8(string input)
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(input));
@@ -32,6 +35,10 @@ public static partial class IndexSql
         if (index.Fields.Count == 0)
             throw new ArgumentException("Index must have at least one field.", nameof(index));
 
+        if (!DocumentPathParser.IsValidIndexPath(index.Path, out var pathError))
+            throw new InvalidPathPatternException(index.Path, pathError!);
+        var isPattern = DocumentPathParser.IsCollectionPattern(index.Path);
+
         string name;
         if (index.Name is not null)
         {
@@ -39,18 +46,24 @@ public static partial class IndexSql
         }
         else
         {
-            var hashInput = $"{index.Collection}|{string.Join("|", index.Fields.Select(f => $"{f.Path}:{f.Direction}"))}";
+            var hashInput = $"{index.Path}|{string.Join("|", index.Fields.Select(f => $"{f.Path}:{f.Direction}"))}";
             // Fold predicate into name hash so filtered and unfiltered indexes get distinct names
             if (index.Where is not null)
                 hashInput += "|" + QueryAstWriter.WriteFilter(index.Where).ToJsonString();
             var hash = StableHash8(hashInput);
-            var prefix = $"idx_{WincheTables.Documents}_{index.Collection}_{string.Join("_", index.Fields.Select(f => f.Path.Replace('.', '_').Replace('-', '_')))}";
+            // The hash carries uniqueness/stability; the prefix is a human-readable label.
+            // Collapse any non-identifier char (e.g. '/', '{', '}' from subcollection-style
+            // collection names, or '.'/'-' in field paths) to '_' so the name stays DDL-safe.
+            var label = $"idx_{WincheTables.Documents}_{index.Path}_{string.Join("_", index.Fields.Select(f => f.Path))}";
+            var prefix = NonIdentifierChar().Replace(label, "_");
             name = $"{prefix[..Math.Min(prefix.Length, 54)]}_{hash}";
         }
 
         RequireIdentifier(name);
 
         var exprs = new List<string>();
+        if (isPattern)
+            exprs.Add("collection"); // leading key so a single concrete collection is seekable
         foreach (var field in index.Fields)
         {
             var accessor = LiteralAccessor(field.Path);
@@ -63,8 +76,9 @@ public static partial class IndexSql
             exprs.Add($"(winche_key({accessor})){dir}");
         }
 
-        var collection = index.Collection.Replace("'", "''");
-        var whereClause = $"WHERE collection = '{collection}'";
+        var whereClause = isPattern
+            ? $"WHERE collection ~ '{DocumentPathParser.CollectionPatternRegex(index.Path).Replace("'", "''")}'"
+            : $"WHERE collection = '{index.Path.Replace("'", "''")}'";
         if (index.Where is not null)
             whereClause += $" AND ({IndexPredicateSql.Emit(index.Where)})";
         return $"CREATE INDEX IF NOT EXISTS \"{name}\" ON \"{WincheTables.Documents}\" ({string.Join(", ", exprs)}) {whereClause}";

@@ -7,13 +7,13 @@ using Winche.Database.Querying.Sql;
 namespace Winche.Database.Querying;
 
 /// <summary>The query path end-to-end: normalize → compile → execute → decode.</summary>
-public sealed class QueryExecutor(NpgsqlConnection conn, NpgsqlTransaction? tx)
+public sealed class QueryExecutor(NpgsqlConnection conn, NpgsqlTransaction? tx, IndexScopeResolver? scopes = null)
 {
     public async Task<QueryResult> ExecuteAsync(Query query, CancellationToken ct = default)
     {
         var plan = Normalizer.Normalize(query);
         var limit = plan.Nodes.OfType<PageNode>().Single().Limit;
-        var compiled = SqlCompiler.Compile(plan);
+        var compiled = SqlCompiler.Compile(plan, scopes?.ScopeRegexes(query.Collection));
 
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;

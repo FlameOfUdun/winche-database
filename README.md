@@ -113,9 +113,38 @@ The built-in claims/exception filters are always applied internally and run oute
 - **Field transforms** — `serverTimestamp`, `increment` (saturating int, promotes to double on mixed), `maximum`, `minimum`, `arrayUnion`, `arrayRemove`
 - **Aggregation pipelines** — Multi-stage pipelines: `match`, `filter`, `lookup`, `unwind`, `group` (with `having`), `project`, `sort`, `limit`, `skip`; 9 accumulators: `count`, `sum`, `avg`, `min`, `max`, `push`, `addToSet`, `first`, `last`
 - **Durable hooks** — Feed-driven, true at-least-once end-to-end; hooks execute inline+sequentially per batch; failed batches retried with capped backoff; hooks fire for writes from any node; cursor persisted across restarts; idempotency required
-- **Filtered secondary indexes** — `IndexDefinition.Where` for partial indexes; agreement tested against engine
+- **Secondary indexes** — composite expression indexes per collection; `IndexDefinition.Where` for filtered/partial indexes (agreement tested against engine); **wildcard `Path` patterns** back a whole family of sibling subcollections from one definition (see below)
 - **Access control** — Per-document and collection-level access rules via Winche.Sentinel; OR semantics with default-deny (any matching rule that grants allows; nothing grants ⇒ denied); reads filtered post-execution; aggregations require a dedicated `Aggregate` grant (read access does not imply aggregate access)
 - **PostgreSQL backend** — All data stored as typed JSONB; queries compiled to native PostgreSQL SQL with `winche_rank`/`winche_num`/`winche_text` helper functions; `IMMUTABLE` functions back expression indexes
+
+## Secondary Indexes
+
+An `IndexDefinition` declares a composite expression index over the `winche_*` ordering family for a
+collection. `IndexDefinition.Path` is **either** an exact collection path **or** a wildcard pattern
+with `*` at document-id positions, letting one definition back a whole family of sibling
+subcollections:
+
+```csharp
+// pattern index — one definition backs every user's per-entity subcollection
+public sealed class SessionHistoryByStartedAt : IndexDefinition
+{
+    public override string Path => "userData/*/sessionHistory";
+    public override IReadOnlyList<IndexField> Fields => [new("startedAt", SortDirection.Desc)];
+}
+```
+
+You may pin some ancestor ids and wildcard others (`orgs/acme/teams/*/members`). Per-entity queries
+(`collection = "userData/alice/sessionHistory"`) and per-entity aggregation pipelines use the matching
+pattern index automatically — **no change to query code**.
+
+Pattern grammar (violations throw `InvalidPathPatternException` at schema-sync):
+
+- A collection path has an **odd** number of non-empty segments.
+- `*` is allowed **only at document-id positions** and must be a **whole** segment (no `a*`, `**`).
+- Literal segments match `[A-Za-z0-9_-]+`.
+
+Cross-collection ("collection group") queries — querying a field across *all* members of a family at
+once — are not yet supported.
 
 ## Access Rules
 
