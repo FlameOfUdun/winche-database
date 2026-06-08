@@ -37,8 +37,8 @@ public class ComparerSqlConsistencyTests(PostgresFixture fx) : QueryTestBase(fx)
             await SeedDoc($"v{i:D3}", new Dictionary<string, Value> { ["f"] = corpus[i] });
 
         // SQL order via the full query path (six-expression family + winche_key)
-        var sqlOrder = (await Run(new Winche.Database.Querying.Ast.QueryAst("c",
-            OrderBy: [new Winche.Database.Querying.Ast.OrderAst(F("f"))], Limit: 1000)))
+        var sqlOrder = (await Run(new Winche.Database.Querying.Ast.Query("c",
+            OrderBy: [new Winche.Database.Querying.Ast.Ordering(F("f"))], Limit: 1000)))
             .Documents.Select(d => d.Fields["f"]).ToList();
 
         // C# order over the same values (stable by original index for ties)

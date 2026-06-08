@@ -14,19 +14,19 @@ internal static class OperatorRegistry
 {
     // ── Filter tree ───────────────────────────────────────────────────────────
 
-    internal static string Emit(FilterAst filter, ParameterBag bag, string alias) =>
+    internal static string Emit(Filter filter, ParameterBag bag, string alias) =>
         Emit(filter, bag, new SchemaResolver(DocumentSchema.Plain, alias));
 
-    internal static string Emit(FilterAst filter, ParameterBag bag, SchemaResolver resolver) => filter switch
+    internal static string Emit(Filter filter, ParameterBag bag, SchemaResolver resolver) => filter switch
     {
-        CompositeFilterAst c => EmitComposite(c, bag, resolver),
-        UnaryFilterAst u => EmitUnary(u, bag, resolver),
-        FieldFilterAst f => EmitFieldFilter(f, bag, resolver),
-        FieldCompareAst cmp => EmitFieldCompare(cmp, bag, resolver),
+        CompositeFilter c => EmitComposite(c, bag, resolver),
+        UnaryFilter u => EmitUnary(u, bag, resolver),
+        FieldFilter f => EmitFieldFilter(f, bag, resolver),
+        FieldCompare cmp => EmitFieldCompare(cmp, bag, resolver),
         _ => throw new NotSupportedException($"Unknown filter: {filter.GetType().Name}"),
     };
 
-    private static string EmitComposite(CompositeFilterAst c, ParameterBag bag, SchemaResolver resolver) => c.Op switch
+    private static string EmitComposite(CompositeFilter c, ParameterBag bag, SchemaResolver resolver) => c.Op switch
     {
         CompositeOp.And => $"({string.Join(" AND ", c.Filters.Select(f => Emit(f, bag, resolver)))})",
         CompositeOp.Or => $"({string.Join(" OR ", c.Filters.Select(f => Emit(f, bag, resolver)))})",
@@ -34,7 +34,7 @@ internal static class OperatorRegistry
         _ => throw new NotSupportedException($"Unknown composite op: {c.Op}"),
     };
 
-    private static string EmitUnary(UnaryFilterAst u, ParameterBag bag, SchemaResolver resolver)
+    private static string EmitUnary(UnaryFilter u, ParameterBag bag, SchemaResolver resolver)
     {
         var f = RequireTagged(resolver.Resolve(u.Field, bag)).Sql;
         return u.Op switch
@@ -46,7 +46,7 @@ internal static class OperatorRegistry
         };
     }
 
-    private static string EmitFieldFilter(FieldFilterAst f, ParameterBag bag, SchemaResolver resolver) => f.Op switch
+    private static string EmitFieldFilter(FieldFilter f, ParameterBag bag, SchemaResolver resolver) => f.Op switch
     {
         FilterOperator.Eq => EmitEq(f.Field, f.Operand, bag, resolver),
         FilterOperator.Gt or FilterOperator.Gte or FilterOperator.Lt or FilterOperator.Lte =>
@@ -64,7 +64,7 @@ internal static class OperatorRegistry
         _ => throw new NotSupportedException($"Unknown operator: {f.Op}"),
     };
 
-    private static string EmitFieldCompare(FieldCompareAst cmp, ParameterBag bag, SchemaResolver resolver)
+    private static string EmitFieldCompare(FieldCompare cmp, ParameterBag bag, SchemaResolver resolver)
     {
         var leftRef = resolver.Resolve(cmp.Left, bag);
         var rightRef = resolver.Resolve(cmp.Right, bag);

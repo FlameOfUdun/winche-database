@@ -55,13 +55,13 @@ public sealed class DocumentDatabase : IDocumentDatabase
         return [.. paths.Select(p => map.GetValueOrDefault(p))];
     }
 
-    public async Task<QueryResult> QueryAsync(QueryAst query, CancellationToken ct = default)
+    public async Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default)
     {
         await using var conn = await _source.OpenConnectionAsync(ct);
         return await new QueryExecutor(conn, null).ExecuteAsync(query, ct);
     }
 
-    public async Task<PipelineResult> AggregateAsync(PipelineAst pipeline, CancellationToken ct = default)
+    public async Task<PipelineResult> AggregateAsync(Pipeline pipeline, CancellationToken ct = default)
     {
         await using var conn = await _source.OpenConnectionAsync(ct);
         return await new PipelineExecutor(conn, null).ExecuteAsync(pipeline, ct);
@@ -84,7 +84,7 @@ public sealed class DocumentDatabase : IDocumentDatabase
         return doc;
     }
 
-    public async Task<QueryResult> QueryAsync(string transactionId, QueryAst query, CancellationToken ct = default)
+    public async Task<QueryResult> QueryAsync(string transactionId, Query query, CancellationToken ct = default)
     {
         var result = await QueryAsync(query, ct);
         foreach (var doc in result.Documents)
@@ -118,7 +118,7 @@ public sealed class DocumentDatabase : IDocumentDatabase
 
     // ── Listeners (Plan 3) ────────────────────────────────────────────────────
 
-    public IQueryListener Listen(QueryAst query, ListenOptions? options = null) =>
+    public IQueryListener Listen(Query query, ListenOptions? options = null) =>
         _listeners?.Listen(query, options)
         ?? throw new NotSupportedException("This DocumentDatabase was constructed without a ListenerRegistry.");
 }

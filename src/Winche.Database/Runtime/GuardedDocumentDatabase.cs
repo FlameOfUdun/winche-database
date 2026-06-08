@@ -40,13 +40,13 @@ public sealed class GuardedDocumentDatabase(IDocumentDatabase inner, IAccessRule
         return docs;
     }
 
-    public async Task<QueryResult> QueryAsync(QueryAst query, CancellationToken ct = default)
+    public async Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default)
     {
         var result = await inner.QueryAsync(query, ct);
         return result with { Documents = await FilterReadable(result.Documents, ct) };
     }
 
-    public async Task<PipelineResult> AggregateAsync(PipelineAst pipeline, CancellationToken ct = default)
+    public async Task<PipelineResult> AggregateAsync(Pipeline pipeline, CancellationToken ct = default)
     {
         // Aggregation is gated by AccessOperation.Aggregate, NOT Read: an aggregate result can reveal
         // information about documents the caller cannot read individually, so read access does not
@@ -58,8 +58,8 @@ public sealed class GuardedDocumentDatabase(IDocumentDatabase inner, IAccessRule
         {
             var collection = stage switch
             {
-                MatchStageAst m => m.Collection,
-                LookupStageAst l => l.Collection,
+                Match m => m.Collection,
+                Lookup l => l.Collection,
                 _ => null,
             };
             if (collection is not null)
@@ -89,7 +89,7 @@ public sealed class GuardedDocumentDatabase(IDocumentDatabase inner, IAccessRule
         return await inner.GetAsync(transactionId, path, ct);
     }
 
-    public async Task<QueryResult> QueryAsync(string transactionId, QueryAst query, CancellationToken ct = default)
+    public async Task<QueryResult> QueryAsync(string transactionId, Query query, CancellationToken ct = default)
     {
         var result = await inner.QueryAsync(transactionId, query, ct);
         return result with { Documents = await FilterReadable(result.Documents, ct) };
@@ -109,7 +109,7 @@ public sealed class GuardedDocumentDatabase(IDocumentDatabase inner, IAccessRule
         TransactionOptions? options = null, CancellationToken ct = default) =>
         TransactionRunner.RunAsync(this, body, options, ct);          // context reads/commits go through THIS guard
 
-    public IQueryListener Listen(QueryAst query, ListenOptions? options = null) =>
+    public IQueryListener Listen(Query query, ListenOptions? options = null) =>
         new GuardedQueryListener(inner.Listen(query, options), evaluator);
 
     // ── Helpers ───────────────────────────────────────────────────────────────

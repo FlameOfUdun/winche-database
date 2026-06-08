@@ -35,13 +35,13 @@ public class DocumentDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
         Assert.Null(all[1]);
         Assert.Equal(new IntegerValue(30), all[2]!.Fields["age"]);
 
-        var q = await db.QueryAsync(new QueryAst("users",
-            Where: new FieldFilterAst(F("age"), FilterOperator.Gte, new IntegerValue(40))));
+        var q = await db.QueryAsync(new Query("users",
+            Where: new FieldFilter(F("age"), FilterOperator.Gte, new IntegerValue(40))));
         Assert.Equal(2, q.Documents.Count);
 
-        var agg = await db.AggregateAsync(new PipelineAst([
-            new MatchStageAst("users", null),
-            new GroupStageAst([], [new AccumulatorAst("n", AggFunction.Count)])]));
+        var agg = await db.AggregateAsync(new Pipeline([
+            new Match("users", null),
+            new Group([], [new Accumulator("n", AggFunction.Count)])]));
         Assert.Equal(new IntegerValue(3), Assert.Single(agg.Rows)["n"]);
 
         await db.WriteAsync([new DeleteWrite { Path = "users/u1" }]);
@@ -51,7 +51,7 @@ public class DocumentDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     [Fact]
     public void Listen_WithoutRegistry_Throws()
     {
-        Assert.Throws<NotSupportedException>(() => Db().Listen(new QueryAst("c")));
+        Assert.Throws<NotSupportedException>(() => Db().Listen(new Query("c")));
     }
 
     [Fact]

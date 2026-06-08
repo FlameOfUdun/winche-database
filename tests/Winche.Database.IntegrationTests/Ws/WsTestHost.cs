@@ -46,6 +46,7 @@ public sealed class WsTestHost : IAsyncDisposable
 
         var app = builder.Build();
         await app.InitializeWincheDatabaseAsync();
+        app.UseWebSockets();
         app.MapWincheDatabaseWsApi();
         await app.StartAsync();
         return new WsTestHost(app);

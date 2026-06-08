@@ -5,7 +5,7 @@ using Winche.Database.Values;
 
 namespace Winche.Database.Querying.Ast;
 
-/// <summary>Wire JSON → PipelineAst. Shape only; semantic rules live in PipelineNormalizer.</summary>
+/// <summary>Wire JSON → Pipeline. Shape only; semantic rules live in PipelineNormalizer.</summary>
 public static class PipelineParser
 {
     private static readonly Dictionary<string, AggFunction> Fns = new(StringComparer.Ordinal)
@@ -18,16 +18,16 @@ public static class PipelineParser
     private static readonly string[] StageKeys =
         ["match", "filter", "lookup", "unwind", "group", "project", "sort", "limit", "skip"];
 
-    public static PipelineAst Parse(JsonObject json)
+    public static Pipeline Parse(JsonObject json)
     {
         if (json["pipeline"] is not JsonArray stages)
             throw new QueryParseException("'pipeline' is required and must be an array", "$.pipeline");
 
-        return new PipelineAst([.. stages.Select((s, i) => ParseStage(
+        return new Pipeline([.. stages.Select((s, i) => ParseStage(
             s ?? throw new QueryParseException("Stage is null", $"$.pipeline[{i}]"), $"$.pipeline[{i}]"))]);
     }
 
-    private static StageAst ParseStage(JsonNode node, string path)
+    private static Stage ParseStage(JsonNode node, string path)
     {
         if (node is not JsonObject obj)
             throw new QueryParseException("Stage must be an object", path);
@@ -47,29 +47,29 @@ public static class PipelineParser
         return key switch
         {
             "match" => ParseMatch(body, p),
-            "filter" => new FilterStageAst(QueryParser.ParseFilter(
+            "filter" => new Where(QueryParser.ParseFilter(
                 body ?? throw new QueryParseException("'filter' must be a filter object", p), p)),
             "lookup" => ParseLookup(body, p),
             "unwind" => ParseUnwind(body, p),
             "group" => ParseGroup(body, p),
             "project" => ParseProject(body, p),
             "sort" => ParseSort(body, p),
-            "limit" => new LimitStageAst(GetInt(body, p)),
-            "skip" => new SkipStageAst(GetInt(body, p)),
+            "limit" => new Limit(GetInt(body, p)),
+            "skip" => new Skip(GetInt(body, p)),
             _ => throw new QueryParseException($"Unknown stage '{key}'", path),
         };
     }
 
-    private static MatchStageAst ParseMatch(JsonNode? node, string path)
+    private static Match ParseMatch(JsonNode? node, string path)
     {
         if (node is not JsonObject obj)
             throw new QueryParseException("'match' must be an object", path);
         var collection = GetString(obj["collection"], $"{path}.collection");
         var where = obj["where"] is { } w ? QueryParser.ParseFilter(w, $"{path}.where") : null;
-        return new MatchStageAst(collection, where);
+        return new Match(collection, where);
     }
 
-    private static LookupStageAst ParseLookup(JsonNode? node, string path)
+    private static Lookup ParseLookup(JsonNode? node, string path)
     {
         if (node is not JsonObject obj)
             throw new QueryParseException("'lookup' must be an object", path);
@@ -77,7 +77,7 @@ public static class PipelineParser
         var limit = 100;
         if (obj["limit"] is { } ln) limit = GetInt(ln, $"{path}.limit");
 
-        IReadOnlyList<OrderAst>? orderBy = null;
+        IReadOnlyList<Ordering>? orderBy = null;
         if (obj["orderBy"] is { } ob)
         {
             if (ob is not JsonArray arr)
@@ -85,7 +85,7 @@ public static class PipelineParser
             orderBy = [.. arr.Select((n, i) => ParseOrder(n, $"{path}.orderBy[{i}]"))];
         }
 
-        return new LookupStageAst(
+        return new Lookup(
             GetString(obj["collection"], $"{path}.collection"),
             GetFieldPath(obj["localField"], $"{path}.localField"),
             GetFieldPath(obj["foreignField"], $"{path}.foreignField"),
@@ -95,7 +95,7 @@ public static class PipelineParser
             limit);
     }
 
-    private static UnwindStageAst ParseUnwind(JsonNode? node, string path)
+    private static Unwind ParseUnwind(JsonNode? node, string path)
     {
         if (node is not JsonObject obj)
             throw new QueryParseException("'unwind' must be an object", path);
@@ -107,18 +107,18 @@ public static class PipelineParser
                 throw new QueryParseException("'preserveNullAndEmpty' must be a boolean", $"{path}.preserveNullAndEmpty");
         }
 
-        return new UnwindStageAst(
+        return new Unwind(
             GetFieldPath(obj["field"], $"{path}.field"),
             GetString(obj["as"], $"{path}.as"),
             preserve);
     }
 
-    private static GroupStageAst ParseGroup(JsonNode? node, string path)
+    private static Group ParseGroup(JsonNode? node, string path)
     {
         if (node is not JsonObject obj)
             throw new QueryParseException("'group' must be an object", path);
 
-        var keys = new List<GroupKeyAst>();
+        var keys = new List<GroupKey>();
         if (obj["keys"] is { } kn)
         {
             if (kn is not JsonArray karr)
@@ -131,17 +131,17 @@ public static class PipelineParser
         var accs = aarr.Select((a, i) => ParseAccumulator(a, $"{path}.accumulators[{i}]")).ToList();
 
         var having = obj["having"] is { } h ? QueryParser.ParseFilter(h, $"{path}.having") : null;
-        return new GroupStageAst(keys, accs, having);
+        return new Group(keys, accs, having);
     }
 
-    private static GroupKeyAst ParseGroupKey(JsonNode? node, string path)
+    private static GroupKey ParseGroupKey(JsonNode? node, string path)
     {
         if (node is not JsonObject obj)
             throw new QueryParseException("Group key must be an object", path);
-        return new GroupKeyAst(GetString(obj["as"], $"{path}.as"), GetFieldPath(obj["field"], $"{path}.field"));
+        return new GroupKey(GetString(obj["as"], $"{path}.as"), GetFieldPath(obj["field"], $"{path}.field"));
     }
 
-    private static AccumulatorAst ParseAccumulator(JsonNode? node, string path)
+    private static Accumulator ParseAccumulator(JsonNode? node, string path)
     {
         if (node is not JsonObject obj)
             throw new QueryParseException("Accumulator must be an object", path);
@@ -151,18 +151,18 @@ public static class PipelineParser
             throw new QueryParseException($"Unknown aggregate function '{fnStr}'", $"{path}.fn");
 
         FieldPath? field = obj["field"] is { } f ? GetFieldPath(f, $"{path}.field") : null;
-        return new AccumulatorAst(GetString(obj["as"], $"{path}.as"), fn, field);
+        return new Accumulator(GetString(obj["as"], $"{path}.as"), fn, field);
     }
 
-    private static ProjectStageAst ParseProject(JsonNode? node, string path)
+    private static Project ParseProject(JsonNode? node, string path)
     {
         if (node is not JsonObject obj || obj["fields"] is not JsonArray arr)
             throw new QueryParseException("'project' must be an object with a 'fields' array", path);
 
-        return new ProjectStageAst([.. arr.Select((f, i) => ParseProjection(f, $"{path}.fields[{i}]"))]);
+        return new Project([.. arr.Select((f, i) => ParseProjection(f, $"{path}.fields[{i}]"))]);
     }
 
-    private static ProjectionAst ParseProjection(JsonNode? node, string path)
+    private static Projection ParseProjection(JsonNode? node, string path)
     {
         if (node is not JsonObject obj)
             throw new QueryParseException("Projection must be an object", path);
@@ -178,28 +178,28 @@ public static class PipelineParser
             if (!Fns.TryGetValue(fnStr, out var fn))
                 throw new QueryParseException($"Unknown aggregate function '{fnStr}'", $"{path}.fn");
             FieldPath? field = obj["field"] is { } f ? GetFieldPath(f, $"{path}.field") : null;
-            return new ProjectionAst(As, new AggFuncExprAst(fn, field));
+            return new Projection(As, new AggFuncExpr(fn, field));
         }
         if (hasValue && !hasField)
         {
             var valueNode = obj["value"] ?? throw new QueryParseException("'value' is null", $"{path}.value");
-            try { return new ProjectionAst(As, new LiteralExprAst(ValueSerializer.Read(valueNode))); }
+            try { return new Projection(As, new LiteralExpr(ValueSerializer.Read(valueNode))); }
             catch (WireFormatException ex) { throw new QueryParseException(ex.Message, $"{path}.value"); }
         }
         if (hasField && !hasValue)
-            return new ProjectionAst(As, new FieldRefExprAst(GetFieldPath(obj["field"], $"{path}.field")));
+            return new Projection(As, new FieldRefExpr(GetFieldPath(obj["field"], $"{path}.field")));
 
         throw new QueryParseException("Projection must be exactly one of: field | value | fn(+field)", path);
     }
 
-    private static SortStageAst ParseSort(JsonNode? node, string path)
+    private static Sort ParseSort(JsonNode? node, string path)
     {
         if (node is not JsonArray arr)
             throw new QueryParseException("'sort' must be an array", path);
-        return new SortStageAst([.. arr.Select((n, i) => ParseOrder(n, $"{path}[{i}]"))]);
+        return new Sort([.. arr.Select((n, i) => ParseOrder(n, $"{path}[{i}]"))]);
     }
 
-    private static OrderAst ParseOrder(JsonNode? node, string path)
+    private static Ordering ParseOrder(JsonNode? node, string path)
     {
         if (node is not JsonObject obj)
             throw new QueryParseException("Sort entry must be an object", path);
@@ -214,7 +214,7 @@ public static class PipelineParser
                 _ => throw new QueryParseException("'direction' must be asc|desc", $"{path}.direction"),
             };
         }
-        return new OrderAst(GetFieldPath(obj["field"], $"{path}.field"), direction);
+        return new Ordering(GetFieldPath(obj["field"], $"{path}.field"), direction);
     }
 
     private static string GetString(JsonNode? node, string path) =>

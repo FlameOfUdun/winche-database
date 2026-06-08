@@ -3,10 +3,10 @@ using Winche.Database.Values;
 
 namespace Winche.Database.Querying.Ast.Serialization;
 
-/// <summary>Canonical QueryAst → wire JSON. Deterministic: also the subscription grouping key source.</summary>
+/// <summary>Canonical Query → wire JSON. Deterministic: also the subscription grouping key source.</summary>
 public static class QueryAstWriter
 {
-    public static JsonObject Write(QueryAst q)
+    public static JsonObject Write(Query q)
     {
         var obj = new JsonObject { ["collection"] = q.Collection };
         if (q.Where is not null) obj["where"] = WriteFilter(q.Where);
@@ -22,33 +22,33 @@ public static class QueryAstWriter
         return obj;
     }
 
-    public static JsonObject WriteFilter(FilterAst f) => f switch
+    public static JsonObject WriteFilter(Filter f) => f switch
     {
-        CompositeFilterAst { Op: CompositeOp.Not } n => new JsonObject { ["not"] = WriteFilter(n.Filters[0]) },
-        CompositeFilterAst c => new JsonObject
+        CompositeFilter { Op: CompositeOp.Not } n => new JsonObject { ["not"] = WriteFilter(n.Filters[0]) },
+        CompositeFilter c => new JsonObject
         {
             [c.Op == CompositeOp.And ? "and" : "or"] = new JsonArray([.. c.Filters.Select(x => (JsonNode)WriteFilter(x))]),
         },
-        UnaryFilterAst u => new JsonObject
+        UnaryFilter u => new JsonObject
         {
             ["unary"] = u.Op switch { UnaryOp.IsNull => "isNull", UnaryOp.IsNan => "isNan", _ => "exists" },
             ["field"] = u.Field.ToString(),
         },
-        FieldCompareAst cmp => new JsonObject
+        FieldCompare cmp => new JsonObject
         {
             ["compare"] = new JsonObject
             {
                 ["left"] = cmp.Left.ToString(), ["op"] = OpName(cmp.Op), ["right"] = cmp.Right.ToString(),
             },
         },
-        FieldFilterAst ff => new JsonObject
+        FieldFilter ff => new JsonObject
         {
             ["field"] = ff.Field.ToString(), ["op"] = OpName(ff.Op), ["value"] = ValueSerializer.Write(ff.Operand),
         },
         _ => throw new NotSupportedException($"Unknown filter: {f.GetType().Name}"),
     };
 
-    private static JsonObject WriteCursor(CursorAst c) => new()
+    private static JsonObject WriteCursor(Cursor c) => new()
     {
         ["values"] = new JsonArray([.. c.Values.Select(v => (JsonNode)ValueSerializer.Write(v))]),
         ["before"] = c.Before,

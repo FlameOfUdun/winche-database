@@ -4,51 +4,51 @@ using Winche.Database.Values;
 
 namespace Winche.Database.Querying.Planning;
 
-public abstract record PlanNode;
+internal abstract record PlanNode;
 
-public sealed record CollectionScan(string Collection) : PlanNode;
+internal sealed record CollectionScan(string Collection) : PlanNode;
 
 /// <summary>WHERE predicate. In Phase 3 also used after Group as HAVING.</summary>
-public sealed record FilterNode(FilterAst Predicate) : PlanNode;
+internal sealed record FilterNode(Filter Predicate) : PlanNode;
 
-public sealed record SortKey(FieldPath Field, SortDirection Direction);
+internal sealed record SortKey(FieldPath Field, SortDirection Direction);
 
-public sealed record SortNode(IReadOnlyList<SortKey> Keys) : PlanNode;
+internal sealed record SortNode(IReadOnlyList<SortKey> Keys) : PlanNode;
 
-public sealed record SortBoundary(IReadOnlyList<Value> Values, bool Inclusive);
+internal sealed record SortBoundary(IReadOnlyList<Value> Values, bool Inclusive);
 
 /// <summary>Cursor bounds, tied to the SortNode that precedes this node in the plan.</summary>
-public sealed record CursorRangeNode(SortBoundary? Lower, SortBoundary? Upper) : PlanNode;
+internal sealed record CursorRangeNode(SortBoundary? Lower, SortBoundary? Upper) : PlanNode;
 
-public sealed record PageNode(int Limit, int Skip, bool FetchExtraRow) : PlanNode;
+internal sealed record PageNode(int Limit, int Skip, bool FetchExtraRow) : PlanNode;
 
-public sealed record LogicalPlan(IReadOnlyList<PlanNode> Nodes);
+internal sealed record LogicalPlan(IReadOnlyList<PlanNode> Nodes);
 
-public sealed record LookupNode(
+internal sealed record LookupNode(
     string Collection,
     FieldPath LocalField,
     FieldPath ForeignField,
     string As,
-    FilterAst? Filter,
+    Filter? Filter,
     IReadOnlyList<SortKey>? OrderBy,
     int Limit) : PlanNode;
 
-public sealed record UnwindNode(FieldPath Field, string As, bool PreserveNullAndEmpty) : PlanNode;
+internal sealed record UnwindNode(FieldPath Field, string As, bool PreserveNullAndEmpty) : PlanNode;
 
-public sealed record GroupKey(string As, FieldPath Field);
-public sealed record Accumulator(string As, AggFunction Fn, FieldPath? Field);
+internal sealed record GroupKey(string As, FieldPath Field);
+internal sealed record Accumulator(string As, AggFunction Fn, FieldPath? Field);
 
-public sealed record GroupNode(
+internal sealed record GroupNode(
     IReadOnlyList<GroupKey> Keys,
     IReadOnlyList<Accumulator> Accumulators) : PlanNode;
 
-public abstract record ProjectExpr;
-public sealed record FieldRefExpr(FieldPath Field) : ProjectExpr;
-public sealed record LiteralExpr(Value Value) : ProjectExpr;
-public sealed record AggFuncExpr(AggFunction Fn, FieldPath? Field) : ProjectExpr;
+internal abstract record ProjectExpr;
+internal sealed record FieldRefExpr(FieldPath Field) : ProjectExpr;
+internal sealed record LiteralExpr(Value Value) : ProjectExpr;
+internal sealed record AggFuncExpr(AggFunction Fn, FieldPath? Field) : ProjectExpr;
 
-public sealed record Projection(string As, ProjectExpr Expr);
-public sealed record ProjectNode(IReadOnlyList<Projection> Projections) : PlanNode;
+internal sealed record Projection(string As, ProjectExpr Expr);
+internal sealed record ProjectNode(IReadOnlyList<Projection> Projections) : PlanNode;
 
-public sealed record LimitNode(int Count) : PlanNode;
-public sealed record SkipNode(int Count) : PlanNode;
+internal sealed record LimitNode(int Count) : PlanNode;
+internal sealed record SkipNode(int Count) : PlanNode;

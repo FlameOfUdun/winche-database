@@ -14,19 +14,19 @@ public class ChangeMatcherTests
     [Fact]
     public void Removed_AffectsOnlyIfInSnapshot()
     {
-        var q = new QueryAst("c");
+        var q = new Query("c");
         Assert.True(ChangeMatcher.CouldAffect(q, HasD1, "d1", true, "c/d1", null));
         Assert.False(ChangeMatcher.CouldAffect(q, Empty, "d1", true, "c/d1", null));
     }
 
     [Fact]
     public void NullFields_IsConservative() =>
-        Assert.True(ChangeMatcher.CouldAffect(new QueryAst("c"), Empty, "d1", false, "c/d1", null));
+        Assert.True(ChangeMatcher.CouldAffect(new Query("c"), Empty, "d1", false, "c/d1", null));
 
     [Fact]
     public void NonMatchingAdd_OutsideSnapshot_DoesNotAffect()
     {
-        var q = new QueryAst("c", Where: new FieldFilterAst(F("age"), FilterOperator.Gte, new IntegerValue(18)));
+        var q = new Query("c", Where: new FieldFilter(F("age"), FilterOperator.Gte, new IntegerValue(18)));
         Assert.False(ChangeMatcher.CouldAffect(q, Empty, "d1", false, "c/d1",
             new Dictionary<string, Value> { ["age"] = new IntegerValue(5) }));
     }
@@ -34,7 +34,7 @@ public class ChangeMatcherTests
     [Fact]
     public void DotNetInvalidRegex_IsConservative()
     {
-        var q = new QueryAst("c", Where: new FieldFilterAst(F("s"), FilterOperator.Regex, new StringValue("[[:alpha:")));
+        var q = new Query("c", Where: new FieldFilter(F("s"), FilterOperator.Regex, new StringValue("[[:alpha:")));
         Assert.True(ChangeMatcher.CouldAffect(q, Empty, "d1", false, "c/d1",
             new Dictionary<string, Value> { ["s"] = new StringValue("x") }));
     }
@@ -42,7 +42,7 @@ public class ChangeMatcherTests
     [Fact]
     public void ImplicitOrderByExists_Applies()
     {
-        var q = new QueryAst("c", OrderBy: [new OrderAst(F("age"))]);
+        var q = new Query("c", OrderBy: [new Ordering(F("age"))]);
         Assert.False(ChangeMatcher.CouldAffect(q, Empty, "d1", false, "c/d1",
             new Dictionary<string, Value> { ["other"] = new IntegerValue(1) }));
     }

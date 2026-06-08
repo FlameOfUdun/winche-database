@@ -9,7 +9,7 @@ namespace Winche.Database.Querying.Sql;
 /// [Scan, Filter?, Sort, CursorRange?, Page] into ONE flat SELECT.
 /// Pipeline nodes (Group, Project, …) arrive in Phase 3 with CTE chaining.
 /// </summary>
-public static class SqlCompiler
+internal static class SqlCompiler
 {
     private const string Alias = "d";
     private const string Columns = "path, id, collection, data, created_at, updated_at, version";

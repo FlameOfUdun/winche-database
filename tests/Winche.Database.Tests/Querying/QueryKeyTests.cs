@@ -7,7 +7,7 @@ namespace Winche.Database.Tests.Querying;
 
 public class QueryKeyTests
 {
-    private static QueryAst Q(string json) => JsonSerializer.Deserialize<QueryAst>(json)!;
+    private static Query Q(string json) => JsonSerializer.Deserialize<Query>(json)!;
 
     [Fact]
     public void IdenticalQueries_SameKey()

@@ -24,12 +24,18 @@ public static class WebApplicationExtensions
         return Encoding.UTF8.GetString(bytes);
     }
 
-    public static WebApplication MapWincheDatabaseRestApi(this WebApplication app, string prefix = "documents", Action<RouteGroupBuilder>? configure = null, Action<RouteHandlerBuilder>? configureVerbs = null)
+    /// <summary>
+    /// Maps the REST surface (CRUD + ping under <c>/{prefix}</c>, plus the colon-verb operations
+    /// <c>:commit</c>/<c>:beginTransaction</c>/<c>:rollback</c>/<c>:batchGet</c>/<c>:runQuery</c>/<c>:aggregate</c>)
+    /// and returns a single <see cref="IEndpointConventionBuilder"/> covering ALL of them. Apply
+    /// cross-cutting policy on it — e.g. <c>.RequireAuthorization()</c>, rate limiting, CORS — and it
+    /// lands on every endpoint including the verbs. The built-in claims/exception filters are always
+    /// applied internally and run outermost regardless.
+    /// </summary>
+    public static IEndpointConventionBuilder MapWincheDatabaseRestApi(this WebApplication app, string prefix = "documents")
     {
         var p = prefix.TrimStart('/');
         var group = app.MapGroup($"/{p}");
-
-        configure?.Invoke(group);
 
         group.AddEndpointFilter<ClaimsAccessor>();
         group.AddEndpointFilter<ExceptionHandler>();
@@ -73,14 +79,16 @@ public static class WebApplicationExtensions
             return Results.Ok();
         });
 
-        // colon-verb operations (Firestore dialect) — built-in claims+error filters always applied;
-        // configureVerbs allows per-verb customization (e.g. rate limiting) without touching configure.
+        // colon-verb operations (Firestore dialect) — built-in claims+error filters always applied.
+        // Each verb is a standalone route (mapped on `app`, not under the group, because of the ':'),
+        // so collect them and fold them into the returned composite builder alongside the group.
+        var verbs = new List<IEndpointConventionBuilder>();
         RouteHandlerBuilder Verb(string verb, Delegate handler)
         {
             var builder = app.MapPost($"/{p}:{verb}", handler)
                .AddEndpointFilter<ClaimsAccessor>()
                .AddEndpointFilter<ExceptionHandler>();
-            configureVerbs?.Invoke(builder);
+            verbs.Add(builder);
             return builder;
         }
 
@@ -151,7 +159,7 @@ public static class WebApplicationExtensions
                 ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "Request body must be a JSON object");
             var queryNode = node["query"]
                 ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "'query' is required");
-            var query = queryNode.Deserialize<QueryAst>(new System.Text.Json.JsonSerializerOptions
+            var query = queryNode.Deserialize<Query>(new System.Text.Json.JsonSerializerOptions
             {
                 Converters = { new Querying.Ast.Serialization.QueryAstJsonConverter() }
             });
@@ -169,7 +177,7 @@ public static class WebApplicationExtensions
                 ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "Request body must be a JSON object");
             var pipelineNode = node["pipeline"]
                 ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "'pipeline' is required");
-            var pipeline = pipelineNode.Deserialize<PipelineAst>(new System.Text.Json.JsonSerializerOptions
+            var pipeline = pipelineNode.Deserialize<Pipeline>(new System.Text.Json.JsonSerializerOptions
             {
                 Converters = { new Querying.Ast.Serialization.PipelineAstJsonConverter() }
             });
@@ -178,7 +186,7 @@ public static class WebApplicationExtensions
             return Results.Json(result, statusCode: 200, contentType: "application/json");
         });
 
-        return app;
+        return new CompositeEndpointConventionBuilder([group, .. verbs]);
     }
 }
 

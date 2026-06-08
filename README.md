@@ -86,9 +86,21 @@ builder.Services
 
 ```csharp
 await app.InitializeWincheDatabaseAsync();   // Creates winche_* tables/functions and syncs indexes
+app.UseWebSockets();                         // required before mapping the WS endpoint
 app.MapWincheDatabaseWsApi();                // WebSocket endpoint: /documents/ws
 app.MapWincheDatabaseRestApi();              // REST routes under /documents (configurable)
 ```
+
+Both `Map*` methods return an `IEndpointConventionBuilder` covering **all** of their endpoints — for REST that includes the CRUD routes *and* every colon-verb (`:commit`, `:runQuery`, `:aggregate`, …); for WS the upgrade route. Apply cross-cutting policy on it once and it lands everywhere:
+
+```csharp
+app.MapWincheDatabaseRestApi().RequireAuthorization();   // CRUD AND :commit/:runQuery/:aggregate/…
+app.MapWincheDatabaseWsApi().RequireRateLimiting("ws");  // throttle socket upgrades
+```
+
+The built-in claims/exception filters are always applied internally and run outermost, so caller conventions compose on top of them.
+
+> **WebSocket auth is in-band, not at the upgrade.** A WS connection authenticates via the token in its `hello` frame, validated by `IWsAuthenticator` (this exists because browsers can't set request headers on the upgrade). Do **not** rely on `.RequireAuthorization()` to secure WS — it gates the HTTP *upgrade* against `HttpContext.User` and is independent of the hello token. Use it only as an optional defense-in-depth gate, and only if you have a scheme that authenticates the upgrade request itself (cookies, or a query-string token — not a bearer header).
 
 ## Features
 
@@ -211,8 +223,8 @@ public interface IDocumentDatabase
     // Reads
     Task<Document?> GetAsync(string path, CancellationToken ct = default);
     Task<IReadOnlyList<Document?>> GetAllAsync(IReadOnlyList<string> paths, CancellationToken ct = default);
-    Task<QueryResult> QueryAsync(QueryAst query, CancellationToken ct = default);
-    Task<PipelineResult> AggregateAsync(PipelineAst pipeline, CancellationToken ct = default);
+    Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default);
+    Task<PipelineResult> AggregateAsync(Pipeline pipeline, CancellationToken ct = default);
 
     // Writes — every mutation is a Write[]; singles are sugar
     Task<IReadOnlyList<WriteResult>> WriteAsync(IReadOnlyList<Write> writes, CancellationToken ct = default);
@@ -220,13 +232,13 @@ public interface IDocumentDatabase
     // Transactions (optimistic)
     Task<TransactionHandle> BeginTransactionAsync(CancellationToken ct = default);
     Task<Document?> GetAsync(string transactionId, string path, CancellationToken ct = default);
-    Task<QueryResult> QueryAsync(string transactionId, QueryAst query, CancellationToken ct = default);
+    Task<QueryResult> QueryAsync(string transactionId, Query query, CancellationToken ct = default);
     Task<IReadOnlyList<WriteResult>> CommitTransactionAsync(string transactionId, IReadOnlyList<Write> writes, CancellationToken ct = default);
     Task RollbackTransactionAsync(string transactionId, CancellationToken ct = default);
     Task<T> RunTransactionAsync<T>(Func<TransactionContext, Task<T>> body, TransactionOptions? options = null, CancellationToken ct = default);
 
     // Live queries
-    IQueryListener Listen(QueryAst query, ListenOptions? options = null);
+    IQueryListener Listen(Query query, ListenOptions? options = null);
 }
 ```
 
@@ -241,17 +253,17 @@ await new WriteBatch(db)
 
 ## Query API
 
-All queries use the typed `QueryAst`; the wire JSON and C# AST share the same shape. See [PROTOCOL](docs/PROTOCOL.md#4-queries) for the complete filter/operator reference.
+All queries use the typed `Query`; the wire JSON and C# AST share the same shape. See [PROTOCOL](docs/PROTOCOL.md#4-queries) for the complete filter/operator reference.
 
 ```csharp
 using Winche.Database.Querying.Ast;
 using Winche.Database.Documents;
 using Winche.Database.Values;
 
-var query = new QueryAst(
+var query = new Query(
     Collection: "users",
-    Where: new FieldFilterAst(FieldPath.Parse("score"), FilterOperator.Gte, new IntegerValue(50)),
-    OrderBy: [new OrderAst(FieldPath.Parse("score"), SortDirection.Desc)],
+    Where: new FieldFilter(FieldPath.Parse("score"), FilterOperator.Gte, new IntegerValue(50)),
+    OrderBy: [new Ordering(FieldPath.Parse("score"), SortDirection.Desc)],
     Limit: 25
 );
 
@@ -268,17 +280,17 @@ Inequality operators match values of the **same type-class** only.
 
 ### Logical operators
 
-`And`, `Or`, `Not` (via `CompositeFilterAst`)
+`And`, `Or`, `Not` (via `CompositeFilter`)
 
 ### Unary operators
 
-`IsNull`, `IsNan`, `Exists` (via `UnaryFilterAst`)
+`IsNull`, `IsNan`, `Exists` (via `UnaryFilter`)
 
 ### Cursor pagination
 
 ```csharp
-var cursor = new CursorAst(Values: [new IntegerValue(lastScore), new StringValue("users/" + lastId)], Before: false);
-var nextPage = new QueryAst("users", OrderBy: [...], Limit: 25, Start: cursor);
+var cursor = new Cursor(Values: [new IntegerValue(lastScore), new StringValue("users/" + lastId)], Before: false);
+var nextPage = new Query("users", OrderBy: [...], Limit: 25, Start: cursor);
 ```
 
 `Before: false` = `startAfter` (exclusive); `Before: true` = `startAt` (inclusive). Mirror for `End`.
@@ -288,23 +300,23 @@ var nextPage = new QueryAst("users", OrderBy: [...], Limit: 25, Start: cursor);
 ```csharp
 using Winche.Database.Querying.Ast;
 
-var pipeline = new PipelineAst([
-    new MatchStageAst("orders", Where: null),
-    new LookupStageAst("users", FieldPath.Parse("userId"), FieldPath.Parse("id"), "user"),
-    new UnwindStageAst(FieldPath.Parse("user"), "user"),
-    new GroupStageAst(
-        Keys: [new GroupKeyAst("status", FieldPath.Parse("status"))],
-        Accumulators: [new AccumulatorAst("total", AggFunction.Sum, FieldPath.Parse("amount"))]
+var pipeline = new Pipeline([
+    new Match("orders", Where: null),
+    new Lookup("users", FieldPath.Parse("userId"), FieldPath.Parse("id"), "user"),
+    new Unwind(FieldPath.Parse("user"), "user"),
+    new Group(
+        Keys: [new GroupKey("status", FieldPath.Parse("status"))],
+        Accumulators: [new Accumulator("total", AggFunction.Sum, FieldPath.Parse("amount"))]
     ),
-    new SortStageAst([new OrderAst(FieldPath.Parse("total"), SortDirection.Desc)]),
-    new LimitStageAst(10),
+    new Sort([new Ordering(FieldPath.Parse("total"), SortDirection.Desc)]),
+    new Limit(10),
 ]);
 
 var result = await db.AggregateAsync(pipeline);
 // result.Rows : IReadOnlyList<IReadOnlyDictionary<string, Value>>
 ```
 
-Available stages: `MatchStageAst`, `FilterStageAst`, `LookupStageAst`, `UnwindStageAst`, `GroupStageAst`, `ProjectStageAst`, `SortStageAst`, `LimitStageAst`, `SkipStageAst`.
+Available stages: `Match`, `Where`, `Lookup`, `Unwind`, `Group`, `Project`, `Sort`, `Limit`, `Skip`.
 
 Available accumulator functions: `Count`, `Sum`, `Avg`, `Min`, `Max`, `Push`, `AddToSet`, `First`, `Last`.
 

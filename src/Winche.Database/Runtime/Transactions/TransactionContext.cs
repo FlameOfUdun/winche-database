@@ -40,7 +40,7 @@ public sealed class TransactionContext
         return docs;
     }
 
-    public Task<QueryResult> QueryAsync(QueryAst query, CancellationToken ct = default)
+    public Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default)
     {
         EnsureNoWritesYet();
         return _db.QueryAsync(TransactionId, query, ct);

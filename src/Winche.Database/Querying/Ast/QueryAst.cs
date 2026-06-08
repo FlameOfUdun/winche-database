@@ -4,11 +4,11 @@ using Winche.Database.Values;
 
 namespace Winche.Database.Querying.Ast;
 
-public sealed record OrderAst(FieldPath Field, SortDirection Direction = SortDirection.Asc);
+public sealed record Ordering(FieldPath Field, SortDirection Direction = SortDirection.Asc);
 
-public sealed record CursorAst(IReadOnlyList<Value> Values, bool Before)
+public sealed record Cursor(IReadOnlyList<Value> Values, bool Before)
 {
-    public bool Equals(CursorAst? other) =>
+    public bool Equals(Cursor? other) =>
         other is not null && Before == other.Before && Values.SequenceEqual(other.Values);
     public override int GetHashCode()
     {
@@ -20,15 +20,15 @@ public sealed record CursorAst(IReadOnlyList<Value> Values, bool Before)
 }
 
 [JsonConverter(typeof(Serialization.QueryAstJsonConverter))]
-public sealed record QueryAst(
+public sealed record Query(
     string Collection,
-    FilterAst? Where = null,
-    IReadOnlyList<OrderAst>? OrderBy = null,
+    Filter? Where = null,
+    IReadOnlyList<Ordering>? OrderBy = null,
     int? Limit = null,
-    CursorAst? Start = null,
-    CursorAst? End = null)
+    Cursor? Start = null,
+    Cursor? End = null)
 {
-    public bool Equals(QueryAst? other) =>
+    public bool Equals(Query? other) =>
         other is not null
         && Collection == other.Collection
         && Equals(Where, other.Where)

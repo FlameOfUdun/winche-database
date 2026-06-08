@@ -15,8 +15,8 @@ public class PipelineUnwindLookupTests(PostgresFixture fx) : PipelineTestBase(fx
         await SeedDoc("a", new Dictionary<string, Value> { ["tags"] = new ArrayValue([S("x"), S("y")]) });
 
         var result = await RunPipeline(
-            new MatchStageAst("c", null),
-            new UnwindStageAst(F("tags"), "tag"));
+            new Match("c", null),
+            new Unwind(F("tags"), "tag"));
 
         Assert.Equal(2, result.Rows.Count);
         Assert.Equal([S("x"), S("y")], result.Rows.Select(r => r["tag"]).OfType<StringValue>().OrderBy(s => s.Value).Cast<Value>());
@@ -29,11 +29,11 @@ public class PipelineUnwindLookupTests(PostgresFixture fx) : PipelineTestBase(fx
         await SeedDoc("noField", new Dictionary<string, Value> { ["other"] = I(1) });
         await SeedDoc("scalar", new Dictionary<string, Value> { ["tags"] = S("notArray") });
 
-        var dropped = await RunPipeline(new MatchStageAst("c", null), new UnwindStageAst(F("tags"), "tag"));
+        var dropped = await RunPipeline(new Match("c", null), new Unwind(F("tags"), "tag"));
         Assert.Single(dropped.Rows);
 
-        var preserved = await RunPipeline(new MatchStageAst("c", null),
-            new UnwindStageAst(F("tags"), "tag", PreserveNullAndEmpty: true));
+        var preserved = await RunPipeline(new Match("c", null),
+            new Unwind(F("tags"), "tag", PreserveNullAndEmpty: true));
         Assert.Equal(3, preserved.Rows.Count);
         Assert.Equal(2, preserved.Rows.Count(r => !r.ContainsKey("tag")));   // missing tag column
     }
@@ -47,9 +47,9 @@ public class PipelineUnwindLookupTests(PostgresFixture fx) : PipelineTestBase(fx
         });
 
         var result = await RunPipeline(
-            new MatchStageAst("c", null),
-            new UnwindStageAst(F("items"), "item"),
-            new FilterStageAst(new FieldFilterAst(F("item.qty"), FilterOperator.Gt, I(2))));
+            new Match("c", null),
+            new Unwind(F("items"), "item"),
+            new Where(new FieldFilter(F("item.qty"), FilterOperator.Gt, I(2))));
 
         Assert.Single(result.Rows);   // filter navigates INTO the unwound tagged element
     }
@@ -71,9 +71,9 @@ public class PipelineUnwindLookupTests(PostgresFixture fx) : PipelineTestBase(fx
         await SeedUsersAndOrders();
 
         var result = await RunPipeline(
-            new MatchStageAst("orders", null),
-            new LookupStageAst("users", F("userId"), F("__name__"), "user"),
-            new SortStageAst([new OrderAst(F("amt"))]));
+            new Match("orders", null),
+            new Lookup("users", F("userId"), F("__name__"), "user"),
+            new Sort([new Ordering(F("amt"))]));
 
         Assert.Equal(3, result.Rows.Count);
 
@@ -96,10 +96,10 @@ public class PipelineUnwindLookupTests(PostgresFixture fx) : PipelineTestBase(fx
         await SeedDoc("cat", new Dictionary<string, Value> { ["id"] = S("a") }, collection: "cats");
 
         var result = await RunPipeline(
-            new MatchStageAst("cats", null),
-            new LookupStageAst("products", F("id"), F("cat"), "top",
-                Where: new FieldFilterAst(F("rank"), FilterOperator.Lt, I(3)),
-                OrderBy: [new OrderAst(F("rank"))],
+            new Match("cats", null),
+            new Lookup("products", F("id"), F("cat"), "top",
+                Where: new FieldFilter(F("rank"), FilterOperator.Lt, I(3)),
+                OrderBy: [new Ordering(F("rank"))],
                 Limit: 1));
 
         var top = Assert.IsType<ArrayValue>(Assert.Single(result.Rows)["top"]);
@@ -113,10 +113,10 @@ public class PipelineUnwindLookupTests(PostgresFixture fx) : PipelineTestBase(fx
         await SeedUsersAndOrders();
 
         var result = await RunPipeline(
-            new MatchStageAst("orders", null),
-            new LookupStageAst("users", F("userId"), F("__name__"), "user"),
-            new UnwindStageAst(F("user"), "u"),
-            new FilterStageAst(new FieldFilterAst(F("u.age"), FilterOperator.Gte, I(40))));
+            new Match("orders", null),
+            new Lookup("users", F("userId"), F("__name__"), "user"),
+            new Unwind(F("user"), "u"),
+            new Where(new FieldFilter(F("u.age"), FilterOperator.Gte, I(40))));
 
         var row = Assert.Single(result.Rows);
         Assert.Equal(I(20), row["amt"]);                          // only o2's user is 40+
@@ -132,9 +132,9 @@ public class PipelineUnwindLookupTests(PostgresFixture fx) : PipelineTestBase(fx
         await SeedDoc("cat", new Dictionary<string, Value> { ["id"] = S("a") }, collection: "cats");
 
         var result = await RunPipeline(
-            new MatchStageAst("cats", null),
-            new LookupStageAst("products", F("id"), F("cat"), "top",
-                OrderBy: [new OrderAst(F("rank"))], Limit: 3));
+            new Match("cats", null),
+            new Lookup("products", F("id"), F("cat"), "top",
+                OrderBy: [new Ordering(F("rank"))], Limit: 3));
 
         var arr = Assert.IsType<ArrayValue>(Assert.Single(result.Rows)["top"]);
         var ranks = arr.Values.Select(v => ((IntegerValue)((MapValue)v).Fields["rank"]).Value);
@@ -148,11 +148,11 @@ public class PipelineUnwindLookupTests(PostgresFixture fx) : PipelineTestBase(fx
     {
         await SeedDoc("e", new Dictionary<string, Value> { ["tags"] = new ArrayValue([]) });
 
-        var dropped = await RunPipeline(new MatchStageAst("c", null), new UnwindStageAst(F("tags"), "tag"));
+        var dropped = await RunPipeline(new Match("c", null), new Unwind(F("tags"), "tag"));
         Assert.Empty(dropped.Rows);
 
-        var preserved = await RunPipeline(new MatchStageAst("c", null),
-            new UnwindStageAst(F("tags"), "tag", PreserveNullAndEmpty: true));
+        var preserved = await RunPipeline(new Match("c", null),
+            new Unwind(F("tags"), "tag", PreserveNullAndEmpty: true));
         Assert.False(Assert.Single(preserved.Rows).ContainsKey("tag"));
     }
 }

@@ -1,4 +1,4 @@
-// src/Winche.Database/Querying/Ast/PipelineAst.cs
+// src/Winche.Database/Querying/Ast/Pipeline.cs
 using System.Text.Json.Serialization;
 using Winche.Database.Documents;
 using Winche.Database.Values;
@@ -7,32 +7,32 @@ namespace Winche.Database.Querying.Ast;
 
 public enum AggFunction { Count, Sum, Avg, Min, Max, Push, AddToSet, First, Last }
 
-public abstract record StageAst;
+public abstract record Stage;
 
-public sealed record MatchStageAst(string Collection, FilterAst? Where) : StageAst;
+public sealed record Match(string Collection, Filter? Where) : Stage;
 
-public sealed record FilterStageAst(FilterAst Where) : StageAst;
+public sealed record Where(Filter Predicate) : Stage;
 
-public sealed record LookupStageAst(
+public sealed record Lookup(
     string Collection,
     FieldPath LocalField,
     FieldPath ForeignField,
     string As,
-    FilterAst? Where = null,
-    IReadOnlyList<OrderAst>? OrderBy = null,
-    int Limit = 100) : StageAst;
+    Filter? Where = null,
+    IReadOnlyList<Ordering>? OrderBy = null,
+    int Limit = 100) : Stage;
 
-public sealed record UnwindStageAst(FieldPath Field, string As, bool PreserveNullAndEmpty = false) : StageAst;
+public sealed record Unwind(FieldPath Field, string As, bool PreserveNullAndEmpty = false) : Stage;
 
-public sealed record GroupKeyAst(string As, FieldPath Field);
-public sealed record AccumulatorAst(string As, AggFunction Fn, FieldPath? Field = null);
+public sealed record GroupKey(string As, FieldPath Field);
+public sealed record Accumulator(string As, AggFunction Fn, FieldPath? Field = null);
 
-public sealed record GroupStageAst(
-    IReadOnlyList<GroupKeyAst> Keys,
-    IReadOnlyList<AccumulatorAst> Accumulators,
-    FilterAst? Having = null) : StageAst
+public sealed record Group(
+    IReadOnlyList<GroupKey> Keys,
+    IReadOnlyList<Accumulator> Accumulators,
+    Filter? Having = null) : Stage
 {
-    public bool Equals(GroupStageAst? other) =>
+    public bool Equals(Group? other) =>
         other is not null
         && Keys.SequenceEqual(other.Keys)
         && Accumulators.SequenceEqual(other.Accumulators)
@@ -48,17 +48,17 @@ public sealed record GroupStageAst(
     }
 }
 
-public abstract record ProjectExprAst;
-public sealed record FieldRefExprAst(FieldPath Field) : ProjectExprAst;
-public sealed record LiteralExprAst(Value Value) : ProjectExprAst;
-public sealed record AggFuncExprAst(AggFunction Fn, FieldPath? Field = null) : ProjectExprAst;
+public abstract record ProjectExpr;
+public sealed record FieldRefExpr(FieldPath Field) : ProjectExpr;
+public sealed record LiteralExpr(Value Value) : ProjectExpr;
+public sealed record AggFuncExpr(AggFunction Fn, FieldPath? Field = null) : ProjectExpr;
 
-public sealed record ProjectionAst(string As, ProjectExprAst Expr);
-public sealed record ProjectStageAst(IReadOnlyList<ProjectionAst> Fields) : StageAst;
+public sealed record Projection(string As, ProjectExpr Expr);
+public sealed record Project(IReadOnlyList<Projection> Fields) : Stage;
 
-public sealed record SortStageAst(IReadOnlyList<OrderAst> Fields) : StageAst;
-public sealed record LimitStageAst(int Count) : StageAst;
-public sealed record SkipStageAst(int Count) : StageAst;
+public sealed record Sort(IReadOnlyList<Ordering> Fields) : Stage;
+public sealed record Limit(int Count) : Stage;
+public sealed record Skip(int Count) : Stage;
 
 [JsonConverter(typeof(Serialization.PipelineAstJsonConverter))]
-public sealed record PipelineAst(IReadOnlyList<StageAst> Stages);
+public sealed record Pipeline(IReadOnlyList<Stage> Stages);

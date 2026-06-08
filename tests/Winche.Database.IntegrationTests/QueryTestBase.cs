@@ -24,16 +24,16 @@ public abstract class QueryTestBase(PostgresFixture fx) : IAsyncLifetime
         await new DocumentOperations(conn, null).SetAsync($"{collection}/{id}", fields);
     }
 
-    protected async Task<QueryResult> Run(QueryAst query)
+    protected async Task<QueryResult> Run(Query query)
     {
         await using var conn = await Fx.DataSource.OpenConnectionAsync();
         return await new QueryExecutor(conn, null).ExecuteAsync(query);
     }
 
-    protected async Task<List<string>> Ids(QueryAst query) =>
+    protected async Task<List<string>> Ids(Query query) =>
         [.. (await Run(query)).Documents.Select(d => d.Id)];
 
     /// <summary>Shorthand: query collection "c" filtered on field "f".</summary>
     protected Task<List<string>> Filter(FilterOperator op, Value operand) =>
-        Ids(new QueryAst("c", Where: new FieldFilterAst(F("f"), op, operand)));
+        Ids(new Query("c", Where: new FieldFilter(F("f"), op, operand)));
 }

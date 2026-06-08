@@ -53,7 +53,7 @@ public static class AccessRuleSmokeTest
         claimsAccessor.SetClaims(new Dictionary<string, object?> { ["uid"] = "alice" });
         Console.WriteLine("Caller: uid = \"alice\"");
 
-        var query = new QueryAst("smoke-users", Limit: 10);
+        var query = new Query("smoke-users", Limit: 10);
 
         var protectedResult   = await db.QueryAsync(query);
         var unprotectedResult = await core.QueryAsync(query);
@@ -93,7 +93,7 @@ public static class AccessRuleSmokeTest
         claimsAccessor.SetClaims(new Dictionary<string, object?> { ["uid"] = "bob" });
         Console.WriteLine("Caller: uid = \"bob\"");
 
-        var query = new QueryAst("smoke-users", Limit: 10);
+        var query = new Query("smoke-users", Limit: 10);
         var result = await db.QueryAsync(query);
 
         Console.WriteLine($"  QueryAsync result: {result.Documents.Count} doc(s)");
@@ -129,7 +129,7 @@ public static class AccessRuleSmokeTest
         Console.WriteLine("Caller: uid = \"alice\" (OwnerReadRule would restrict per-document reads)");
         Console.WriteLine("  'smoke-users' has an Aggregate grant (SmokeUsersAggregateRule) -> allowed");
 
-        var pipeline = new PipelineAst([new MatchStageAst("smoke-users", null)]);
+        var pipeline = new Pipeline([new Match("smoke-users", null)]);
 
         var result = await db.AggregateAsync(pipeline);
 
@@ -138,7 +138,7 @@ public static class AccessRuleSmokeTest
         Assert("all 3 rows returned (aggregation is collection-level, not per-row filtered)", result.Rows.Count == 3);
 
         // Contrast: QueryAsync on the same data returns only alice's doc (per-document filtering).
-        var query = new QueryAst("smoke-users", Limit: 10);
+        var query = new Query("smoke-users", Limit: 10);
         var queryResult = await db.QueryAsync(query);
 
         Console.WriteLine($"  QueryAsync on same data:          {queryResult.Documents.Count} doc(s)");
@@ -154,7 +154,7 @@ public static class AccessRuleSmokeTest
         var deniedThrown = false;
         try
         {
-            await db.AggregateAsync(new PipelineAst([new MatchStageAst("smoke-secrets", null)]));
+            await db.AggregateAsync(new Pipeline([new Match("smoke-secrets", null)]));
         }
         catch (NoRulesMatchedException)
         {

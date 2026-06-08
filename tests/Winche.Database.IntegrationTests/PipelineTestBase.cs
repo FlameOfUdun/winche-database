@@ -6,10 +6,10 @@ namespace Winche.Database.IntegrationTests;
 
 public abstract class PipelineTestBase(PostgresFixture fx) : QueryTestBase(fx)
 {
-    protected async Task<PipelineResult> RunPipeline(params StageAst[] stages)
+    protected async Task<PipelineResult> RunPipeline(params Stage[] stages)
     {
         await using var conn = await Fx.DataSource.OpenConnectionAsync();
-        return await new PipelineExecutor(conn, null).ExecuteAsync(new PipelineAst(stages));
+        return await new PipelineExecutor(conn, null).ExecuteAsync(new Pipeline(stages));
     }
 
     protected static IntegerValue I(long n) => new(n);

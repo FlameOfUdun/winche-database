@@ -8,22 +8,22 @@ namespace Winche.Database.Tests.Querying;
 
 public class PipelineParserTests
 {
-    private static PipelineAst Parse(string json) => PipelineParser.Parse((JsonObject)JsonNode.Parse(json)!);
+    private static Pipeline Parse(string json) => PipelineParser.Parse((JsonObject)JsonNode.Parse(json)!);
 
     [Fact]
     public void Match_Parses()
     {
         var p = Parse("""{"pipeline":[{"match":{"collection":"orders","where":{"field":"s","op":"eq","value":{"booleanValue":true}}}}]}""");
-        var m = Assert.IsType<MatchStageAst>(Assert.Single(p.Stages));
+        var m = Assert.IsType<Match>(Assert.Single(p.Stages));
         Assert.Equal("orders", m.Collection);
-        Assert.IsType<FieldFilterAst>(m.Where);
+        Assert.IsType<FieldFilter>(m.Where);
     }
 
     [Fact]
     public void Match_WhereOptional()
     {
         var p = Parse("""{"pipeline":[{"match":{"collection":"orders"}}]}""");
-        Assert.Null(Assert.IsType<MatchStageAst>(p.Stages[0]).Where);
+        Assert.Null(Assert.IsType<Match>(p.Stages[0]).Where);
     }
 
     [Fact]
@@ -33,7 +33,7 @@ public class PipelineParserTests
             {"pipeline":[{"match":{"collection":"o"}},
             {"lookup":{"collection":"users","localField":"userId","foreignField":"__name__","as":"user"}}]}
             """);
-        var l = Assert.IsType<LookupStageAst>(p.Stages[1]);
+        var l = Assert.IsType<Lookup>(p.Stages[1]);
         Assert.Equal("users", l.Collection);
         Assert.Equal(FieldPath.Parse("userId"), l.LocalField);
         Assert.Equal(FieldPath.Parse("__name__"), l.ForeignField);
@@ -62,12 +62,12 @@ public class PipelineParserTests
             """);
         Assert.Equal(8, p.Stages.Count);
 
-        var u = Assert.IsType<UnwindStageAst>(p.Stages[1]);
+        var u = Assert.IsType<Unwind>(p.Stages[1]);
         Assert.True(u.PreserveNullAndEmpty);
 
-        Assert.IsType<FilterStageAst>(p.Stages[2]);
+        Assert.IsType<Where>(p.Stages[2]);
 
-        var g = Assert.IsType<GroupStageAst>(p.Stages[3]);
+        var g = Assert.IsType<Group>(p.Stages[3]);
         Assert.Single(g.Keys);
         Assert.Equal(2, g.Accumulators.Count);
         Assert.Equal(AggFunction.Count, g.Accumulators[0].Fn);
@@ -75,16 +75,16 @@ public class PipelineParserTests
         Assert.Equal(AggFunction.Sum, g.Accumulators[1].Fn);
         Assert.NotNull(g.Having);
 
-        var pr = Assert.IsType<ProjectStageAst>(p.Stages[4]);
-        Assert.IsType<FieldRefExprAst>(pr.Fields[0].Expr);
-        Assert.Equal(new StringValue("x"), Assert.IsType<LiteralExprAst>(pr.Fields[1].Expr).Value);
-        Assert.Equal(AggFunction.Avg, Assert.IsType<AggFuncExprAst>(pr.Fields[2].Expr).Fn);
+        var pr = Assert.IsType<Project>(p.Stages[4]);
+        Assert.IsType<FieldRefExpr>(pr.Fields[0].Expr);
+        Assert.Equal(new StringValue("x"), Assert.IsType<LiteralExpr>(pr.Fields[1].Expr).Value);
+        Assert.Equal(AggFunction.Avg, Assert.IsType<AggFuncExpr>(pr.Fields[2].Expr).Fn);
 
-        var s = Assert.IsType<SortStageAst>(p.Stages[5]);
+        var s = Assert.IsType<Sort>(p.Stages[5]);
         Assert.Equal(SortDirection.Desc, s.Fields[0].Direction);
 
-        Assert.Equal(10, Assert.IsType<LimitStageAst>(p.Stages[6]).Count);
-        Assert.Equal(5, Assert.IsType<SkipStageAst>(p.Stages[7]).Count);
+        Assert.Equal(10, Assert.IsType<Limit>(p.Stages[6]).Count);
+        Assert.Equal(5, Assert.IsType<Skip>(p.Stages[7]).Count);
     }
 
     [Theory]

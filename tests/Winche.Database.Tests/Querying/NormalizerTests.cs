@@ -13,7 +13,7 @@ public class NormalizerTests
     [Fact]
     public void Minimal_ProducesScanSortPage_WithNameTiebreakAndDefaults()
     {
-        var plan = Normalizer.Normalize(new QueryAst("users"));
+        var plan = Normalizer.Normalize(new Query("users"));
 
         var scan = Assert.IsType<CollectionScan>(plan.Nodes[0]);
         Assert.Equal("users", scan.Collection);
@@ -31,8 +31,8 @@ public class NormalizerTests
     [Fact]
     public void NameTiebreak_TakesDirectionOfLastSortKey()
     {
-        var plan = Normalizer.Normalize(new QueryAst("c",
-            OrderBy: [new OrderAst(F("a")), new OrderAst(F("b"), SortDirection.Desc)]));
+        var plan = Normalizer.Normalize(new Query("c",
+            OrderBy: [new Ordering(F("a")), new Ordering(F("b"), SortDirection.Desc)]));
 
         var sort = plan.Nodes.OfType<SortNode>().Single();
         Assert.Equal(3, sort.Keys.Count);
@@ -43,7 +43,7 @@ public class NormalizerTests
     [Fact]
     public void ExplicitNameSort_NoDuplicateTiebreak()
     {
-        var plan = Normalizer.Normalize(new QueryAst("c", OrderBy: [new OrderAst(F("__name__"), SortDirection.Desc)]));
+        var plan = Normalizer.Normalize(new Query("c", OrderBy: [new Ordering(F("__name__"), SortDirection.Desc)]));
         var sort = plan.Nodes.OfType<SortNode>().Single();
         Assert.Single(sort.Keys);
     }
@@ -51,10 +51,10 @@ public class NormalizerTests
     [Fact]
     public void OrderByField_InjectsImplicitExistsFilter()
     {
-        var plan = Normalizer.Normalize(new QueryAst("c", OrderBy: [new OrderAst(F("age"))]));
+        var plan = Normalizer.Normalize(new Query("c", OrderBy: [new Ordering(F("age"))]));
 
         var filter = plan.Nodes.OfType<FilterNode>().Single();
-        var unary = Assert.IsType<UnaryFilterAst>(filter.Predicate);
+        var unary = Assert.IsType<UnaryFilter>(filter.Predicate);
         Assert.Equal(F("age"), unary.Field);
         Assert.Equal(UnaryOp.Exists, unary.Op);
     }
@@ -62,57 +62,57 @@ public class NormalizerTests
     [Fact]
     public void OrderByWithWhere_AndsExistsBeforeUserFilter()
     {
-        var userFilter = new FieldFilterAst(F("x"), FilterOperator.Eq, new BooleanValue(true));
-        var plan = Normalizer.Normalize(new QueryAst("c", Where: userFilter, OrderBy: [new OrderAst(F("age"))]));
+        var userFilter = new FieldFilter(F("x"), FilterOperator.Eq, new BooleanValue(true));
+        var plan = Normalizer.Normalize(new Query("c", Where: userFilter, OrderBy: [new Ordering(F("age"))]));
 
-        var and = Assert.IsType<CompositeFilterAst>(plan.Nodes.OfType<FilterNode>().Single().Predicate);
+        var and = Assert.IsType<CompositeFilter>(plan.Nodes.OfType<FilterNode>().Single().Predicate);
         Assert.Equal(CompositeOp.And, and.Op);
-        Assert.Equal(UnaryOp.Exists, Assert.IsType<UnaryFilterAst>(and.Filters[0]).Op);
+        Assert.Equal(UnaryOp.Exists, Assert.IsType<UnaryFilter>(and.Filters[0]).Op);
         Assert.Equal(userFilter, and.Filters[1]);
     }
 
     [Fact]
     public void EqNull_RewritesToIsNull()
     {
-        var plan = Normalizer.Normalize(new QueryAst("c",
-            Where: new FieldFilterAst(F("x"), FilterOperator.Eq, new NullValue())));
-        var unary = Assert.IsType<UnaryFilterAst>(plan.Nodes.OfType<FilterNode>().Single().Predicate);
+        var plan = Normalizer.Normalize(new Query("c",
+            Where: new FieldFilter(F("x"), FilterOperator.Eq, new NullValue())));
+        var unary = Assert.IsType<UnaryFilter>(plan.Nodes.OfType<FilterNode>().Single().Predicate);
         Assert.Equal(UnaryOp.IsNull, unary.Op);
     }
 
     [Fact]
     public void NeNull_RewritesToExistsAndNotIsNull()
     {
-        var plan = Normalizer.Normalize(new QueryAst("c",
-            Where: new FieldFilterAst(F("x"), FilterOperator.Ne, new NullValue())));
-        var and = Assert.IsType<CompositeFilterAst>(plan.Nodes.OfType<FilterNode>().Single().Predicate);
+        var plan = Normalizer.Normalize(new Query("c",
+            Where: new FieldFilter(F("x"), FilterOperator.Ne, new NullValue())));
+        var and = Assert.IsType<CompositeFilter>(plan.Nodes.OfType<FilterNode>().Single().Predicate);
         Assert.Equal(3, and.Filters.Count);
-        Assert.Equal(UnaryOp.Exists, Assert.IsType<UnaryFilterAst>(and.Filters[0]).Op);
-        var notNull = Assert.IsType<CompositeFilterAst>(and.Filters[1]);
+        Assert.Equal(UnaryOp.Exists, Assert.IsType<UnaryFilter>(and.Filters[0]).Op);
+        var notNull = Assert.IsType<CompositeFilter>(and.Filters[1]);
         Assert.Equal(CompositeOp.Not, notNull.Op);
-        Assert.Equal(UnaryOp.IsNull, Assert.IsType<UnaryFilterAst>(notNull.Filters[0]).Op);
-        var notNan = Assert.IsType<CompositeFilterAst>(and.Filters[2]);
+        Assert.Equal(UnaryOp.IsNull, Assert.IsType<UnaryFilter>(notNull.Filters[0]).Op);
+        var notNan = Assert.IsType<CompositeFilter>(and.Filters[2]);
         Assert.Equal(CompositeOp.Not, notNan.Op);
-        Assert.Equal(UnaryOp.IsNan, Assert.IsType<UnaryFilterAst>(notNan.Filters[0]).Op);
+        Assert.Equal(UnaryOp.IsNan, Assert.IsType<UnaryFilter>(notNan.Filters[0]).Op);
     }
 
     [Fact]
     public void Cursors_MapToBoundariesWithInclusivity()
     {
-        var plan = Normalizer.Normalize(new QueryAst("c",
-            OrderBy: [new OrderAst(F("age"))],
-            Start: new CursorAst([new IntegerValue(18)], Before: true),    // StartAt → inclusive lower
-            End: new CursorAst([new IntegerValue(65)], Before: true)));    // EndBefore → exclusive upper
+        var plan = Normalizer.Normalize(new Query("c",
+            OrderBy: [new Ordering(F("age"))],
+            Start: new Cursor([new IntegerValue(18)], Before: true),    // StartAt → inclusive lower
+            End: new Cursor([new IntegerValue(65)], Before: true)));    // EndBefore → exclusive upper
 
         var range = plan.Nodes.OfType<CursorRangeNode>().Single();
         Assert.True(range.Lower!.Inclusive);
         Assert.Equal([new IntegerValue(18)], range.Lower.Values);
         Assert.False(range.Upper!.Inclusive);
 
-        var plan2 = Normalizer.Normalize(new QueryAst("c",
-            OrderBy: [new OrderAst(F("age"))],
-            Start: new CursorAst([new IntegerValue(18)], Before: false),   // StartAfter → exclusive
-            End: new CursorAst([new IntegerValue(65)], Before: false)));   // EndAt → inclusive
+        var plan2 = Normalizer.Normalize(new Query("c",
+            OrderBy: [new Ordering(F("age"))],
+            Start: new Cursor([new IntegerValue(18)], Before: false),   // StartAfter → exclusive
+            End: new Cursor([new IntegerValue(65)], Before: false)));   // EndAt → inclusive
         var range2 = plan2.Nodes.OfType<CursorRangeNode>().Single();
         Assert.False(range2.Lower!.Inclusive);
         Assert.True(range2.Upper!.Inclusive);
@@ -121,10 +121,10 @@ public class NormalizerTests
     [Fact]
     public void NodeOrder_IsScanFilterSortCursorPage()
     {
-        var plan = Normalizer.Normalize(new QueryAst("c",
-            Where: new UnaryFilterAst(F("x"), UnaryOp.Exists),
-            OrderBy: [new OrderAst(F("a"))],
-            Start: new CursorAst([new IntegerValue(1)], Before: true)));
+        var plan = Normalizer.Normalize(new Query("c",
+            Where: new UnaryFilter(F("x"), UnaryOp.Exists),
+            OrderBy: [new Ordering(F("a"))],
+            Start: new Cursor([new IntegerValue(1)], Before: true)));
 
         Assert.IsType<CollectionScan>(plan.Nodes[0]);
         Assert.IsType<FilterNode>(plan.Nodes[1]);
@@ -135,36 +135,36 @@ public class NormalizerTests
 
     // ── Validation ───────────────────────────────────────────────────────────
 
-    private static PlanValidationException Throws(QueryAst q) =>
+    private static PlanValidationException Throws(Query q) =>
         Assert.Throws<PlanValidationException>(() => Normalizer.Normalize(q));
 
     [Fact]
     public void EmptyCollection_Throws() =>
-        Assert.Equal("EMPTY_COLLECTION", Throws(new QueryAst("")).Code);
+        Assert.Equal("EMPTY_COLLECTION", Throws(new Query("")).Code);
 
     [Fact]
     public void DocumentPathAsCollection_Throws() =>
-        Assert.Equal("BAD_COLLECTION_PATH", Throws(new QueryAst("users/u1")).Code);
+        Assert.Equal("BAD_COLLECTION_PATH", Throws(new Query("users/u1")).Code);
 
     [Theory]
     [InlineData(0)]
     [InlineData(-5)]
     public void NonPositiveLimit_Throws(int limit) =>
-        Assert.Equal("BAD_LIMIT", Throws(new QueryAst("c", Limit: limit)).Code);
+        Assert.Equal("BAD_LIMIT", Throws(new Query("c", Limit: limit)).Code);
 
     [Fact]
     public void CursorWiderThanSortKeys_Throws()
     {
         // 1 orderBy + __name__ tiebreak = 2 sort keys; 3 cursor values is too many
-        var q = new QueryAst("c", OrderBy: [new OrderAst(F("a"))],
-            Start: new CursorAst([new IntegerValue(1), new IntegerValue(2), new IntegerValue(3)], Before: true));
+        var q = new Query("c", OrderBy: [new Ordering(F("a"))],
+            Start: new Cursor([new IntegerValue(1), new IntegerValue(2), new IntegerValue(3)], Before: true));
         Assert.Equal("CURSOR_ARITY", Throws(q).Code);
     }
 
     [Fact]
     public void EmptyCursor_Throws()
     {
-        var q = new QueryAst("c", OrderBy: [new OrderAst(F("a"))], Start: new CursorAst([], Before: true));
+        var q = new Query("c", OrderBy: [new Ordering(F("a"))], Start: new Cursor([], Before: true));
         Assert.Equal("CURSOR_ARITY", Throws(q).Code);
     }
 
@@ -175,14 +175,14 @@ public class NormalizerTests
     [InlineData(FilterOperator.ArrayContainsAll)]
     public void ArrayOperandOps_RejectNonArrayOperand(FilterOperator op) =>
         Assert.Equal("OPERAND_TYPE",
-            Throws(new QueryAst("c", Where: new FieldFilterAst(F("f"), op, new IntegerValue(1)))).Code);
+            Throws(new Query("c", Where: new FieldFilter(F("f"), op, new IntegerValue(1)))).Code);
 
     [Theory]
     [InlineData(FilterOperator.In)]
     [InlineData(FilterOperator.NotIn)]
     public void InNotIn_RejectEmptyArray(FilterOperator op) =>
         Assert.Equal("OPERAND_TYPE",
-            Throws(new QueryAst("c", Where: new FieldFilterAst(F("f"), op, new ArrayValue([])))).Code);
+            Throws(new Query("c", Where: new FieldFilter(F("f"), op, new ArrayValue([])))).Code);
 
     [Theory]
     [InlineData(FilterOperator.Contains)]
@@ -191,18 +191,18 @@ public class NormalizerTests
     [InlineData(FilterOperator.Regex)]
     public void StringOps_RejectNonStringOperand(FilterOperator op) =>
         Assert.Equal("OPERAND_TYPE",
-            Throws(new QueryAst("c", Where: new FieldFilterAst(F("f"), op, new IntegerValue(1)))).Code);
+            Throws(new Query("c", Where: new FieldFilter(F("f"), op, new IntegerValue(1)))).Code);
 
     [Fact]
     public void EmptyComposite_Throws() =>
         Assert.Equal("EMPTY_COMPOSITE",
-            Throws(new QueryAst("c", Where: new CompositeFilterAst(CompositeOp.And, []))).Code);
+            Throws(new Query("c", Where: new CompositeFilter(CompositeOp.And, []))).Code);
 
     [Fact]
     public void NotWithTwoChildren_Throws() =>
         Assert.Equal("NOT_ARITY",
-            Throws(new QueryAst("c", Where: new CompositeFilterAst(CompositeOp.Not,
-                [new UnaryFilterAst(F("a"), UnaryOp.Exists), new UnaryFilterAst(F("b"), UnaryOp.Exists)]))).Code);
+            Throws(new Query("c", Where: new CompositeFilter(CompositeOp.Not,
+                [new UnaryFilter(F("a"), UnaryOp.Exists), new UnaryFilter(F("b"), UnaryOp.Exists)]))).Code);
 
     [Theory]
     [InlineData(FilterOperator.In)]
@@ -210,18 +210,18 @@ public class NormalizerTests
     [InlineData(FilterOperator.Contains)]
     public void Compare_RejectsNonComparisonOps(FilterOperator op) =>
         Assert.Equal("COMPARE_OP",
-            Throws(new QueryAst("c", Where: new FieldCompareAst(F("a"), op, F("b")))).Code);
+            Throws(new Query("c", Where: new FieldCompare(F("a"), op, F("b")))).Code);
 
     [Fact]
     public void CursorValueOnNameKey_MustBeStringOrReference()
     {
         // default sort = __name__ only; integer cursor value is invalid
-        var q = new QueryAst("c", Start: new CursorAst([new IntegerValue(5)], Before: true));
+        var q = new Query("c", Start: new Cursor([new IntegerValue(5)], Before: true));
         Assert.Equal("CURSOR_TYPE", Throws(q).Code);
 
         // string and reference are both fine
-        Normalizer.Normalize(new QueryAst("c", Start: new CursorAst([new StringValue("c/a")], Before: true)));
-        Normalizer.Normalize(new QueryAst("c", Start: new CursorAst([new ReferenceValue("c/a")], Before: true)));
+        Normalizer.Normalize(new Query("c", Start: new Cursor([new StringValue("c/a")], Before: true)));
+        Normalizer.Normalize(new Query("c", Start: new Cursor([new ReferenceValue("c/a")], Before: true)));
     }
 
     // ── I2: Typed error for unsupported operators on __name__ ────────────────
@@ -229,12 +229,12 @@ public class NormalizerTests
     [Fact]
     public void NameField_RejectsNonComparisonOperators()
     {
-        Assert.Equal("NAME_OPERATOR", Throws(new QueryAst("c",
-            Where: new FieldFilterAst(F("__name__"), FilterOperator.Contains, new StringValue("x")))).Code);
-        Assert.Equal("NAME_OPERATOR", Throws(new QueryAst("c",
-            Where: new UnaryFilterAst(F("__name__"), UnaryOp.Exists))).Code);
+        Assert.Equal("NAME_OPERATOR", Throws(new Query("c",
+            Where: new FieldFilter(F("__name__"), FilterOperator.Contains, new StringValue("x")))).Code);
+        Assert.Equal("NAME_OPERATOR", Throws(new Query("c",
+            Where: new UnaryFilter(F("__name__"), UnaryOp.Exists))).Code);
         // comparisons stay legal
-        Normalizer.Normalize(new QueryAst("c",
-            Where: new FieldFilterAst(F("__name__"), FilterOperator.Gt, new StringValue("c/a"))));
+        Normalizer.Normalize(new Query("c",
+            Where: new FieldFilter(F("__name__"), FilterOperator.Gt, new StringValue("c/a"))));
     }
 }

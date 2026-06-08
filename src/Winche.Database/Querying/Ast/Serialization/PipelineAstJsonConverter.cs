@@ -4,9 +4,9 @@ using System.Text.Json.Serialization;
 
 namespace Winche.Database.Querying.Ast.Serialization;
 
-public sealed class PipelineAstJsonConverter : JsonConverter<PipelineAst>
+public sealed class PipelineAstJsonConverter : JsonConverter<Pipeline>
 {
-    public override PipelineAst Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    public override Pipeline Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         if (JsonNode.Parse(ref reader) is not JsonObject obj)
             throw new JsonException("Pipeline must be a JSON object");
@@ -14,6 +14,6 @@ public sealed class PipelineAstJsonConverter : JsonConverter<PipelineAst>
         catch (QueryParseException ex) { throw new JsonException(ex.Message, ex); }
     }
 
-    public override void Write(Utf8JsonWriter writer, PipelineAst value, JsonSerializerOptions options) =>
+    public override void Write(Utf8JsonWriter writer, Pipeline value, JsonSerializerOptions options) =>
         PipelineAstWriter.Write(value).WriteTo(writer);
 }

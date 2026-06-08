@@ -13,18 +13,18 @@ namespace Winche.Database.Querying.Sql;
 /// </summary>
 public static class IndexPredicateSql
 {
-    public static string Emit(FilterAst filter) => filter switch
+    public static string Emit(Filter filter) => filter switch
     {
-        CompositeFilterAst { Op: CompositeOp.And } and =>
+        CompositeFilter { Op: CompositeOp.And } and =>
             $"({string.Join(" AND ", and.Filters.Select(Emit))})",
-        CompositeFilterAst c =>
+        CompositeFilter c =>
             throw new ArgumentException($"Index predicates support 'and' only, got {c.Op}."),
-        UnaryFilterAst u => EmitUnary(u),
-        FieldFilterAst f => EmitField(f),
+        UnaryFilter u => EmitUnary(u),
+        FieldFilter f => EmitField(f),
         _ => throw new ArgumentException($"Index predicates do not support {filter.GetType().Name}."),
     };
 
-    private static string EmitUnary(UnaryFilterAst u)
+    private static string EmitUnary(UnaryFilter u)
     {
         var acc = Accessor(u.Field);
         return u.Op switch
@@ -35,7 +35,7 @@ public static class IndexPredicateSql
         };
     }
 
-    private static string EmitField(FieldFilterAst f)
+    private static string EmitField(FieldFilter f)
     {
         if (f.Op is not (FilterOperator.Eq or FilterOperator.Gt or FilterOperator.Gte
             or FilterOperator.Lt or FilterOperator.Lte))

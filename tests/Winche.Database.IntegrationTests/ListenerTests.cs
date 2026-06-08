@@ -52,7 +52,7 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         await rig.Db.WriteAsync([new SetWrite { Path = "c/a", Fields = Map(("n", new IntegerValue(1))) }]);
         await Task.Delay(400);                                            // pump cursor past seed
 
-        var query = new QueryAst("c", OrderBy: [new OrderAst(F("n"))]);
+        var query = new Query("c", OrderBy: [new Ordering(F("n"))]);
         await using var listener = rig.Db.Listen(query);
         await using var e = listener.Snapshots().GetAsyncEnumerator();
 
@@ -87,7 +87,7 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task IrrelevantChange_NoEmission_FilteredQueriesShortCircuit()
     {
         await using var rig = Start();
-        var query = new QueryAst("c", Where: new FieldFilterAst(F("hot"), FilterOperator.Eq, new BooleanValue(true)));
+        var query = new Query("c", Where: new FieldFilter(F("hot"), FilterOperator.Eq, new BooleanValue(true)));
         await using var listener = rig.Db.Listen(query);
         await using var e = listener.Snapshots().GetAsyncEnumerator();
         await NextAsync(e);                                               // empty initial
@@ -107,7 +107,7 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task SharedGroup_BothListenersGetSnapshots()
     {
         await using var rig = Start();
-        var query = new QueryAst("c");
+        var query = new Query("c");
         await using var l1 = rig.Db.Listen(query);
         await using var l2 = rig.Db.Listen(query);
         await using var e1 = l1.Snapshots().GetAsyncEnumerator();
@@ -125,7 +125,7 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Dispose_Unsubscribes_GroupDiesWithLastListener()
     {
         await using var rig = Start();
-        var listener = rig.Db.Listen(new QueryAst("c"));
+        var listener = rig.Db.Listen(new Query("c"));
         await using (var e = listener.Snapshots().GetAsyncEnumerator())
             await NextAsync(e);
         Assert.Equal(1, rig.Registry.GroupCount);
@@ -141,12 +141,12 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
 
         // first listener captures a resume token
         long token;
-        await using (var l = rig.Db.Listen(new QueryAst("c")))
+        await using (var l = rig.Db.Listen(new Query("c")))
         await using (var e = l.Snapshots().GetAsyncEnumerator())
             token = (await NextAsync(e)).ResumeToken;
 
         // resume with no changes since → silence until a real change
-        await using var resumed = rig.Db.Listen(new QueryAst("c"), new ListenOptions(ResumeFrom: token));
+        await using var resumed = rig.Db.Listen(new Query("c"), new ListenOptions(ResumeFrom: token));
         await using var er = resumed.Snapshots().GetAsyncEnumerator();
         var pending = er.MoveNextAsync().AsTask();
         Assert.NotSame(pending, await Task.WhenAny(pending, Task.Delay(1500)));
@@ -163,7 +163,7 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         var rules = new DenyPrefixEvaluator("c/secret");
         var guarded = new GuardedDocumentDatabase(rig.Db, rules);
 
-        await using var listener = guarded.Listen(new QueryAst("c"));
+        await using var listener = guarded.Listen(new Query("c"));
         await using var e = listener.Snapshots().GetAsyncEnumerator();
         await NextAsync(e);                                                // empty initial
 
@@ -189,7 +189,7 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
 
         // capture a resume token; dispose the listener (completing the channel) BEFORE the enumerator
         long token;
-        var l0 = rig.Db.Listen(new QueryAst("c"));
+        var l0 = rig.Db.Listen(new Query("c"));
         var e0 = l0.Snapshots().GetAsyncEnumerator();
         token = (await NextAsync(e0)).ResumeToken;
         await l0.DisposeAsync();   // completes the channel writer
@@ -200,7 +200,7 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         await Task.Delay(600);                                                // let pump advance cursor
 
         // resume → initial full snapshot must arrive (relevant change happened)
-        var resumed = rig.Db.Listen(new QueryAst("c"), new ListenOptions(ResumeFrom: token));
+        var resumed = rig.Db.Listen(new Query("c"), new ListenOptions(ResumeFrom: token));
         var er = resumed.Snapshots().GetAsyncEnumerator();
         var snap = await NextAsync(er);
         Assert.Equal(2, snap.Documents.Count);                                // a + b
@@ -215,7 +215,7 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         await rig.Db.WriteAsync([new SetWrite { Path = "c/a", Fields = Map() }]);
 
         // capture a resume token; dispose the listener (completing the channel) BEFORE the enumerator
-        var l0 = rig.Db.Listen(new QueryAst("c"));
+        var l0 = rig.Db.Listen(new Query("c"));
         var e0 = l0.Snapshots().GetAsyncEnumerator();
         var token = (await NextAsync(e0)).ResumeToken;
         await l0.DisposeAsync();
@@ -228,7 +228,7 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         await reader.PruneBeforeAsync(DateTimeOffset.UtcNow.AddMinutes(1));
 
         // resume with too-old token → must NOT be suppressed (initial snapshot arrives)
-        var resumed = rig.Db.Listen(new QueryAst("c"), new ListenOptions(ResumeFrom: token));
+        var resumed = rig.Db.Listen(new Query("c"), new ListenOptions(ResumeFrom: token));
         var er = resumed.Snapshots().GetAsyncEnumerator();
         var snap = await NextAsync(er, timeoutMs: 5000);
         Assert.True(snap.Documents.Count >= 1);                               // at least 'a' or 'b' present (not suppressed)
@@ -242,7 +242,7 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Coalescing_TwoWritesBeforeRead_OnlyLatestStateDelivered()
     {
         await using var rig = Start();
-        var query = new QueryAst("c");
+        var query = new Query("c");
         var listener = rig.Db.Listen(query);
         await using var e = listener.Snapshots().GetAsyncEnumerator();
         await NextAsync(e);                                                   // consume initial (empty)
@@ -274,7 +274,7 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         var rules = new DenyPrefixEvaluator("c/secret");
         var guarded = new GuardedDocumentDatabase(rig.Db, rules);
 
-        await using var listener = guarded.Listen(new QueryAst("c"));
+        await using var listener = guarded.Listen(new Query("c"));
         await using var e = listener.Snapshots().GetAsyncEnumerator();
         await NextAsync(e);                                                   // empty initial
 

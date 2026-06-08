@@ -3,15 +3,15 @@ using Winche.Database.Values;
 
 namespace Winche.Database.Querying.Ast.Serialization;
 
-/// <summary>Canonical PipelineAst → wire JSON.</summary>
+/// <summary>Canonical Pipeline → wire JSON.</summary>
 public static class PipelineAstWriter
 {
-    public static JsonObject Write(PipelineAst p) =>
+    public static JsonObject Write(Pipeline p) =>
         new() { ["pipeline"] = new JsonArray([.. p.Stages.Select(s => (JsonNode)WriteStage(s))]) };
 
-    private static JsonObject WriteStage(StageAst s) => s switch
+    private static JsonObject WriteStage(Stage s) => s switch
     {
-        MatchStageAst m => new JsonObject
+        Match m => new JsonObject
         {
             ["match"] = new JsonObject
             {
@@ -19,8 +19,8 @@ public static class PipelineAstWriter
                 ["where"] = m.Where is null ? null : QueryAstWriter.WriteFilter(m.Where),
             },
         },
-        FilterStageAst f => new JsonObject { ["filter"] = QueryAstWriter.WriteFilter(f.Where) },
-        LookupStageAst l => new JsonObject
+        Where f => new JsonObject { ["filter"] = QueryAstWriter.WriteFilter(f.Predicate) },
+        Lookup l => new JsonObject
         {
             ["lookup"] = new JsonObject
             {
@@ -37,14 +37,14 @@ public static class PipelineAstWriter
                 ["limit"] = l.Limit,
             },
         },
-        UnwindStageAst u => new JsonObject
+        Unwind u => new JsonObject
         {
             ["unwind"] = new JsonObject
             {
                 ["field"] = u.Field.ToString(), ["as"] = u.As, ["preserveNullAndEmpty"] = u.PreserveNullAndEmpty,
             },
         },
-        GroupStageAst g => new JsonObject
+        Group g => new JsonObject
         {
             ["group"] = new JsonObject
             {
@@ -54,14 +54,14 @@ public static class PipelineAstWriter
                 ["having"] = g.Having is null ? null : QueryAstWriter.WriteFilter(g.Having),
             },
         },
-        ProjectStageAst pr => new JsonObject
+        Project pr => new JsonObject
         {
             ["project"] = new JsonObject
             {
                 ["fields"] = new JsonArray([.. pr.Fields.Select(f => (JsonNode)WriteProjection(f))]),
             },
         },
-        SortStageAst so => new JsonObject
+        Sort so => new JsonObject
         {
             ["sort"] = new JsonArray([.. so.Fields.Select(o => (JsonNode)new JsonObject
             {
@@ -69,23 +69,23 @@ public static class PipelineAstWriter
                 ["direction"] = o.Direction == SortDirection.Desc ? "desc" : "asc",
             })]),
         },
-        LimitStageAst li => new JsonObject { ["limit"] = li.Count },
-        SkipStageAst sk => new JsonObject { ["skip"] = sk.Count },
+        Limit li => new JsonObject { ["limit"] = li.Count },
+        Skip sk => new JsonObject { ["skip"] = sk.Count },
         _ => throw new NotSupportedException($"Unknown stage: {s.GetType().Name}"),
     };
 
-    private static JsonObject WriteAcc(AccumulatorAst a)
+    private static JsonObject WriteAcc(Accumulator a)
     {
         var obj = new JsonObject { ["as"] = a.As, ["fn"] = FnName(a.Fn) };
         if (a.Field is not null) obj["field"] = a.Field.ToString();
         return obj;
     }
 
-    private static JsonObject WriteProjection(ProjectionAst p) => p.Expr switch
+    private static JsonObject WriteProjection(Projection p) => p.Expr switch
     {
-        FieldRefExprAst f => new JsonObject { ["as"] = p.As, ["field"] = f.Field.ToString() },
-        LiteralExprAst l => new JsonObject { ["as"] = p.As, ["value"] = ValueSerializer.Write(l.Value) },
-        AggFuncExprAst a => a.Field is null
+        FieldRefExpr f => new JsonObject { ["as"] = p.As, ["field"] = f.Field.ToString() },
+        LiteralExpr l => new JsonObject { ["as"] = p.As, ["value"] = ValueSerializer.Write(l.Value) },
+        AggFuncExpr a => a.Field is null
             ? new JsonObject { ["as"] = p.As, ["fn"] = FnName(a.Fn) }
             : new JsonObject { ["as"] = p.As, ["fn"] = FnName(a.Fn), ["field"] = a.Field.ToString() },
         _ => throw new NotSupportedException($"Unknown projection: {p.Expr.GetType().Name}"),

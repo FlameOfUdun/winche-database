@@ -47,19 +47,19 @@ public class WireConvertersTests
     [Fact]
     public void QueryAst_DeserializesViaQueryParser()
     {
-        var q = JsonSerializer.Deserialize<QueryAst>(
+        var q = JsonSerializer.Deserialize<Query>(
             """{"collection":"c","where":{"field":"age","op":"gt","value":{"integerValue":"21"}},"limit":5}""")!;
         Assert.Equal("c", q.Collection);
         Assert.Equal(5, q.Limit);
-        Assert.IsType<FieldFilterAst>(q.Where);
+        Assert.IsType<FieldFilter>(q.Where);
     }
 
     [Fact]
     public void QueryAst_RoundTripsCanonically()
     {
         var json = """{"collection":"c","where":{"and":[{"field":"a","op":"eq","value":{"booleanValue":true}},{"unary":"exists","field":"b"}]},"orderBy":[{"field":"a","direction":"desc"}],"limit":7,"start":{"values":[{"integerValue":"1"}],"before":true}}""";
-        var q = JsonSerializer.Deserialize<QueryAst>(json)!;
-        var q2 = JsonSerializer.Deserialize<QueryAst>(JsonSerializer.Serialize(q))!;
+        var q = JsonSerializer.Deserialize<Query>(json)!;
+        var q2 = JsonSerializer.Deserialize<Query>(JsonSerializer.Serialize(q))!;
         Assert.Equal(q, q2);
     }
 
@@ -67,9 +67,9 @@ public class WireConvertersTests
     public void PipelineAst_RoundTrips()
     {
         var json = """{"pipeline":[{"match":{"collection":"c"}},{"group":{"keys":[{"as":"k","field":"x"}],"accumulators":[{"as":"n","fn":"count"}]}},{"limit":3}]}""";
-        var p = JsonSerializer.Deserialize<PipelineAst>(json)!;
+        var p = JsonSerializer.Deserialize<Pipeline>(json)!;
         Assert.Equal(3, p.Stages.Count);
-        var p2 = JsonSerializer.Deserialize<PipelineAst>(JsonSerializer.Serialize(p))!;
+        var p2 = JsonSerializer.Deserialize<Pipeline>(JsonSerializer.Serialize(p))!;
         Assert.Equal(p.Stages.Count, p2.Stages.Count);
         Assert.Equal(p.Stages[1], p2.Stages[1]);
     }
@@ -78,7 +78,7 @@ public class WireConvertersTests
     public void QueryAst_BadWire_ThrowsJsonExceptionWithPath()
     {
         var ex = Assert.Throws<JsonException>(() =>
-            JsonSerializer.Deserialize<QueryAst>("""{"collection":"c","where":{"field":"f","op":"bogus","value":{"nullValue":null}}}"""));
+            JsonSerializer.Deserialize<Query>("""{"collection":"c","where":{"field":"f","op":"bogus","value":{"nullValue":null}}}"""));
         Assert.Contains("$.where.op", ex.Message);
     }
 }

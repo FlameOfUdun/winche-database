@@ -6,5 +6,5 @@ namespace Winche.Database.Querying;
 /// <summary>Deterministic grouping key for subscriptions: canonical wire JSON of the query.</summary>
 public static class QueryKey
 {
-    public static string Compute(QueryAst query) => QueryAstWriter.Write(query).ToJsonString();
+    public static string Compute(Query query) => QueryAstWriter.Write(query).ToJsonString();
 }

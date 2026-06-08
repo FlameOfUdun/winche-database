@@ -1,19 +1,23 @@
 // src/Winche.Database/Querying/Planning/PipelineNormalizer.cs
-using System.Text.RegularExpressions;
 using Winche.Database.Documents;
 using Winche.Database.Querying.Ast;
+// Alias to disambiguate the leaf types that exist in BOTH layers (Ast.ProjectExpr/FieldRefExpr/…
+// vs the identically-named plan records). Bare names resolve to the plan types (this namespace);
+// `Ast.` reaches the AST inputs. (System.Text.RegularExpressions is fully qualified below so its
+// Match/Group types don't collide with the Match/Group pipeline stages.)
+using Ast = Winche.Database.Querying.Ast;
 
 namespace Winche.Database.Querying.Planning;
 
 /// <summary>
-/// PipelineAst → LogicalPlan. Match must be first (it is the scan); Having becomes a
+/// Pipeline → LogicalPlan. Match must be first (it is the scan); Having becomes a
 /// FilterNode after GroupNode; `as` names are validated because they become SQL identifiers.
 /// Pipelines are explicit: no implicit tiebreaker, no implicit Exists, no implicit Page.
 /// </summary>
-public static partial class PipelineNormalizer
+internal static partial class PipelineNormalizer
 {
-    [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]{0,62}$")]
-    private static partial Regex AsName();
+    [System.Text.RegularExpressions.GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]{0,62}$")]
+    private static partial System.Text.RegularExpressions.Regex AsName();
 
     /// <summary>
     /// Base document column names that are always in scope when the row is document-shaped.
@@ -23,13 +27,13 @@ public static partial class PipelineNormalizer
         new(["path", "id", "collection", "data", "created_at", "updated_at", "version", "__name__"],
             StringComparer.Ordinal);
 
-    public static LogicalPlan Normalize(PipelineAst pipeline)
+    public static LogicalPlan Normalize(Pipeline pipeline)
     {
         if (pipeline.Stages.Count == 0)
             throw new PlanValidationException("PIPELINE_EMPTY", "Pipeline must contain at least one stage.");
-        if (pipeline.Stages[0] is not MatchStageAst match)
+        if (pipeline.Stages[0] is not Match match)
             throw new PlanValidationException("MATCH_FIRST", "The first pipeline stage must be 'match'.");
-        if (pipeline.Stages.Skip(1).Any(s => s is MatchStageAst))
+        if (pipeline.Stages.Skip(1).Any(s => s is Match))
             throw new PlanValidationException("MATCH_FIRST", "'match' is only allowed as the first stage.");
 
         if (!DocumentPathParser.IsValidCollectionPath(match.Collection, out var pathError))
@@ -48,15 +52,15 @@ public static partial class PipelineNormalizer
         return new LogicalPlan(nodes);
     }
 
-    private static void Append(List<PlanNode> nodes, StageAst stage, HashSet<string> outputNames)
+    private static void Append(List<PlanNode> nodes, Stage stage, HashSet<string> outputNames)
     {
         switch (stage)
         {
-            case FilterStageAst f:
-                nodes.Add(new FilterNode(FilterRules.Prepare(f.Where)));
+            case Where f:
+                nodes.Add(new FilterNode(FilterRules.Prepare(f.Predicate)));
                 break;
 
-            case LookupStageAst l:
+            case Lookup l:
                 if (!DocumentPathParser.IsValidCollectionPath(l.Collection, out var lookupPathErr))
                     throw new PlanValidationException("BAD_COLLECTION_PATH", lookupPathErr!);
                 ValidateAs(l.As);
@@ -72,7 +76,7 @@ public static partial class PipelineNormalizer
                     l.Limit));
                 break;
 
-            case UnwindStageAst u:
+            case Unwind u:
                 ValidateAs(u.As);
                 if (outputNames.Contains(u.As))
                     throw new PlanValidationException("DUPLICATE_AS",
@@ -81,7 +85,7 @@ public static partial class PipelineNormalizer
                 nodes.Add(new UnwindNode(u.Field, u.As, u.PreserveNullAndEmpty));
                 break;
 
-            case GroupStageAst g:
+            case Group g:
                 ValidateGroup(g);
                 // group/project REPLACE the row shape — reset cumulative set to this stage's outputs
                 outputNames.Clear();
@@ -94,7 +98,7 @@ public static partial class PipelineNormalizer
                     nodes.Add(new FilterNode(FilterRules.Prepare(g.Having)));
                 break;
 
-            case ProjectStageAst p:
+            case Project p:
                 ValidateProject(p);
                 // project REPLACES the row shape — reset cumulative set to this stage's outputs
                 outputNames.Clear();
@@ -102,17 +106,17 @@ public static partial class PipelineNormalizer
                 nodes.Add(new ProjectNode([.. p.Fields.Select(f => new Projection(f.As, ToExpr(f.Expr)))]));
                 break;
 
-            case SortStageAst s:
+            case Sort s:
                 nodes.Add(new SortNode([.. s.Fields.Select(o => new SortKey(o.Field, o.Direction))]));
                 break;
 
-            case LimitStageAst l:
+            case Limit l:
                 if (l.Count < 1)
                     throw new PlanValidationException("BAD_LIMIT", $"'limit' must be >= 1, got {l.Count}.");
                 nodes.Add(new LimitNode(l.Count));
                 break;
 
-            case SkipStageAst s:
+            case Skip s:
                 if (s.Count < 0)
                     throw new PlanValidationException("BAD_SKIP", $"'skip' must be >= 0, got {s.Count}.");
                 nodes.Add(new SkipNode(s.Count));
@@ -123,7 +127,7 @@ public static partial class PipelineNormalizer
         }
     }
 
-    private static void ValidateGroup(GroupStageAst g)
+    private static void ValidateGroup(Group g)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
         foreach (var k in g.Keys)
@@ -144,7 +148,7 @@ public static partial class PipelineNormalizer
             throw new PlanValidationException("GROUP_EMPTY", "group needs at least one key or accumulator.");
     }
 
-    private static void ValidateProject(ProjectStageAst p)
+    private static void ValidateProject(Project p)
     {
         if (p.Fields.Count == 0)
             throw new PlanValidationException("PROJECT_EMPTY", "project needs at least one field.");
@@ -154,7 +158,7 @@ public static partial class PipelineNormalizer
             ValidateAs(f.As);
             if (!names.Add(f.As))
                 throw new PlanValidationException("DUPLICATE_AS", $"Duplicate output name '{f.As}' in project.");
-            if (f.Expr is AggFuncExprAst agg)
+            if (f.Expr is Ast.AggFuncExpr agg)
             {
                 if (agg.Fn is not (AggFunction.Count or AggFunction.Sum or AggFunction.Avg))
                     throw new PlanValidationException("PROJECT_AGG",
@@ -179,11 +183,11 @@ public static partial class PipelineNormalizer
                 $"'__name__' is a reserved name and cannot be used as an output alias.");
     }
 
-    private static ProjectExpr ToExpr(ProjectExprAst e) => e switch
+    private static ProjectExpr ToExpr(Ast.ProjectExpr e) => e switch
     {
-        FieldRefExprAst f => new FieldRefExpr(f.Field),
-        LiteralExprAst l => new LiteralExpr(l.Value),
-        AggFuncExprAst a => new AggFuncExpr(a.Fn, a.Field),
+        Ast.FieldRefExpr f => new FieldRefExpr(f.Field),
+        Ast.LiteralExpr l => new LiteralExpr(l.Value),
+        Ast.AggFuncExpr a => new AggFuncExpr(a.Fn, a.Field),
         _ => throw new PlanValidationException("UNKNOWN_STAGE", $"Unknown project expr: {e.GetType().Name}"),
     };
 }

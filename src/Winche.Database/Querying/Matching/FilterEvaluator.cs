@@ -13,18 +13,18 @@ namespace Winche.Database.Querying.Matching;
 /// </summary>
 public static class FilterEvaluator
 {
-    public static bool Matches(FilterAst filter, string path, IReadOnlyDictionary<string, Value> fields) => filter switch
+    public static bool Matches(Filter filter, string path, IReadOnlyDictionary<string, Value> fields) => filter switch
     {
-        CompositeFilterAst { Op: CompositeOp.And } c => c.Filters.All(f => Matches(f, path, fields)),
-        CompositeFilterAst { Op: CompositeOp.Or } c => c.Filters.Any(f => Matches(f, path, fields)),
-        CompositeFilterAst { Op: CompositeOp.Not } c => !Matches(c.Filters[0], path, fields),
-        UnaryFilterAst u => MatchesUnary(u, fields),
-        FieldFilterAst f => MatchesField(f, path, fields),
-        FieldCompareAst cmp => MatchesCompare(cmp, fields),
+        CompositeFilter { Op: CompositeOp.And } c => c.Filters.All(f => Matches(f, path, fields)),
+        CompositeFilter { Op: CompositeOp.Or } c => c.Filters.Any(f => Matches(f, path, fields)),
+        CompositeFilter { Op: CompositeOp.Not } c => !Matches(c.Filters[0], path, fields),
+        UnaryFilter u => MatchesUnary(u, fields),
+        FieldFilter f => MatchesField(f, path, fields),
+        FieldCompare cmp => MatchesCompare(cmp, fields),
         _ => false,
     };
 
-    private static bool MatchesUnary(UnaryFilterAst u, IReadOnlyDictionary<string, Value> fields)
+    private static bool MatchesUnary(UnaryFilter u, IReadOnlyDictionary<string, Value> fields)
     {
         var v = ResolveField(u.Field, fields);
         return u.Op switch
@@ -36,7 +36,7 @@ public static class FilterEvaluator
         };
     }
 
-    private static bool MatchesField(FieldFilterAst f, string path, IReadOnlyDictionary<string, Value> fields)
+    private static bool MatchesField(FieldFilter f, string path, IReadOnlyDictionary<string, Value> fields)
     {
         if (IsName(f.Field))
             return MatchesName(f.Op, path, f.Operand);
@@ -70,7 +70,7 @@ public static class FilterEvaluator
         };
     }
 
-    private static bool MatchesCompare(FieldCompareAst cmp, IReadOnlyDictionary<string, Value> fields)
+    private static bool MatchesCompare(FieldCompare cmp, IReadOnlyDictionary<string, Value> fields)
     {
         var l = ResolveField(cmp.Left, fields);
         var r = ResolveField(cmp.Right, fields);

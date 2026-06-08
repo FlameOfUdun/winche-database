@@ -4,9 +4,9 @@ using System.Text.Json.Serialization;
 
 namespace Winche.Database.Querying.Ast.Serialization;
 
-public sealed class QueryAstJsonConverter : JsonConverter<QueryAst>
+public sealed class QueryAstJsonConverter : JsonConverter<Query>
 {
-    public override QueryAst Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    public override Query Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         if (JsonNode.Parse(ref reader) is not JsonObject obj)
             throw new JsonException("Query must be a JSON object");
@@ -14,6 +14,6 @@ public sealed class QueryAstJsonConverter : JsonConverter<QueryAst>
         catch (QueryParseException ex) { throw new JsonException(ex.Message, ex); }
     }
 
-    public override void Write(Utf8JsonWriter writer, QueryAst value, JsonSerializerOptions options) =>
+    public override void Write(Utf8JsonWriter writer, Query value, JsonSerializerOptions options) =>
         QueryAstWriter.Write(value).WriteTo(writer);
 }

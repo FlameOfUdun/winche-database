@@ -13,7 +13,7 @@ public class PipelineSmokeTests(PostgresFixture fx) : PipelineTestBase(fx)
         await SeedDoc("a", new Dictionary<string, Value> { ["x"] = I(1) });
         await SeedDoc("other", new Dictionary<string, Value>(), collection: "elsewhere");
 
-        var result = await RunPipeline(new MatchStageAst("c", null));
+        var result = await RunPipeline(new Match("c", null));
 
         var row = Assert.Single(result.Rows);
         Assert.Equal(I(1), row["x"]);
@@ -26,8 +26,8 @@ public class PipelineSmokeTests(PostgresFixture fx) : PipelineTestBase(fx)
         await SeedDoc("a", new Dictionary<string, Value> { ["x"] = I(1) });
         await SeedDoc("b", new Dictionary<string, Value> { ["x"] = I(2) });
 
-        var result = await RunPipeline(new MatchStageAst("c",
-            new FieldFilterAst(F("x"), FilterOperator.Gt, I(1))));
+        var result = await RunPipeline(new Match("c",
+            new FieldFilter(F("x"), FilterOperator.Gt, I(1))));
 
         Assert.Equal(new ReferenceValue("c/b"), Assert.Single(result.Rows)["__name__"]);
     }
@@ -39,11 +39,11 @@ public class PipelineSmokeTests(PostgresFixture fx) : PipelineTestBase(fx)
             await SeedDoc($"d{i}", new Dictionary<string, Value> { ["x"] = I(i) });
 
         var result = await RunPipeline(
-            new MatchStageAst("c", null),
-            new FilterStageAst(new FieldFilterAst(F("x"), FilterOperator.Gte, I(2))),   // 2..6
-            new SortStageAst([new OrderAst(F("x"), SortDirection.Desc)]),               // 6,5,4,3,2
-            new SkipStageAst(1),                                                        // 5,4,3,2
-            new LimitStageAst(2));                                                      // 5,4
+            new Match("c", null),
+            new Where(new FieldFilter(F("x"), FilterOperator.Gte, I(2))),   // 2..6
+            new Sort([new Ordering(F("x"), SortDirection.Desc)]),               // 6,5,4,3,2
+            new Skip(1),                                                        // 5,4,3,2
+            new Limit(2));                                                      // 5,4
 
         Assert.Equal([5L, 4L], result.Rows.Select(r => ((IntegerValue)r["x"]).Value));
     }
@@ -56,12 +56,12 @@ public class PipelineSmokeTests(PostgresFixture fx) : PipelineTestBase(fx)
 
         // top-3 by x desc, then keep odd values → 5, 3
         var result = await RunPipeline(
-            new MatchStageAst("c", null),
-            new SortStageAst([new OrderAst(F("x"), SortDirection.Desc)]),
-            new LimitStageAst(3),
-            new FilterStageAst(new FieldFilterAst(F("x"), FilterOperator.In,
+            new Match("c", null),
+            new Sort([new Ordering(F("x"), SortDirection.Desc)]),
+            new Limit(3),
+            new Where(new FieldFilter(F("x"), FilterOperator.In,
                 new ArrayValue([I(1), I(3), I(5)]))),
-            new SortStageAst([new OrderAst(F("x"), SortDirection.Desc)]));
+            new Sort([new Ordering(F("x"), SortDirection.Desc)]));
 
         Assert.Equal([5L, 3L], result.Rows.Select(r => ((IntegerValue)r["x"]).Value));
     }

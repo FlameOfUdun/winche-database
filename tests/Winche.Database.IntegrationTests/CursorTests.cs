@@ -16,23 +16,23 @@ public class CursorTests(PostgresFixture fx) : QueryTestBase(fx)
         await Seed("d4", new IntegerValue(3));
     }
 
-    private static QueryAst Q(CursorAst? start = null, CursorAst? end = null, SortDirection dir = SortDirection.Asc) =>
-        new("c", OrderBy: [new OrderAst(FieldPath.Parse("f"), dir)], Start: start, End: end);
+    private static Query Q(Cursor? start = null, Cursor? end = null, SortDirection dir = SortDirection.Asc) =>
+        new("c", OrderBy: [new Ordering(FieldPath.Parse("f"), dir)], Start: start, End: end);
 
     [Fact]
     public async Task StartAt_Inclusive_StartAfter_Exclusive()
     {
         await SeedNumbers();
-        Assert.Equal(["d2", "d3", "d4"], await Ids(Q(start: new CursorAst([new IntegerValue(2)], Before: true))));
-        Assert.Equal(["d4"], await Ids(Q(start: new CursorAst([new IntegerValue(2)], Before: false))));
+        Assert.Equal(["d2", "d3", "d4"], await Ids(Q(start: new Cursor([new IntegerValue(2)], Before: true))));
+        Assert.Equal(["d4"], await Ids(Q(start: new Cursor([new IntegerValue(2)], Before: false))));
     }
 
     [Fact]
     public async Task EndBefore_Exclusive_EndAt_Inclusive()
     {
         await SeedNumbers();
-        Assert.Equal(["d1"], await Ids(Q(end: new CursorAst([new IntegerValue(2)], Before: true))));
-        Assert.Equal(["d1", "d2", "d3"], await Ids(Q(end: new CursorAst([new IntegerValue(2)], Before: false))));
+        Assert.Equal(["d1"], await Ids(Q(end: new Cursor([new IntegerValue(2)], Before: true))));
+        Assert.Equal(["d1", "d2", "d3"], await Ids(Q(end: new Cursor([new IntegerValue(2)], Before: false))));
     }
 
     [Fact]
@@ -40,7 +40,7 @@ public class CursorTests(PostgresFixture fx) : QueryTestBase(fx)
     {
         await SeedNumbers();
         // after (2, "c/d2") → d3 (same value, later name), then d4
-        var ids = await Ids(Q(start: new CursorAst([new IntegerValue(2), new StringValue("c/d2")], Before: false)));
+        var ids = await Ids(Q(start: new Cursor([new IntegerValue(2), new StringValue("c/d2")], Before: false)));
         Assert.Equal(["d3", "d4"], ids);
     }
 
@@ -48,7 +48,7 @@ public class CursorTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task DescendingCursor_MirrorsDirection()
     {
         await SeedNumbers();
-        var ids = await Ids(Q(start: new CursorAst([new IntegerValue(2)], Before: false), dir: SortDirection.Desc));
+        var ids = await Ids(Q(start: new Cursor([new IntegerValue(2)], Before: false), dir: SortDirection.Desc));
         Assert.Equal(["d1"], ids);            // DESC order: 3,2,2,1 — after value 2 comes 1
     }
 
@@ -59,7 +59,7 @@ public class CursorTests(PostgresFixture fx) : QueryTestBase(fx)
         await Seed("n", new IntegerValue(5));
         await Seed("s", new StringValue("a"));        // rank 50 — after all numbers
 
-        var ids = await Ids(Q(start: new CursorAst([new IntegerValue(0)], Before: true)));
+        var ids = await Ids(Q(start: new Cursor([new IntegerValue(0)], Before: true)));
         Assert.Equal(["n", "s"], ids);                 // bool is before the numeric boundary (rule 9)
     }
 
@@ -70,15 +70,15 @@ public class CursorTests(PostgresFixture fx) : QueryTestBase(fx)
             await Seed($"p{i:D2}", new IntegerValue(i % 3));   // duplicates galore
 
         var seen = new List<string>();
-        CursorAst? cursor = null;
+        Cursor? cursor = null;
         while (true)
         {
-            var q = new QueryAst("c", OrderBy: [new OrderAst(F("f"))], Limit: 3, Start: cursor);
+            var q = new Query("c", OrderBy: [new Ordering(F("f"))], Limit: 3, Start: cursor);
             var page = await Run(q);
             seen.AddRange(page.Documents.Select(d => d.Id));
             if (!page.HasMore) break;
             var last = page.Documents[^1];
-            cursor = new CursorAst([last.Fields["f"], new StringValue(last.Path)], Before: false);
+            cursor = new Cursor([last.Fields["f"], new StringValue(last.Path)], Before: false);
         }
 
         Assert.Equal(10, seen.Count);

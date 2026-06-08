@@ -70,8 +70,8 @@ public class OptimisticTransactionTests(PostgresFixture fx) : QueryTestBase(fx)
         ]);
 
         var tx = await db.BeginTransactionAsync();
-        var result = await db.QueryAsync(tx.Id, new QueryAst("c",
-            Where: new FieldFilterAst(F("g"), FilterOperator.Eq, new IntegerValue(1))));
+        var result = await db.QueryAsync(tx.Id, new Query("c",
+            Where: new FieldFilter(F("g"), FilterOperator.Eq, new IntegerValue(1))));
         Assert.Equal(2, result.Documents.Count);
 
         await db.WriteAsync([new SetWrite { Path = "c/b", Fields = Map(("g", new IntegerValue(2))) }]); // touch a returned doc

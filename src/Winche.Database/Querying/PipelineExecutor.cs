@@ -9,7 +9,7 @@ namespace Winche.Database.Querying;
 /// <summary>The pipeline path end-to-end: normalize → compile → execute → decode.</summary>
 public sealed class PipelineExecutor(NpgsqlConnection conn, NpgsqlTransaction? tx)
 {
-    public async Task<PipelineResult> ExecuteAsync(PipelineAst pipeline, CancellationToken ct = default)
+    public async Task<PipelineResult> ExecuteAsync(Pipeline pipeline, CancellationToken ct = default)
     {
         var plan = PipelineNormalizer.Normalize(pipeline);
         var (compiled, schema) = PipelineCompiler.Compile(plan);

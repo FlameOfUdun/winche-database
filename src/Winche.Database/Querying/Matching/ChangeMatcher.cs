@@ -16,7 +16,7 @@ public static class ChangeMatcher
     /// cannot be normalized (e.g. PlanValidationException); on false, predicate is null and
     /// the caller must treat the query as always-affected (conservative).
     /// </summary>
-    public static bool TryPreparePredicate(QueryAst query, out FilterAst? predicate)
+    public static bool TryPreparePredicate(Query query, out Filter? predicate)
     {
         try
         {
@@ -31,7 +31,7 @@ public static class ChangeMatcher
     }
 
     public static bool CouldAffect(
-        QueryAst query,
+        Query query,
         IReadOnlySet<string> snapshotIds,
         string changedId,
         bool isRemoved,

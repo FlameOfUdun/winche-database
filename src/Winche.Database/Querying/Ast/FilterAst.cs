@@ -3,13 +3,13 @@ using Winche.Database.Values;
 
 namespace Winche.Database.Querying.Ast;
 
-public abstract record FilterAst;
+public abstract record Filter;
 
-public sealed record FieldFilterAst(FieldPath Field, FilterOperator Op, Value Operand) : FilterAst;
+public sealed record FieldFilter(FieldPath Field, FilterOperator Op, Value Operand) : Filter;
 
-public sealed record CompositeFilterAst(CompositeOp Op, IReadOnlyList<FilterAst> Filters) : FilterAst
+public sealed record CompositeFilter(CompositeOp Op, IReadOnlyList<Filter> Filters) : Filter
 {
-    public bool Equals(CompositeFilterAst? other) =>
+    public bool Equals(CompositeFilter? other) =>
         other is not null && Op == other.Op && Filters.SequenceEqual(other.Filters);
     public override int GetHashCode()
     {
@@ -20,6 +20,6 @@ public sealed record CompositeFilterAst(CompositeOp Op, IReadOnlyList<FilterAst>
     }
 }
 
-public sealed record UnaryFilterAst(FieldPath Field, UnaryOp Op) : FilterAst;
+public sealed record UnaryFilter(FieldPath Field, UnaryOp Op) : Filter;
 
-public sealed record FieldCompareAst(FieldPath Left, FilterOperator Op, FieldPath Right) : FilterAst;
+public sealed record FieldCompare(FieldPath Left, FilterOperator Op, FieldPath Right) : Filter;

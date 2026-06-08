@@ -7,7 +7,7 @@ namespace Winche.Database.IntegrationTests;
 public class QueryOrderingTests(PostgresFixture fx) : QueryTestBase(fx)
 {
     private Task<List<string>> OrderedBy(string field, SortDirection dir = SortDirection.Asc) =>
-        Ids(new QueryAst("c", OrderBy: [new OrderAst(F(field), dir)]));
+        Ids(new Query("c", OrderBy: [new Ordering(F(field), dir)]));
 
     [Fact]
     public async Task CrossTypeOrder_ThroughTheFullQueryPath()
@@ -54,8 +54,8 @@ public class QueryOrderingTests(PostgresFixture fx) : QueryTestBase(fx)
         await SeedDoc("x2", new Dictionary<string, Value> { ["g"] = new IntegerValue(1), ["v"] = new IntegerValue(20) });
         await SeedDoc("x3", new Dictionary<string, Value> { ["g"] = new IntegerValue(2), ["v"] = new IntegerValue(5) });
 
-        var ids = await Ids(new QueryAst("c",
-            OrderBy: [new OrderAst(F("g")), new OrderAst(F("v"), SortDirection.Desc)]));
+        var ids = await Ids(new Query("c",
+            OrderBy: [new Ordering(F("g")), new Ordering(F("v"), SortDirection.Desc)]));
         Assert.Equal(["x2", "x1", "x3"], ids);
     }
 
@@ -75,6 +75,6 @@ public class QueryOrderingTests(PostgresFixture fx) : QueryTestBase(fx)
             { ["m"] = new MapValue(new Dictionary<string, Value> { ["x"] = new IntegerValue(2) }) });
         await SeedDoc("u1", new Dictionary<string, Value>
             { ["m"] = new MapValue(new Dictionary<string, Value> { ["x"] = new IntegerValue(1) }) });
-        Assert.Equal(["u1", "u2"], await Ids(new QueryAst("c", OrderBy: [new OrderAst(F("m.x"))])));
+        Assert.Equal(["u1", "u2"], await Ids(new Query("c", OrderBy: [new Ordering(F("m.x"))])));
     }
 }

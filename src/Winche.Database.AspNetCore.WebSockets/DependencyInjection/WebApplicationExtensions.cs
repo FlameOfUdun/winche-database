@@ -15,12 +15,22 @@ namespace Winche.Database.AspNetCore.WebSockets.DependencyInjection;
 
 public static class WebApplicationExtensions
 {
-    public static WebApplication MapWincheDatabaseWsApi(this WebApplication app, string prefix = "documents")
-    {
-        app.UseWebSockets();
+    /// <summary>
+    /// Maps the WebSocket endpoint at <c>/{prefix}/ws</c> and returns its
+    /// <see cref="IEndpointConventionBuilder"/> so callers can apply conventions to the upgrade route
+    /// (e.g. rate limiting, CORS). The caller must call <c>app.UseWebSockets()</c> before mapping.
+    /// <para>
+    /// Connection authentication is performed <b>in-band</b>: the token in the client's <c>hello</c>
+    /// frame is validated by <see cref="IWsAuthenticator"/> during the handshake, and its claims feed
+    /// the access guard. <c>.RequireAuthorization()</c> on this builder gates the HTTP <i>upgrade</i>
+    /// against <c>HttpContext.User</c> instead — it is independent of the hello token and only an
+    /// optional defense-in-depth layer, usable only with a scheme that authenticates the upgrade
+    /// request itself (cookies or a query-string token; browsers cannot set a bearer header on a WS
+    /// upgrade).
+    /// </para>
+    /// </summary>
+    public static IEndpointConventionBuilder MapWincheDatabaseWsApi(this WebApplication app, string prefix = "documents") =>
         app.Map($"/{prefix}/ws", HandleAsync);
-        return app;
-    }
 
     private static async Task HandleAsync(HttpContext context)
     {

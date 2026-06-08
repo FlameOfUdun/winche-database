@@ -36,6 +36,7 @@ else
     app.UseHttpsRedirection();
 }
 await app.InitializeWincheDatabaseAsync();
+app.UseWebSockets();
 app.MapWincheDatabaseWsApi();
 app.MapWincheDatabaseRestApi();
 

@@ -206,9 +206,9 @@ public class FilterMatrixTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Unary_IsNullIsNanExists()
     {
         await SeedZoo();
-        Assert.Equal(["null"], await Ids(new QueryAst("c", Where: new UnaryFilterAst(F("f"), UnaryOp.IsNull))));
-        Assert.Equal(["nan"], await Ids(new QueryAst("c", Where: new UnaryFilterAst(F("f"), UnaryOp.IsNan))));
-        var exists = await Ids(new QueryAst("c", Where: new UnaryFilterAst(F("f"), UnaryOp.Exists)));
+        Assert.Equal(["null"], await Ids(new Query("c", Where: new UnaryFilter(F("f"), UnaryOp.IsNull))));
+        Assert.Equal(["nan"], await Ids(new Query("c", Where: new UnaryFilter(F("f"), UnaryOp.IsNan))));
+        var exists = await Ids(new Query("c", Where: new UnaryFilter(F("f"), UnaryOp.Exists)));
         Assert.DoesNotContain("missing", exists);
         Assert.Contains("null", exists);       // explicit null EXISTS
     }
@@ -217,15 +217,15 @@ public class FilterMatrixTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Composite_AndOrNot()
     {
         await SeedZoo();
-        var ids = await Ids(new QueryAst("c", Where: new CompositeFilterAst(CompositeOp.And,
+        var ids = await Ids(new Query("c", Where: new CompositeFilter(CompositeOp.And,
         [
-            new CompositeFilterAst(CompositeOp.Or,
+            new CompositeFilter(CompositeOp.Or,
             [
-                new FieldFilterAst(F("f"), FilterOperator.Eq, new IntegerValue(5)),
-                new FieldFilterAst(F("f"), FilterOperator.Eq, new StringValue("Apple")),
+                new FieldFilter(F("f"), FilterOperator.Eq, new IntegerValue(5)),
+                new FieldFilter(F("f"), FilterOperator.Eq, new StringValue("Apple")),
             ]),
-            new CompositeFilterAst(CompositeOp.Not,
-                [new FieldFilterAst(F("f"), FilterOperator.Eq, new DoubleValue(5.0))]),
+            new CompositeFilter(CompositeOp.Not,
+                [new FieldFilter(F("f"), FilterOperator.Eq, new DoubleValue(5.0))]),
         ])));
         Assert.Equal(["strA"], ids);
     }
@@ -237,8 +237,8 @@ public class FilterMatrixTests(PostgresFixture fx) : QueryTestBase(fx)
         await SeedDoc("w2", new Dictionary<string, Value> { ["a"] = new IntegerValue(1), ["b"] = new DoubleValue(1.5) });
         await SeedDoc("w3", new Dictionary<string, Value> { ["a"] = new IntegerValue(1) });   // b missing → no match
 
-        Assert.Equal(["w1"], await Ids(new QueryAst("c", Where: new FieldCompareAst(F("a"), FilterOperator.Gt, F("b")))));
-        Assert.Equal(["w2"], await Ids(new QueryAst("c", Where: new FieldCompareAst(F("a"), FilterOperator.Lt, F("b")))));
+        Assert.Equal(["w1"], await Ids(new Query("c", Where: new FieldCompare(F("a"), FilterOperator.Gt, F("b")))));
+        Assert.Equal(["w2"], await Ids(new Query("c", Where: new FieldCompare(F("a"), FilterOperator.Lt, F("b")))));
     }
 
     [Fact]
@@ -273,7 +273,7 @@ public class FilterMatrixTests(PostgresFixture fx) : QueryTestBase(fx)
     {
         await Seed("a", new IntegerValue(1));
         await Seed("b", new IntegerValue(2));
-        Assert.Equal(["b"], await Ids(new QueryAst("c",
-            Where: new FieldFilterAst(F("__name__"), FilterOperator.Ne, new StringValue("c/a")))));
+        Assert.Equal(["b"], await Ids(new Query("c",
+            Where: new FieldFilter(F("__name__"), FilterOperator.Ne, new StringValue("c/a")))));
     }
 }

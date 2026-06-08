@@ -19,5 +19,5 @@ public abstract class IndexDefinition
     /// literal SQL fragment via <see cref="Querying.Sql.IndexPredicateSql"/>.
     /// Null means no predicate (full-collection index).
     /// </summary>
-    public virtual FilterAst? Where => null;
+    public virtual Filter? Where => null;
 }

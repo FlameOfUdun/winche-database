@@ -61,7 +61,7 @@ public class GuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
         ]);
         rules.Deny.Add((AccessOperation.Read, "mixed/hidden"));
 
-        var result = await guarded.QueryAsync(new QueryAst("mixed"));
+        var result = await guarded.QueryAsync(new Query("mixed"));
         Assert.Equal("visible", Assert.Single(result.Documents).Id);
     }
 
@@ -92,13 +92,13 @@ public class GuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
 
         // Denying Read does NOT block aggregation — the gate is Aggregate, not Read.
         rules.Deny.Add((AccessOperation.Read, "private"));
-        var ok = await guarded.AggregateAsync(new PipelineAst([new MatchStageAst("private", null)]));
+        var ok = await guarded.AggregateAsync(new Pipeline([new Match("private", null)]));
         Assert.Single(ok.Rows);
 
         // Denying Aggregate blocks it.
         rules.Deny.Add((AccessOperation.Aggregate, "private"));
-        await Assert.ThrowsAsync<AccessDeniedException>(() => guarded.AggregateAsync(new PipelineAst(
-            [new MatchStageAst("private", null)])));
+        await Assert.ThrowsAsync<AccessDeniedException>(() => guarded.AggregateAsync(new Pipeline(
+            [new Match("private", null)])));
     }
 
     [Fact]
@@ -111,10 +111,10 @@ public class GuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
         // collection requires the opt-in too. The guard rejects before any SQL runs.
         rules.Deny.Add((AccessOperation.Aggregate, "customers"));
 
-        var pipeline = new PipelineAst(
+        var pipeline = new Pipeline(
         [
-            new MatchStageAst("orders", null),
-            new LookupStageAst("customers", FieldPath.Parse("customerId"), FieldPath.Parse("__name__"), "customer"),
+            new Match("orders", null),
+            new Lookup("customers", FieldPath.Parse("customerId"), FieldPath.Parse("__name__"), "customer"),
         ]);
 
         await Assert.ThrowsAsync<AccessDeniedException>(() => guarded.AggregateAsync(pipeline));

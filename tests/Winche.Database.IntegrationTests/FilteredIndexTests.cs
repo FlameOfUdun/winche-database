@@ -10,8 +10,8 @@ internal sealed class OpenOrdersIndex : IndexDefinition
 {
     public override string Collection => "fidx";
     public override IReadOnlyList<IndexField> Fields => [new("amount")];
-    public override FilterAst? Where =>
-        new FieldFilterAst(FieldPath.Parse("status"), FilterOperator.Eq, new StringValue("open"));
+    public override Filter? Where =>
+        new FieldFilter(FieldPath.Parse("status"), FilterOperator.Eq, new StringValue("open"));
 }
 
 [Collection("postgres")]
@@ -54,28 +54,28 @@ public class FilteredIndexTests(PostgresFixture fx) : QueryTestBase(fx)
     private static readonly DateTimeOffset T0 = new(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
     private static readonly DateTimeOffset T1 = new(2025, 6, 1, 0, 0, 0, TimeSpan.Zero);
 
-    public static TheoryData<FilterAst> AgreementPredicates => new()
+    public static TheoryData<Filter> AgreementPredicates => new()
     {
-        new FieldFilterAst(FieldPath.Parse("status"), FilterOperator.Eq, new StringValue("o'pen")),
-        new FieldFilterAst(FieldPath.Parse("n"), FilterOperator.Gt, new IntegerValue(5)),
-        new FieldFilterAst(FieldPath.Parse("d"), FilterOperator.Lte, new DoubleValue(2.5)),
-        new FieldFilterAst(FieldPath.Parse("flag"), FilterOperator.Eq, new BooleanValue(true)),
-        new UnaryFilterAst(FieldPath.Parse("maybe"), UnaryOp.Exists),
-        new UnaryFilterAst(FieldPath.Parse("maybe"), UnaryOp.IsNull),
-        new CompositeFilterAst(CompositeOp.And,
+        new FieldFilter(FieldPath.Parse("status"), FilterOperator.Eq, new StringValue("o'pen")),
+        new FieldFilter(FieldPath.Parse("n"), FilterOperator.Gt, new IntegerValue(5)),
+        new FieldFilter(FieldPath.Parse("d"), FilterOperator.Lte, new DoubleValue(2.5)),
+        new FieldFilter(FieldPath.Parse("flag"), FilterOperator.Eq, new BooleanValue(true)),
+        new UnaryFilter(FieldPath.Parse("maybe"), UnaryOp.Exists),
+        new UnaryFilter(FieldPath.Parse("maybe"), UnaryOp.IsNull),
+        new CompositeFilter(CompositeOp.And,
         [
-            new FieldFilterAst(FieldPath.Parse("n"), FilterOperator.Gte, new IntegerValue(2)),
-            new FieldFilterAst(FieldPath.Parse("status"), FilterOperator.Eq, new StringValue("o'pen")),
+            new FieldFilter(FieldPath.Parse("n"), FilterOperator.Gte, new IntegerValue(2)),
+            new FieldFilter(FieldPath.Parse("status"), FilterOperator.Eq, new StringValue("o'pen")),
         ]),
         // Minor 5: timestamp predicate
-        new FieldFilterAst(FieldPath.Parse("at"), FilterOperator.Lte, new TimestampValue(T1)),
+        new FieldFilter(FieldPath.Parse("at"), FilterOperator.Lte, new TimestampValue(T1)),
         // Minor 5: 0.1 double (shortest round-trip string path)
-        new FieldFilterAst(FieldPath.Parse("tiny"), FilterOperator.Eq, new DoubleValue(0.1)),
+        new FieldFilter(FieldPath.Parse("tiny"), FilterOperator.Eq, new DoubleValue(0.1)),
     };
 
     [Theory]
     [MemberData(nameof(AgreementPredicates))]
-    public async Task LiteralPredicate_AgreesWithQueryExecutor(FilterAst predicate)
+    public async Task LiteralPredicate_AgreesWithQueryExecutor(Filter predicate)
     {
         // corpus mixing types, nulls, missing fields, quote-bearing strings, timestamps, small doubles
         var docs = new (string Id, Dictionary<string, Value> Fields)[]
@@ -89,7 +89,7 @@ public class FilteredIndexTests(PostgresFixture fx) : QueryTestBase(fx)
             await SeedDoc(id, fields, collection: "fagree");
 
         // engine truth
-        var expected = (await Run(new QueryAst("fagree", Where: predicate, Limit: 100)))
+        var expected = (await Run(new Query("fagree", Where: predicate, Limit: 100)))
             .Documents.Select(x => x.Path).Order().ToList();
 
         // literal predicate truth — use unqualified accessor (data->...) without table alias

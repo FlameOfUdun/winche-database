@@ -50,12 +50,12 @@ public sealed record DocGetAllMessage : ClientMessage
 
 public sealed record QueryMessage : ClientMessage
 {
-    [JsonPropertyName("query")] public required QueryAst Query { get; init; }
+    [JsonPropertyName("query")] public required Query Query { get; init; }
 }
 
 public sealed record AggregateMessage : ClientMessage
 {
-    [JsonPropertyName("pipeline")] public required PipelineAst Pipeline { get; init; }
+    [JsonPropertyName("pipeline")] public required Pipeline Pipeline { get; init; }
 }
 
 /// <summary>writes stay raw JSON here; WriteWireParser owns the Write wire format.</summary>
@@ -75,7 +75,7 @@ public sealed record TxGetMessage : ClientMessage
 public sealed record TxQueryMessage : ClientMessage
 {
     [JsonPropertyName("transactionId")] public required string TransactionId { get; init; }
-    [JsonPropertyName("query")] public required QueryAst Query { get; init; }
+    [JsonPropertyName("query")] public required Query Query { get; init; }
 }
 
 public sealed record TxCommitMessage : ClientMessage
@@ -91,7 +91,7 @@ public sealed record TxRollbackMessage : ClientMessage
 
 public sealed record ListenMessage : ClientMessage
 {
-    [JsonPropertyName("query")] public required QueryAst Query { get; init; }
+    [JsonPropertyName("query")] public required Query Query { get; init; }
     [JsonPropertyName("resumeToken")] public long? ResumeToken { get; init; }
 }
 

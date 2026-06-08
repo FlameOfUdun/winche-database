@@ -8,7 +8,7 @@ namespace Winche.Database.Tests.Querying;
 
 public class QueryParserTests
 {
-    private static QueryAst Parse(string json) => QueryParser.Parse((JsonObject)JsonNode.Parse(json)!);
+    private static Query Parse(string json) => QueryParser.Parse((JsonObject)JsonNode.Parse(json)!);
 
     [Fact]
     public void Minimal_ParsesCollectionOnly()
@@ -26,7 +26,7 @@ public class QueryParserTests
     public void FieldFilter_Parses()
     {
         var q = Parse("""{"collection":"c","where":{"field":"age","op":"gt","value":{"integerValue":"21"}}}""");
-        var f = Assert.IsType<FieldFilterAst>(q.Where);
+        var f = Assert.IsType<FieldFilter>(q.Where);
         Assert.Equal(FieldPath.Parse("age"), f.Field);
         Assert.Equal(FilterOperator.Gt, f.Op);
         Assert.Equal(new IntegerValue(21), f.Operand);
@@ -44,14 +44,14 @@ public class QueryParserTests
                 ]}
             ]}}
             """);
-        var and = Assert.IsType<CompositeFilterAst>(q.Where);
+        var and = Assert.IsType<CompositeFilter>(q.Where);
         Assert.Equal(CompositeOp.And, and.Op);
         Assert.Equal(2, and.Filters.Count);
-        var or = Assert.IsType<CompositeFilterAst>(and.Filters[1]);
+        var or = Assert.IsType<CompositeFilter>(and.Filters[1]);
         Assert.Equal(CompositeOp.Or, or.Op);
-        var not = Assert.IsType<CompositeFilterAst>(or.Filters[1]);
+        var not = Assert.IsType<CompositeFilter>(or.Filters[1]);
         Assert.Equal(CompositeOp.Not, not.Op);
-        var unary = Assert.IsType<UnaryFilterAst>(not.Filters[0]);
+        var unary = Assert.IsType<UnaryFilter>(not.Filters[0]);
         Assert.Equal(UnaryOp.IsNull, unary.Op);
     }
 
@@ -61,7 +61,7 @@ public class QueryParserTests
         foreach (var (wire, expected) in new[] { ("isNull", UnaryOp.IsNull), ("isNan", UnaryOp.IsNan), ("exists", UnaryOp.Exists) })
         {
             var q = Parse($"{{\"collection\":\"c\",\"where\":{{\"unary\":\"{wire}\",\"field\":\"x\"}}}}");
-            Assert.Equal(expected, Assert.IsType<UnaryFilterAst>(q.Where).Op);
+            Assert.Equal(expected, Assert.IsType<UnaryFilter>(q.Where).Op);
         }
     }
 
@@ -69,7 +69,7 @@ public class QueryParserTests
     public void Compare_Parses()
     {
         var q = Parse("""{"collection":"c","where":{"compare":{"left":"a.x","op":"gte","right":"b"}}}""");
-        var c = Assert.IsType<FieldCompareAst>(q.Where);
+        var c = Assert.IsType<FieldCompare>(q.Where);
         Assert.Equal(FieldPath.Parse("a.x"), c.Left);
         Assert.Equal(FilterOperator.Gte, c.Op);
         Assert.Equal(FieldPath.Parse("b"), c.Right);
@@ -91,7 +91,7 @@ public class QueryParserTests
     {
         var q = Parse($"{{\"collection\":\"c\",\"where\":{{\"field\":\"f\",\"op\":\"{wire}\",\"value\":{{\"stringValue\":\"x\"}}}}}}");
 
-        Assert.Equal(expected, Assert.IsType<FieldFilterAst>(q.Where).Op);
+        Assert.Equal(expected, Assert.IsType<FieldFilter>(q.Where).Op);
     }
 
     [Fact]

@@ -18,12 +18,12 @@ public class PipelineComposedTests(PostgresFixture fx) : PipelineTestBase(fx)
 
         // revenue per user city: orders → lookup user → unwind → group by user.city
         var result = await RunPipeline(
-            new MatchStageAst("orders", null),
-            new LookupStageAst("users", F("uid"), F("__name__"), "user"),
-            new UnwindStageAst(F("user"), "u"),
-            new GroupStageAst([new GroupKeyAst("city", F("u.city"))],
-                [new AccumulatorAst("revenue", AggFunction.Sum, F("amt"))]),
-            new SortStageAst([new OrderAst(F("revenue"), SortDirection.Desc)]));
+            new Match("orders", null),
+            new Lookup("users", F("uid"), F("__name__"), "user"),
+            new Unwind(F("user"), "u"),
+            new Group([new GroupKey("city", F("u.city"))],
+                [new Accumulator("revenue", AggFunction.Sum, F("amt"))]),
+            new Sort([new Ordering(F("revenue"), SortDirection.Desc)]));
 
         Assert.Equal(2, result.Rows.Count);
         Assert.Equal(S("Oslo"), result.Rows[0]["city"]);
@@ -43,15 +43,15 @@ public class PipelineComposedTests(PostgresFixture fx) : PipelineTestBase(fx)
             { ["m"] = new MapValue(new Dictionary<string, Value> { ["cat"] = S("y") }), ["v"] = I(9) });
 
         var result = await RunPipeline(
-            new MatchStageAst("c", null),
-            new ProjectStageAst(
+            new Match("c", null),
+            new Project(
             [
-                new ProjectionAst("cat", new FieldRefExprAst(F("m.cat"))),
-                new ProjectionAst("v", new FieldRefExprAst(F("v"))),
+                new Projection("cat", new FieldRefExpr(F("m.cat"))),
+                new Projection("v", new FieldRefExpr(F("v"))),
             ]),
-            new GroupStageAst([new GroupKeyAst("cat", F("cat"))],
-                [new AccumulatorAst("total", AggFunction.Sum, F("v"))]),
-            new SortStageAst([new OrderAst(F("cat"))]));
+            new Group([new GroupKey("cat", F("cat"))],
+                [new Accumulator("total", AggFunction.Sum, F("v"))]),
+            new Sort([new Ordering(F("cat"))]));
 
         Assert.Equal(2, result.Rows.Count);
         Assert.Equal(new DoubleValue(3), result.Rows[0]["total"]);
@@ -68,17 +68,17 @@ public class PipelineComposedTests(PostgresFixture fx) : PipelineTestBase(fx)
         await SeedDoc("s4", new Dictionary<string, Value> { ["region"] = S("US"), ["city"] = S("NYC"), ["amt"] = I(99) });
 
         var result = await RunPipeline(
-            new MatchStageAst("c", null),
-            new GroupStageAst(
-                [new GroupKeyAst("region", F("region")), new GroupKeyAst("city", F("city"))],
-                [new AccumulatorAst("cityTotal", AggFunction.Sum, F("amt"))]),
-            new GroupStageAst(
-                [new GroupKeyAst("region", F("region"))],
+            new Match("c", null),
+            new Group(
+                [new GroupKey("region", F("region")), new GroupKey("city", F("city"))],
+                [new Accumulator("cityTotal", AggFunction.Sum, F("amt"))]),
+            new Group(
+                [new GroupKey("region", F("region"))],
                 [
-                    new AccumulatorAst("cities", AggFunction.Count),
-                    new AccumulatorAst("best", AggFunction.Max, F("cityTotal")),
+                    new Accumulator("cities", AggFunction.Count),
+                    new Accumulator("best", AggFunction.Max, F("cityTotal")),
                 ]),
-            new SortStageAst([new OrderAst(F("region"))]));
+            new Sort([new Ordering(F("region"))]));
 
         Assert.Equal(2, result.Rows.Count);
         Assert.Equal(new IntegerValue(2), result.Rows[0]["cities"]);     // EU: Oslo, Bergen
@@ -96,12 +96,12 @@ public class PipelineComposedTests(PostgresFixture fx) : PipelineTestBase(fx)
         }
 
         var result = await RunPipeline(
-            new MatchStageAst("c", null),
-            new GroupStageAst([new GroupKeyAst("g", F("g"))],
-                [new AccumulatorAst("t", AggFunction.Sum, F("v"))],
-                Having: new FieldFilterAst(F("t"), FilterOperator.Gte, D(4))),   // groups g2..g5 (t = 4,6,8,10)
-            new SortStageAst([new OrderAst(F("t"), SortDirection.Desc)]),
-            new LimitStageAst(2));
+            new Match("c", null),
+            new Group([new GroupKey("g", F("g"))],
+                [new Accumulator("t", AggFunction.Sum, F("v"))],
+                Having: new FieldFilter(F("t"), FilterOperator.Gte, D(4))),   // groups g2..g5 (t = 4,6,8,10)
+            new Sort([new Ordering(F("t"), SortDirection.Desc)]),
+            new Limit(2));
 
         Assert.Equal(2, result.Rows.Count);
         Assert.Equal(new DoubleValue(10), result.Rows[0]["t"]);
@@ -118,11 +118,11 @@ public class PipelineComposedTests(PostgresFixture fx) : PipelineTestBase(fx)
 
         // top-2 of (x desc) AFTER filtering out odd values → 6, 4 (NOT arbitrary rows)
         var result = await RunPipeline(
-            new MatchStageAst("c", null),
-            new SortStageAst([new OrderAst(F("x"), SortDirection.Desc)]),
-            new FilterStageAst(new FieldFilterAst(F("x"), FilterOperator.In,
+            new Match("c", null),
+            new Sort([new Ordering(F("x"), SortDirection.Desc)]),
+            new Where(new FieldFilter(F("x"), FilterOperator.In,
                 new ArrayValue([I(2), I(4), I(6)]))),
-            new LimitStageAst(2));
+            new Limit(2));
 
         Assert.Equal([6L, 4L], result.Rows.Select(r => ((IntegerValue)r["x"]).Value));
     }
@@ -133,16 +133,16 @@ public class PipelineComposedTests(PostgresFixture fx) : PipelineTestBase(fx)
         const string Evil = "x'; DROP TABLE documents; --";
         await SeedDoc("a", new Dictionary<string, Value> { ["x"] = I(1) });
 
-        var viaMatch = await RunPipeline(new MatchStageAst(Evil, null));
+        var viaMatch = await RunPipeline(new Match(Evil, null));
         Assert.Empty(viaMatch.Rows);
 
         var viaLookup = await RunPipeline(
-            new MatchStageAst("c", null),
-            new LookupStageAst(Evil, F("x"), F("x"), "j"));
+            new Match("c", null),
+            new Lookup(Evil, F("x"), F("x"), "j"));
         Assert.Empty(Assert.IsType<ArrayValue>(Assert.Single(viaLookup.Rows)["j"]).Values);
 
         // table intact
-        var sanity = await RunPipeline(new MatchStageAst("c", null));
+        var sanity = await RunPipeline(new Match("c", null));
         Assert.Single(sanity.Rows);
     }
 }

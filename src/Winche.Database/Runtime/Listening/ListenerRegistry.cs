@@ -24,7 +24,7 @@ public sealed class ListenerRegistry(NpgsqlDataSource source) : IChangeFeedConsu
 
     // ── Subscribe / unsubscribe ───────────────────────────────────────────────
 
-    public IQueryListener Listen(QueryAst query, ListenOptions? listenOptions = null)
+    public IQueryListener Listen(Query query, ListenOptions? listenOptions = null)
     {
         var key = QueryKey.Compute(query);
         ListenerGroup group;
@@ -225,7 +225,7 @@ public sealed class ListenerRegistry(NpgsqlDataSource source) : IChangeFeedConsu
         return false;
     }
 
-    private async Task<QueryResult> RunQueryAsync(QueryAst query, CancellationToken ct = default)
+    private async Task<QueryResult> RunQueryAsync(Query query, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         return await new QueryExecutor(conn, null).ExecuteAsync(query, ct);
@@ -235,7 +235,7 @@ public sealed class ListenerRegistry(NpgsqlDataSource source) : IChangeFeedConsu
 
     internal sealed class ListenerGroup
     {
-        public ListenerGroup(string key, QueryAst query)
+        public ListenerGroup(string key, Query query)
         {
             Key = key;
             Query = query;
@@ -244,8 +244,8 @@ public sealed class ListenerRegistry(NpgsqlDataSource source) : IChangeFeedConsu
         }
 
         public string Key { get; }
-        public QueryAst Query { get; }
-        public FilterAst? Predicate { get; }
+        public Query Query { get; }
+        public Filter? Predicate { get; }
         public bool PredicateFailed { get; }
         public SemaphoreSlim Semaphore { get; } = new(1, 1);
         public object Gate { get; } = new();

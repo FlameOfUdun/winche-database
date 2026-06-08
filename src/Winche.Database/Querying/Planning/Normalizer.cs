@@ -5,16 +5,16 @@ using Winche.Database.Values;
 namespace Winche.Database.Querying.Planning;
 
 /// <summary>
-/// QueryAst → LogicalPlan. This is where Firestore's query rules live:
+/// Query → LogicalPlan. This is where Firestore's query rules live:
 /// __name__ tiebreaker, implicit Exists for orderBy fields, null-filter rewrites,
 /// cursor inclusivity mapping, limit+1, and all validation.
 /// </summary>
-public static class Normalizer
+internal static class Normalizer
 {
     public const int DefaultLimit = 100;
     private static readonly FieldPath Name = FieldPath.Parse("__name__");
 
-    public static LogicalPlan Normalize(QueryAst q)
+    public static LogicalPlan Normalize(Query q)
     {
         if (string.IsNullOrEmpty(q.Collection))
             throw new PlanValidationException("EMPTY_COLLECTION", "'collection' must be non-empty.");
@@ -40,7 +40,7 @@ public static class Normalizer
 
     // ── Sort keys: append __name__ tiebreaker with the last key's direction ──
 
-    private static List<SortKey> BuildSortKeys(IReadOnlyList<OrderAst>? orderBy)
+    private static List<SortKey> BuildSortKeys(IReadOnlyList<Ordering>? orderBy)
     {
         var keys = (orderBy ?? []).Select(o => new SortKey(o.Field, o.Direction)).ToList();
         if (!keys.Any(k => k.Field.Equals(Name)))
@@ -50,13 +50,13 @@ public static class Normalizer
 
     // ── Predicate: implicit Exists for orderBy fields + validated/rewritten user filter ──
 
-    private static FilterAst? BuildPredicate(FilterAst? where, IReadOnlyList<OrderAst>? orderBy)
+    private static Filter? BuildPredicate(Filter? where, IReadOnlyList<Ordering>? orderBy)
     {
-        var parts = new List<FilterAst>();
+        var parts = new List<Filter>();
 
         foreach (var o in orderBy ?? [])
             if (!o.Field.Equals(Name))
-                parts.Add(new UnaryFilterAst(o.Field, UnaryOp.Exists));
+                parts.Add(new UnaryFilter(o.Field, UnaryOp.Exists));
 
         if (where is not null)
             parts.Add(FilterRules.Prepare(where));
@@ -65,13 +65,13 @@ public static class Normalizer
         {
             0 => null,
             1 => parts[0],
-            _ => new CompositeFilterAst(CompositeOp.And, parts),
+            _ => new CompositeFilter(CompositeOp.And, parts),
         };
     }
 
     // ── Cursors ───────────────────────────────────────────────────────────────
 
-    private static CursorRangeNode? BuildCursorRange(CursorAst? start, CursorAst? end, IReadOnlyList<SortKey> sortKeys)
+    private static CursorRangeNode? BuildCursorRange(Cursor? start, Cursor? end, IReadOnlyList<SortKey> sortKeys)
     {
         if (start is null && end is null) return null;
 
@@ -80,7 +80,7 @@ public static class Normalizer
             Upper: end is null ? null : new SortBoundary(ValidateCursor(end, sortKeys, "end"), Inclusive: !end.Before));
     }
 
-    private static IReadOnlyList<Value> ValidateCursor(CursorAst cursor, IReadOnlyList<SortKey> sortKeys, string which)
+    private static IReadOnlyList<Value> ValidateCursor(Cursor cursor, IReadOnlyList<SortKey> sortKeys, string which)
     {
         if (cursor.Values.Count == 0 || cursor.Values.Count > sortKeys.Count)
             throw new PlanValidationException("CURSOR_ARITY",
@@ -104,13 +104,13 @@ internal static class FilterRules
         field.Segments.Count == 1 && field.Segments[0] == "__name__";
 
     /// <summary>Validate then apply null rewrites.</summary>
-    internal static FilterAst Prepare(FilterAst f) => Rewrite(Validate(f));
+    internal static Filter Prepare(Filter f) => Rewrite(Validate(f));
 
-    internal static FilterAst Validate(FilterAst f)
+    internal static Filter Validate(Filter f)
     {
         switch (f)
         {
-            case CompositeFilterAst c:
+            case CompositeFilter c:
                 if (c.Filters.Count == 0)
                     throw new PlanValidationException("EMPTY_COMPOSITE", $"'{c.Op}' must have at least one child.");
                 if (c.Op == CompositeOp.Not && c.Filters.Count != 1)
@@ -118,7 +118,7 @@ internal static class FilterRules
                 foreach (var child in c.Filters) Validate(child);
                 break;
 
-            case FieldFilterAst ff:
+            case FieldFilter ff:
                 if (IsNameField(ff.Field))
                 {
                     if (ff.Op is not (FilterOperator.Eq or FilterOperator.Ne or FilterOperator.Gt
@@ -132,13 +132,13 @@ internal static class FilterRules
                 }
                 break;
 
-            case UnaryFilterAst uf:
+            case UnaryFilter uf:
                 if (IsNameField(uf.Field))
                     throw new PlanValidationException("NAME_OPERATOR",
                         "__name__ supports eq/ne/gt/gte/lt/lte only.");
                 break;
 
-            case FieldCompareAst cmp:
+            case FieldCompare cmp:
                 if (cmp.Op is not (FilterOperator.Eq or FilterOperator.Ne or FilterOperator.Gt
                     or FilterOperator.Gte or FilterOperator.Lt or FilterOperator.Lte))
                     throw new PlanValidationException("COMPARE_OP",
@@ -148,7 +148,7 @@ internal static class FilterRules
         return f;
     }
 
-    internal static void ValidateOperand(FieldFilterAst f)
+    internal static void ValidateOperand(FieldFilter f)
     {
         switch (f.Op)
         {
@@ -171,20 +171,20 @@ internal static class FilterRules
     }
 
     /// <summary>Eq null → IsNull; Ne null → Exists AND NOT IsNull. Recurses through composites.</summary>
-    internal static FilterAst Rewrite(FilterAst f) => f switch
+    internal static Filter Rewrite(Filter f) => f switch
     {
-        FieldFilterAst { Op: FilterOperator.Eq, Operand: NullValue } ff =>
-            new UnaryFilterAst(ff.Field, UnaryOp.IsNull),
+        FieldFilter { Op: FilterOperator.Eq, Operand: NullValue } ff =>
+            new UnaryFilter(ff.Field, UnaryOp.IsNull),
 
-        FieldFilterAst { Op: FilterOperator.Ne, Operand: NullValue } ff =>
-            new CompositeFilterAst(CompositeOp.And,
+        FieldFilter { Op: FilterOperator.Ne, Operand: NullValue } ff =>
+            new CompositeFilter(CompositeOp.And,
             [
-                new UnaryFilterAst(ff.Field, UnaryOp.Exists),
-                new CompositeFilterAst(CompositeOp.Not, [new UnaryFilterAst(ff.Field, UnaryOp.IsNull)]),
-                new CompositeFilterAst(CompositeOp.Not, [new UnaryFilterAst(ff.Field, UnaryOp.IsNan)]),
+                new UnaryFilter(ff.Field, UnaryOp.Exists),
+                new CompositeFilter(CompositeOp.Not, [new UnaryFilter(ff.Field, UnaryOp.IsNull)]),
+                new CompositeFilter(CompositeOp.Not, [new UnaryFilter(ff.Field, UnaryOp.IsNan)]),
             ]),
 
-        CompositeFilterAst c => new CompositeFilterAst(c.Op, [.. c.Filters.Select(Rewrite)]),
+        CompositeFilter c => new CompositeFilter(c.Op, [.. c.Filters.Select(Rewrite)]),
 
         _ => f,
     };

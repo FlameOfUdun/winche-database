@@ -12,17 +12,17 @@ public interface IDocumentDatabase
 {
     Task<Document?> GetAsync(string path, CancellationToken ct = default);
     Task<IReadOnlyList<Document?>> GetAllAsync(IReadOnlyList<string> paths, CancellationToken ct = default);
-    Task<QueryResult> QueryAsync(QueryAst query, CancellationToken ct = default);
-    Task<PipelineResult> AggregateAsync(PipelineAst pipeline, CancellationToken ct = default);
+    Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default);
+    Task<PipelineResult> AggregateAsync(Pipeline pipeline, CancellationToken ct = default);
 
     Task<IReadOnlyList<WriteResult>> WriteAsync(IReadOnlyList<Write> writes, CancellationToken ct = default);
 
     Task<TransactionHandle> BeginTransactionAsync(CancellationToken ct = default);
     Task<Document?> GetAsync(string transactionId, string path, CancellationToken ct = default);
-    Task<QueryResult> QueryAsync(string transactionId, QueryAst query, CancellationToken ct = default);
+    Task<QueryResult> QueryAsync(string transactionId, Query query, CancellationToken ct = default);
     Task<IReadOnlyList<WriteResult>> CommitTransactionAsync(string transactionId, IReadOnlyList<Write> writes, CancellationToken ct = default);
     Task RollbackTransactionAsync(string transactionId, CancellationToken ct = default);
     Task<T> RunTransactionAsync<T>(Func<TransactionContext, Task<T>> body, TransactionOptions? options = null, CancellationToken ct = default);
 
-    IQueryListener Listen(QueryAst query, ListenOptions? options = null);
+    IQueryListener Listen(Query query, ListenOptions? options = null);
 }
