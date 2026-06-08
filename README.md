@@ -102,7 +102,7 @@ app.MapWincheDatabaseRestApi();              // REST routes under /documents (co
 - **Aggregation pipelines** — Multi-stage pipelines: `match`, `filter`, `lookup`, `unwind`, `group` (with `having`), `project`, `sort`, `limit`, `skip`; 9 accumulators: `count`, `sum`, `avg`, `min`, `max`, `push`, `addToSet`, `first`, `last`
 - **Durable hooks** — Feed-driven, true at-least-once end-to-end; hooks execute inline+sequentially per batch; failed batches retried with capped backoff; hooks fire for writes from any node; cursor persisted across restarts; idempotency required
 - **Filtered secondary indexes** — `IndexDefinition.Where` for partial indexes; agreement tested against engine
-- **Access control** — Per-document and collection-level access rules via Winche.Sentinel; OR semantics (any matching rule grants access); query results filtered post-execution
+- **Access control** — Per-document and collection-level access rules via Winche.Sentinel; OR semantics with default-deny (any matching rule that grants allows; nothing grants ⇒ denied); reads filtered post-execution; aggregations require a dedicated `Aggregate` grant (read access does not imply aggregate access)
 - **PostgreSQL backend** — All data stored as typed JSONB; queries compiled to native PostgreSQL SQL with `winche_rank`/`winche_num`/`winche_text` helper functions; `IMMUTABLE` functions back expression indexes
 
 ## Access Rules
@@ -131,11 +131,15 @@ public class OwnerReadRule : DocumentAccessRule
 }
 ```
 
-**Semantics:** Access is granted if **any** matching rule returns `true` (OR). If no rule matches the path and operation, access is denied.
+**Semantics:** Rules **grant** access; there is no explicit deny (Firestore-style). A request is allowed if **any** rule whose path pattern and `Operations` set match returns `true` (OR). A matching rule that returns `false` does not veto — it simply doesn't grant. If no rule grants, access is denied (default-deny). Registration order does not affect the decision.
+
+Because a grant cannot be revoked by another rule, **grant narrowly**: don't write a broad `**` read grant and expect a more specific rule to restrict it — instead grant read only where it should be allowed (e.g. an owner-scoped rule like the one above) and let default-deny cover the rest.
+
+The operations are `Read`, `Write`, `Delete`, and `Aggregate`.
 
 **Query access** is checked per-document after the query runs — documents for which the caller is denied are silently dropped from the result set, so partial results are returned rather than an error.
 
-**Aggregation access** is checked at the collection level (the `collection` of each `match` or `lookup` stage). Individual result rows are not filtered.
+**Aggregation access** is gated by the dedicated `Aggregate` operation, checked at the collection level on the `collection` of every `match` **and** `lookup` stage before the pipeline runs. It is deny-by-default and independent of `Read`: granting read access to a collection does **not** authorize aggregating over it, because an aggregate result (count/sum/min/max, or `push`/`first`) can reveal information about documents the caller cannot read individually. Every collection whose rows can reach the output — including `lookup` targets — needs its own `Aggregate` grant. Individual result rows are not filtered; the collection-level grant is the entire boundary.
 
 ### Claims Accessor
 

@@ -4,6 +4,7 @@ using Winche.Database.Querying.Ast;
 using Winche.Database.Runtime;
 using Winche.Database.Runtime.Writes;
 using Winche.Database.Values;
+using Winche.Sentinel.Models;
 
 namespace Winche.Database.Sample.Configurations;
 
@@ -25,7 +26,7 @@ public static class AccessRuleSmokeTest
         await ScenarioQueryNoMatchingRuleDenies(db, claimsAccessor);
 
         await CleanSlateAsync(core);
-        await ScenarioAggregationCollectionLevelOnly(db, core, claimsAccessor);
+        await ScenarioAggregationRequiresOptIn(db, core, claimsAccessor);
 
         await CleanSlateAsync(core);
         Banner("DONE");
@@ -108,25 +109,25 @@ public static class AccessRuleSmokeTest
         claimsAccessor.SetClaims(new Dictionary<string, object?>());
     }
 
-    private static async Task ScenarioAggregationCollectionLevelOnly(
+    private static async Task ScenarioAggregationRequiresOptIn(
         IDocumentDatabase db, DocumentDatabase core, DocumentClaimsAccessor claimsAccessor)
     {
-        Banner("Scenario 3: AggregateAsync enforces collection-level access, not per-row");
+        Banner("Scenario 3: AggregateAsync requires an explicit Aggregate opt-in (collection-level)");
 
         await core.WriteAsync([new SetWrite { Path = "smoke-users/alice", Fields = Fields(("name", new StringValue("Alice"))) }]);
         await core.WriteAsync([new SetWrite { Path = "smoke-users/bob",   Fields = Fields(("name", new StringValue("Bob"))) }]);
         await core.WriteAsync([new SetWrite { Path = "smoke-users/charlie", Fields = Fields(("name", new StringValue("Charlie"))) }]);
 
-        // uid = "alice" — OwnerReadRule would deny bob and charlie at document level.
-        // But AggregateAsync only checks the collection path "smoke-users", which
-        // matches AllowPublicAccessRule (**). OwnerReadRule (smoke-users/{userId})
-        // does NOT match the collection path "smoke-users" (no userId segment), so
-        // it doesn't participate in the collection-level check.
-        // Result: all 3 rows are returned — aggregation is not per-row filtered.
+        // Aggregation is gated by AccessOperation.Aggregate, NOT Read. SmokeUsersAggregateRule grants
+        // Aggregate on "smoke-users", so aggregation is allowed — and it returns ALL rows. Aggregation
+        // is collection-level and never per-row filtered: per-document rules like OwnerReadRule cannot
+        // protect a scalar aggregate (a sum/count already encodes rows you cannot read), which is
+        // exactly why the Aggregate grant is a separate, deliberate opt-in rather than something Read
+        // implies.
 
         claimsAccessor.SetClaims(new Dictionary<string, object?> { ["uid"] = "alice" });
         Console.WriteLine("Caller: uid = \"alice\" (OwnerReadRule would restrict per-document reads)");
-        Console.WriteLine("  Collection-level check: 'smoke-users' matches AllowPublicAccessRule -> allowed");
+        Console.WriteLine("  'smoke-users' has an Aggregate grant (SmokeUsersAggregateRule) -> allowed");
 
         var pipeline = new PipelineAst([new MatchStageAst("smoke-users", null)]);
 
@@ -134,9 +135,9 @@ public static class AccessRuleSmokeTest
 
         Console.WriteLine($"  AggregateAsync result: {result.Rows.Count} row(s)");
 
-        Assert("all 3 rows returned (no per-row filtering in aggregation)", result.Rows.Count == 3);
+        Assert("all 3 rows returned (aggregation is collection-level, not per-row filtered)", result.Rows.Count == 3);
 
-        // Contrast: QueryAsync on the same data returns only alice's doc.
+        // Contrast: QueryAsync on the same data returns only alice's doc (per-document filtering).
         var query = new QueryAst("smoke-users", Limit: 10);
         var queryResult = await db.QueryAsync(query);
 
@@ -147,6 +148,20 @@ public static class AccessRuleSmokeTest
 
         Assert("aggregation returns more rows than filtered query",
             result.Rows.Count > queryResult.Documents.Count);
+
+        // Deny-by-default: a collection WITHOUT an Aggregate grant is rejected, even though
+        // AllowPublicAccessRule (**) grants Read/Write/Delete to every path. Read does not imply Aggregate.
+        var deniedThrown = false;
+        try
+        {
+            await db.AggregateAsync(new PipelineAst([new MatchStageAst("smoke-secrets", null)]));
+        }
+        catch (NoRulesMatchedException)
+        {
+            deniedThrown = true;
+        }
+        Console.WriteLine("  Aggregating 'smoke-secrets' (no Aggregate grant) -> denied");
+        Assert("aggregation over a collection without an Aggregate grant is denied", deniedThrown);
 
         claimsAccessor.SetClaims(new Dictionary<string, object?>());
     }

@@ -16,6 +16,7 @@ builder.Services
             
         opts.AddDocumentAccessRule<AllowPublicAccessRule>();
         opts.AddDocumentAccessRule<SmokeUsersCollectionReadRule>();
+        opts.AddDocumentAccessRule<SmokeUsersAggregateRule>();
         opts.AddDocumentAccessRule<OwnerReadRule>();
         opts.AddDocumentStoreHook<DocumentUpdateHook>();
         opts.AddIndexDefinition<WildcardIndexDefinition>();

@@ -85,12 +85,39 @@ public class GuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     }
 
     [Fact]
-    public async Task Aggregate_GatesCollections()
+    public async Task Aggregate_GatedByAggregateOp_NotRead()
     {
-        CreateDb(out var guarded, out _, out var rules);
+        CreateDb(out var guarded, out var core, out var rules);
+        await core.WriteAsync([new SetWrite { Path = "private/a", Fields = Map() }]);
+
+        // Denying Read does NOT block aggregation — the gate is Aggregate, not Read.
         rules.Deny.Add((AccessOperation.Read, "private"));
+        var ok = await guarded.AggregateAsync(new PipelineAst([new MatchStageAst("private", null)]));
+        Assert.Single(ok.Rows);
+
+        // Denying Aggregate blocks it.
+        rules.Deny.Add((AccessOperation.Aggregate, "private"));
         await Assert.ThrowsAsync<AccessDeniedException>(() => guarded.AggregateAsync(new PipelineAst(
             [new MatchStageAst("private", null)])));
+    }
+
+    [Fact]
+    public async Task Aggregate_Lookup_RequiresAggregateOnForeignCollection()
+    {
+        CreateDb(out var guarded, out _, out var rules);
+
+        // Source $match is allowed (no deny), but the $lookup foreign collection is denied
+        // Aggregate — a lookup embeds foreign document fields into the pipeline, so the foreign
+        // collection requires the opt-in too. The guard rejects before any SQL runs.
+        rules.Deny.Add((AccessOperation.Aggregate, "customers"));
+
+        var pipeline = new PipelineAst(
+        [
+            new MatchStageAst("orders", null),
+            new LookupStageAst("customers", FieldPath.Parse("customerId"), FieldPath.Parse("__name__"), "customer"),
+        ]);
+
+        await Assert.ThrowsAsync<AccessDeniedException>(() => guarded.AggregateAsync(pipeline));
     }
 
     [Fact]

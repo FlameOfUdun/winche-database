@@ -48,6 +48,12 @@ public sealed class GuardedDocumentDatabase(IDocumentDatabase inner, IAccessRule
 
     public async Task<PipelineResult> AggregateAsync(PipelineAst pipeline, CancellationToken ct = default)
     {
+        // Aggregation is gated by AccessOperation.Aggregate, NOT Read: an aggregate result can reveal
+        // information about documents the caller cannot read individually, so read access does not
+        // imply aggregate access. Every collection whose rows can reach the output requires the
+        // opt-in — the source $match AND every $lookup foreign collection (a lookup embeds foreign
+        // document field values into the pipeline, which $group/$push can surface). Deny-by-default:
+        // absent an Aggregate grant the evaluator throws and the whole pipeline is rejected pre-execution.
         foreach (var stage in pipeline.Stages)
         {
             var collection = stage switch
@@ -57,7 +63,7 @@ public sealed class GuardedDocumentDatabase(IDocumentDatabase inner, IAccessRule
                 _ => null,
             };
             if (collection is not null)
-                await evaluator.EvaluateAsync(AccessOperation.Read, collection, null,
+                await evaluator.EvaluateAsync(AccessOperation.Aggregate, collection, null,
                     _ => Task.FromResult<Document?>(null), ct);
         }
         return await inner.AggregateAsync(pipeline, ct);

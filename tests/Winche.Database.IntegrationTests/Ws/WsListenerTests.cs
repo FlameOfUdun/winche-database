@@ -25,12 +25,12 @@ internal sealed class OwnerOnlyReadRule : DocumentAccessRule
     }
 }
 
-/// <summary>Allows all writes and deletes and reads — used by plain-host tests that don't test access control.</summary>
+/// <summary>Allows all operations (write, delete, read, aggregate) — used by plain-host tests that don't test access control.</summary>
 internal sealed class AllowAllWritesRule : DocumentAccessRule
 {
     public override string Path => "**";
     public override IReadOnlySet<AccessOperation> Operations =>
-        new HashSet<AccessOperation> { AccessOperation.Write, AccessOperation.Delete, AccessOperation.Read };
+        new HashSet<AccessOperation> { AccessOperation.Write, AccessOperation.Delete, AccessOperation.Read, AccessOperation.Aggregate };
 
     public override Task<bool> EvaluateAsync(AccessContext<Document> context, CancellationToken ct) =>
         Task.FromResult(true);

@@ -85,7 +85,7 @@ public sealed class WsTestClient : IAsyncDisposable
     public async Task AssertSilenceAsync(Func<JsonObject, bool> predicate, int windowMs = 1500)
     {
         await Task.Delay(windowMs);
-        lock (_inbox) Assert.Empty(_inbox.Where(predicate));
+        lock (_inbox) Assert.DoesNotContain(_inbox, x => predicate(x));
     }
 
     public Task WaitForCloseAsync(int timeoutMs = 10000) =>

@@ -14,7 +14,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Winche.Sentinel.AspNetCore" Version="2.3.0" />
+    <PackageReference Include="Winche.Sentinel.AspNetCore" Version="3.0.0" />
   </ItemGroup>
 
   <ItemGroup>

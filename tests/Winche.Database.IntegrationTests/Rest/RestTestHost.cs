@@ -55,12 +55,12 @@ public sealed class RestTestHost : IAsyncDisposable
     }
 }
 
-/// <summary>Allows all writes, deletes, and reads — used by REST tests that don't exercise access control.</summary>
+/// <summary>Allows all operations (write, delete, read, aggregate) — used by REST tests that don't exercise access control.</summary>
 internal sealed class RestAllowAllRule : DocumentAccessRule
 {
     public override string Path => "**";
     public override IReadOnlySet<AccessOperation> Operations =>
-        new HashSet<AccessOperation> { AccessOperation.Write, AccessOperation.Delete, AccessOperation.Read };
+        new HashSet<AccessOperation> { AccessOperation.Write, AccessOperation.Delete, AccessOperation.Read, AccessOperation.Aggregate };
 
     public override Task<bool> EvaluateAsync(AccessContext<Documents.Document> context, CancellationToken ct) =>
         Task.FromResult(true);

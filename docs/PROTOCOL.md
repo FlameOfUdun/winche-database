@@ -622,7 +622,7 @@ These endpoints use literal-colon URL segments. They receive the built-in claims
 | `POST /documents:rollback` | `{"transaction": "id"}` | `{}` | Roll back (idempotent; unknown id is a no-op). |
 | `POST /documents:batchGet` | `{"documents": ["path1","path2",...], "transaction"?: "id"}` | `{"documents": [Document\|null, ...]}` | Bulk read preserving input order; missing docs are `null`. |
 | `POST /documents:runQuery` | `{"query": <QueryAst>, "transaction"?: "id"}` | `{"documents": [...], "hasMore": false}` | Execute a query. Default `limit` = 100 when omitted. |
-| `POST /documents:aggregate` | `{"pipeline": <PipelineAst>}` | `{"rows": [...]}` | Execute an aggregation pipeline. |
+| `POST /documents:aggregate` | `{"pipeline": <PipelineAst>}` | `{"rows": [...]}` | Execute an aggregation pipeline. Requires the `Aggregate` access operation on every `match`/`lookup` collection — distinct from `Read`, deny-by-default — else `PERMISSION_DENIED`. |
 
 ### 7.3 Request/response examples
 
