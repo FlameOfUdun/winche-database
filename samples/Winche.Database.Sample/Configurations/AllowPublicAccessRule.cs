@@ -12,7 +12,7 @@ internal class AllowPublicAccessRule : DocumentAccessRule
 {
     public override string Path => "**";
 
-    public override IReadOnlySet<AccessOperation> Operations => new HashSet<AccessOperation> { AccessOperation.Read, AccessOperation.Write, AccessOperation.Delete, AccessOperation.Aggregate };
+    public override IReadOnlySet<AccessOperation> Operations => new HashSet<AccessOperation> { AccessOperation.Write, AccessOperation.Delete };
 
     public override async Task<bool> EvaluateAsync(AccessContext<Document> context, CancellationToken ct)
     {
