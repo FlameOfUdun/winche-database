@@ -114,7 +114,7 @@ The built-in claims/exception filters are always applied internally and run oute
 - **Aggregation pipelines** — Multi-stage pipelines: `match`, `filter`, `lookup`, `unwind`, `group` (with `having`), `project`, `sort`, `limit`, `skip`; 9 accumulators: `count`, `sum`, `avg`, `min`, `max`, `push`, `addToSet`, `first`, `last`
 - **Durable hooks** — Feed-driven, true at-least-once end-to-end; hooks execute inline+sequentially per batch; failed batches retried with capped backoff; hooks fire for writes from any node; cursor persisted across restarts; idempotency required
 - **Secondary indexes** — composite expression indexes per collection; `IndexDefinition.Where` for filtered/partial indexes (agreement tested against engine); **wildcard `Path` patterns** back a whole family of sibling subcollections from one definition (see below)
-- **Access control** — Per-document and collection-level access rules via Winche.Sentinel; OR semantics with default-deny (any matching rule that grants allows; nothing grants ⇒ denied); reads filtered post-execution; aggregations require a dedicated `Aggregate` grant (read access does not imply aggregate access)
+- **Access control** — Per-document and collection-level access rules via Winche.Sentinel; OR semantics with default-deny (any matching rule that grants allows; nothing grants ⇒ denied); reads filtered post-execution; counts and aggregations require a dedicated `Aggregate` grant (read access does not imply aggregate access)
 - **PostgreSQL backend** — All data stored as typed JSONB; queries compiled to native PostgreSQL SQL with `winche_rank`/`winche_num`/`winche_text` helper functions; `IMMUTABLE` functions back expression indexes
 
 ## Secondary Indexes
@@ -253,6 +253,7 @@ public interface IDocumentDatabase
     Task<Document?> GetAsync(string path, CancellationToken ct = default);
     Task<IReadOnlyList<Document?>> GetAllAsync(IReadOnlyList<string> paths, CancellationToken ct = default);
     Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default);
+    Task<long> CountAsync(Query query, CancellationToken ct = default);
     Task<PipelineResult> AggregateAsync(Pipeline pipeline, CancellationToken ct = default);
 
     // Writes — every mutation is a Write[]; singles are sugar
@@ -323,6 +324,19 @@ var nextPage = new Query("users", OrderBy: [...], Limit: 25, Start: cursor);
 ```
 
 `Before: false` = `startAfter` (exclusive); `Before: true` = `startAt` (inclusive). Mirror for `End`.
+
+### Counting documents
+
+`CountAsync` runs a `COUNT(*)` over the same match as `QueryAsync`, returning a `long` instead of materializing documents — reusing the `Query`'s collection, filter, and cursor bounds:
+
+```csharp
+var total   = await db.CountAsync(new Query("users"));                                   // whole collection
+var active  = await db.CountAsync(new Query("users",
+    Where: new FieldFilter(FieldPath.Parse("score"), FilterOperator.Gte, new IntegerValue(50))));
+var capped  = await db.CountAsync(new Query("users", Limit: 1000));                       // count is capped at 1000
+```
+
+An explicit `Limit` **caps** the count (Firestore `count()` semantics); an absent limit counts the full match. Like aggregation, counting is gated by the `Aggregate` access grant (a count can reveal information about documents the caller cannot read individually) and is enforced at the collection level — row-level read rules are not applied, so scope the count by adding the constraining filter to the query itself.
 
 ## Aggregation Pipelines
 
@@ -401,6 +415,7 @@ Mapped under `/documents` by default (configurable via `MapWincheDatabaseRestApi
 | `POST` | `/documents:rollback` | Roll back a transaction (idempotent; unknown id is a no-op) |
 | `POST` | `/documents:batchGet` | Bulk read preserving input order; missing docs are `null` |
 | `POST` | `/documents:runQuery` | Execute a query |
+| `POST` | `/documents:count` | Count documents matching a query (returns `{ "count": N }`) |
 | `POST` | `/documents:aggregate` | Execute an aggregation pipeline |
 
 Access rules are enforced on all routes. The claims accessor runs as an endpoint filter before every request.
@@ -420,6 +435,7 @@ Connect at `/documents/ws`. All operations are exchanged as typed JSON messages 
 | `doc.get` | C→S | Get a document |
 | `doc.getAll` | C→S | Get multiple documents (preserves order, null for missing) |
 | `query` | C→S | Execute a one-shot query |
+| `count` | C→S | Count documents matching a query (returns `{ "count": N }`) |
 | `aggregate` | C→S | Execute an aggregation pipeline |
 | `write` | C→S | Atomic write batch |
 | `tx.begin` | C→S | Start an optimistic transaction |

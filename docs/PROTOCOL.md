@@ -622,6 +622,7 @@ These endpoints use literal-colon URL segments. They receive the built-in claims
 | `POST /documents:rollback` | `{"transaction": "id"}` | `{}` | Roll back (idempotent; unknown id is a no-op). |
 | `POST /documents:batchGet` | `{"documents": ["path1","path2",...], "transaction"?: "id"}` | `{"documents": [Document\|null, ...]}` | Bulk read preserving input order; missing docs are `null`. |
 | `POST /documents:runQuery` | `{"query": <Query>, "transaction"?: "id"}` | `{"documents": [...], "hasMore": false}` | Execute a query. Default `limit` = 100 when omitted. |
+| `POST /documents:count` | `{"query": <Query>}` | `{"count": N}` | Count documents matching the query. An explicit `limit` caps the count; omitted = full match (the 100 default does **not** apply). Requires the `Aggregate` access operation on the collection — distinct from `Read`, deny-by-default — else `PERMISSION_DENIED`. |
 | `POST /documents:aggregate` | `{"pipeline": <Pipeline>}` | `{"rows": [...]}` | Execute an aggregation pipeline. Requires the `Aggregate` access operation on every `match`/`lookup` collection — distinct from `Read`, deny-by-default — else `PERMISSION_DENIED`. |
 
 ### 7.3 Request/response examples
@@ -686,6 +687,21 @@ POST /documents:runQuery
 
 200 OK
 {"documents": [...], "hasMore": false}
+```
+
+**:count**
+
+```json
+POST /documents:count
+{
+  "query": {
+    "collection": "users",
+    "where": {"field": "score", "op": "gte", "value": {"integerValue": "50"}}
+  }
+}
+
+200 OK
+{"count": 42}
 ```
 
 **:aggregate**
@@ -793,10 +809,14 @@ Client: {"type": "query", "id": "3",
          "query": {"collection": "users", "where": {"field": "score", "op": "gt", "value": {"integerValue": "0"}}}}
 Server: {"type": "response", "id": "3", "result": {"documents": [...], "hasMore": false}}
 
-Client: {"type": "aggregate", "id": "4",
+Client: {"type": "count", "id": "4",
+         "query": {"collection": "users", "where": {"field": "score", "op": "gte", "value": {"integerValue": "50"}}}}
+Server: {"type": "response", "id": "4", "result": {"count": 42}}
+
+Client: {"type": "aggregate", "id": "5",
          "pipeline": {"pipeline": [{"match": {"collection": "users"}},
                                    {"group": {"keys": [], "accumulators": [{"as": "n", "fn": "count"}]}}]}}
-Server: {"type": "response", "id": "4", "result": {"rows": [{"n": {"integerValue": "5"}}]}}
+Server: {"type": "response", "id": "5", "result": {"rows": [{"n": {"integerValue": "5"}}]}}
 ```
 
 #### Writes
