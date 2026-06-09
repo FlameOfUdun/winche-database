@@ -64,6 +64,12 @@ public sealed class DocumentDatabase : IDocumentDatabase
         return await new QueryExecutor(conn, null, _scopes).ExecuteAsync(query, ct);
     }
 
+    public async Task<long> CountAsync(Query query, CancellationToken ct = default)
+    {
+        await using var conn = await _source.OpenConnectionAsync(ct);
+        return await new QueryExecutor(conn, null, _scopes).CountAsync(query, ct);
+    }
+
     public async Task<PipelineResult> AggregateAsync(Pipeline pipeline, CancellationToken ct = default)
     {
         await using var conn = await _source.OpenConnectionAsync(ct);

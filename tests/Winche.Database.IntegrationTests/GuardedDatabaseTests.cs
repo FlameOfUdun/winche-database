@@ -102,6 +102,25 @@ public class GuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     }
 
     [Fact]
+    public async Task Count_GatedByAggregateOp_NotRead()
+    {
+        CreateDb(out var guarded, out var core, out var rules);
+        await core.WriteAsync(
+        [
+            new SetWrite { Path = "private/a", Fields = Map() },
+            new SetWrite { Path = "private/b", Fields = Map() },
+        ]);
+
+        // Denying Read does NOT block counting — the gate is Aggregate, not Read.
+        rules.Deny.Add((AccessOperation.Read, "private"));
+        Assert.Equal(2, await guarded.CountAsync(new Query("private")));
+
+        // Denying Aggregate blocks it (deny-by-default; count is collection-level).
+        rules.Deny.Add((AccessOperation.Aggregate, "private"));
+        await Assert.ThrowsAsync<AccessDeniedException>(() => guarded.CountAsync(new Query("private")));
+    }
+
+    [Fact]
     public async Task Aggregate_Lookup_RequiresAggregateOnForeignCollection()
     {
         CreateDb(out var guarded, out _, out var rules);

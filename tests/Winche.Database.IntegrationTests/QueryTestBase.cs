@@ -33,6 +33,12 @@ public abstract class QueryTestBase(PostgresFixture fx) : IAsyncLifetime
     protected async Task<List<string>> Ids(Query query) =>
         [.. (await Run(query)).Documents.Select(d => d.Id)];
 
+    protected async Task<long> Count(Query query)
+    {
+        await using var conn = await Fx.DataSource.OpenConnectionAsync();
+        return await new QueryExecutor(conn, null).CountAsync(query);
+    }
+
     /// <summary>Shorthand: query collection "c" filtered on field "f".</summary>
     protected Task<List<string>> Filter(FilterOperator op, Value operand) =>
         Ids(new Query("c", Where: new FieldFilter(F("f"), op, operand)));

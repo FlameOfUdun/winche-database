@@ -11,6 +11,7 @@ namespace Winche.Database.AspNetCore.WebSockets.Protocol;
 [JsonDerivedType(typeof(DocGetMessage), "doc.get")]
 [JsonDerivedType(typeof(DocGetAllMessage), "doc.getAll")]
 [JsonDerivedType(typeof(QueryMessage), "query")]
+[JsonDerivedType(typeof(CountMessage), "count")]
 [JsonDerivedType(typeof(AggregateMessage), "aggregate")]
 [JsonDerivedType(typeof(WriteMessage), "write")]
 [JsonDerivedType(typeof(TxBeginMessage), "tx.begin")]
@@ -49,6 +50,11 @@ public sealed record DocGetAllMessage : ClientMessage
 }
 
 public sealed record QueryMessage : ClientMessage
+{
+    [JsonPropertyName("query")] public required Query Query { get; init; }
+}
+
+public sealed record CountMessage : ClientMessage
 {
     [JsonPropertyName("query")] public required Query Query { get; init; }
 }

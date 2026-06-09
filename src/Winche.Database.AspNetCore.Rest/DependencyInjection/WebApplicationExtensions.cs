@@ -26,7 +26,7 @@ public static class WebApplicationExtensions
 
     /// <summary>
     /// Maps the REST surface (CRUD + ping under <c>/{prefix}</c>, plus the colon-verb operations
-    /// <c>:commit</c>/<c>:beginTransaction</c>/<c>:rollback</c>/<c>:batchGet</c>/<c>:runQuery</c>/<c>:aggregate</c>)
+    /// <c>:commit</c>/<c>:beginTransaction</c>/<c>:rollback</c>/<c>:batchGet</c>/<c>:runQuery</c>/<c>:count</c>/<c>:aggregate</c>)
     /// and returns a single <see cref="IEndpointConventionBuilder"/> covering ALL of them. Apply
     /// cross-cutting policy on it — e.g. <c>.RequireAuthorization()</c>, rate limiting, CORS — and it
     /// lands on every endpoint including the verbs. The built-in claims/exception filters are always
@@ -169,6 +169,21 @@ public static class WebApplicationExtensions
                 ? await db.QueryAsync(query, ct)
                 : await db.QueryAsync(transaction, query, ct);
             return Results.Json(result, statusCode: 200, contentType: "application/json");
+        });
+
+        Verb("count", async (HttpRequest request, IDocumentDatabase db, CancellationToken ct) =>
+        {
+            var node = (await JsonNode.ParseAsync(request.Body, cancellationToken: ct))?.AsObject()
+                ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "Request body must be a JSON object");
+            var queryNode = node["query"]
+                ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "'query' is required");
+            var query = queryNode.Deserialize<Query>(new System.Text.Json.JsonSerializerOptions
+            {
+                Converters = { new Querying.Ast.Serialization.QueryAstJsonConverter() }
+            });
+            if (query is null) throw new RuntimeException(RuntimeStatus.InvalidArgument, "'query' must be a valid query object");
+            var count = await db.CountAsync(query, ct);
+            return Results.Json(new { count }, statusCode: 200, contentType: "application/json");
         });
 
         Verb("aggregate", async (HttpRequest request, IDocumentDatabase db, CancellationToken ct) =>

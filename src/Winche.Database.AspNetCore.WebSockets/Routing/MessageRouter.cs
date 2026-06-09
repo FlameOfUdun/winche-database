@@ -34,6 +34,7 @@ public sealed class MessageRouter(DependencyInjection.IWsAuthenticator authentic
                 DocGetMessage get => Ok(id!, new JsonObject { ["document"] = ToNode(await scope.Db.GetAsync(get.Path, ct)) }),
                 DocGetAllMessage getAll => Ok(id!, new JsonObject { ["documents"] = new JsonArray([.. (await scope.Db.GetAllAsync(getAll.Paths, ct)).Select(ToNode)]) }),
                 QueryMessage query => Ok(id!, ToNode(await scope.Db.QueryAsync(query.Query, ct))!.AsObject()),
+                CountMessage count => Ok(id!, new JsonObject { ["count"] = await scope.Db.CountAsync(count.Query, ct) }),
                 AggregateMessage agg => Ok(id!, ToNode(await scope.Db.AggregateAsync(agg.Pipeline, ct))!.AsObject()),
                 WriteMessage write => Ok(id!, WriteResultsBody(await scope.Db.WriteAsync(WriteWireParser.Parse(write.Writes), ct))),
                 TxBeginMessage => await HandleTxBegin(scope, id!, ct),

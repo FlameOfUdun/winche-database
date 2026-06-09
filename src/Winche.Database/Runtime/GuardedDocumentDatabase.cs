@@ -46,6 +46,18 @@ public sealed class GuardedDocumentDatabase(IDocumentDatabase inner, IAccessRule
         return result with { Documents = await FilterReadable(result.Documents, ct) };
     }
 
+    public async Task<long> CountAsync(Query query, CancellationToken ct = default)
+    {
+        // Gated by Aggregate, NOT Read — same reasoning as AggregateAsync: a count is a COUNT(*)
+        // aggregate that can reveal information about documents the caller cannot read per-document,
+        // so read access does not imply count access. Collection-level, deny-by-default; row-level
+        // Read rules do NOT apply (a scalar result has no rows to filter). Scope the count by adding
+        // the constraining filter to the query itself.
+        await evaluator.EvaluateAsync(AccessOperation.Aggregate, query.Collection, null,
+            _ => Task.FromResult<Document?>(null), ct);
+        return await inner.CountAsync(query, ct);
+    }
+
     public async Task<PipelineResult> AggregateAsync(Pipeline pipeline, CancellationToken ct = default)
     {
         // Aggregation is gated by AccessOperation.Aggregate, NOT Read: an aggregate result can reveal

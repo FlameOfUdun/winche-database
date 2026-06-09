@@ -13,6 +13,7 @@ public interface IDocumentDatabase
     Task<Document?> GetAsync(string path, CancellationToken ct = default);
     Task<IReadOnlyList<Document?>> GetAllAsync(IReadOnlyList<string> paths, CancellationToken ct = default);
     Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default);
+    Task<long> CountAsync(Query query, CancellationToken ct = default);
     Task<PipelineResult> AggregateAsync(Pipeline pipeline, CancellationToken ct = default);
 
     Task<IReadOnlyList<WriteResult>> WriteAsync(IReadOnlyList<Write> writes, CancellationToken ct = default);

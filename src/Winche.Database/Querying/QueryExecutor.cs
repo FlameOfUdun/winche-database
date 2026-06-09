@@ -25,4 +25,21 @@ public sealed class QueryExecutor(NpgsqlConnection conn, NpgsqlTransaction? tx, 
         var hasMore = docs.Count > limit;
         return new QueryResult(hasMore ? docs.Take(limit).ToList() : docs, hasMore);
     }
+
+    /// <summary>
+    /// COUNT(*) over the same match as <see cref="ExecuteAsync"/>. An explicit <see cref="Query.Limit"/>
+    /// caps the count (Firestore semantics); an absent limit counts the full match — the Normalizer's
+    /// default page size does NOT apply.
+    /// </summary>
+    public async Task<long> CountAsync(Query query, CancellationToken ct = default)
+    {
+        var plan = Normalizer.Normalize(query);
+        var compiled = CountSql.Compile(plan, query.Limit, scopes?.ScopeRegexes(query.Collection));
+
+        await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        compiled.Apply(cmd);
+
+        return Convert.ToInt64(await cmd.ExecuteScalarAsync(ct));
+    }
 }
