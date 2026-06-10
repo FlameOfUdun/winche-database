@@ -53,7 +53,15 @@ public static class QueryParser
         var start = json["start"] is { } s ? ParseCursor(s, "$.start") : null;
         var end = json["end"] is { } e ? ParseCursor(e, "$.end") : null;
 
-        return new Query(collection, where, orderBy, limit, start, end);
+        IReadOnlyList<FieldPath>? select = null;
+        if (json["select"] is { } sel)
+        {
+            if (sel is not JsonArray selArr)
+                throw new QueryParseException("'select' must be an array", "$.select");
+            select = [.. selArr.Select((n, i) => ParseFieldPath(n, $"$.select[{i}]"))];
+        }
+
+        return new Query(collection, where, orderBy, limit, start, end, select);
     }
 
     public static Filter ParseFilter(JsonNode node, string path)

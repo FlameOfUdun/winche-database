@@ -4,21 +4,20 @@
 
 A JSON document database layer built on top of PostgreSQL. Store, query, and subscribe to JSON documents — with PostgreSQL as the storage backend via JSONB.
 
-Supports real-time live queries with indexed delta listeners, optimistic ACID transactions, aggregation pipelines, durable document lifecycle hooks, filtered secondary indexes, and integrates with [Winche.Sentinel](https://github.com/FlameOfUdun/winche-sentinel) for per-document access control.
+Supports real-time live queries with indexed delta listeners, optimistic ACID transactions, durable document lifecycle hooks, filtered secondary indexes, and a built-in Firestore-style access-rules engine (Winche.Rules).
 
-**Protocol and migration docs:**
+**Protocol docs:**
 
-- [PROTOCOL](docs/PROTOCOL.md) — complete v3 wire format reference (values, writes, queries, pipelines, REST API, WebSocket protocol)
-- [RELEASE-NOTES-v3](docs/RELEASE-NOTES-v3.md) — breaking changes and behavior changes from v2
+- [PROTOCOL](docs/PROTOCOL.md) — wire format reference (values, writes, queries, REST API, WebSocket protocol)
 
 ## Packages
 
 | Package | Description |
 | --- | --- |
-| `Winche.Database` | Core document store: typed values, CRUD, queries, transactions, live listeners, aggregation pipelines, hooks, filtered indexes, and access rule framework |
-| `Winche.Database.AspNetCore` | Shared ASP.NET Core abstractions: `DocumentClaimsAccessor` and the `SetCallerClaimsAccessor` registration extension |
+| `Winche.Database` | Core document store: typed values, CRUD, queries, transactions, live listeners, hooks, filtered indexes, and Firestore-style access rules (Winche.Rules) |
+| `Winche.Database.AspNetCore` | Shared ASP.NET Core abstractions: `DocumentClaimsAccessor` and the `MapClaims` registration extension |
 | `Winche.Database.AspNetCore.Rest` | ASP.NET Core minimal API REST endpoints |
-| `Winche.Database.AspNetCore.WebSockets` | ASP.NET Core WebSocket protocol v3, real-time delta listeners, and connection management |
+| `Winche.Database.AspNetCore.WebSockets` | ASP.NET Core WebSocket transport, real-time delta listeners, and connection management |
 
 ## Install
 
@@ -54,6 +53,8 @@ using Winche.Database.DependencyInjection;
 using Winche.Database.AspNetCore.DependencyInjection;
 using Winche.Database.AspNetCore.Rest.DependencyInjection;
 using Winche.Database.AspNetCore.WebSockets.DependencyInjection;
+using Winche.Rules;
+using Winche.Rules.Expressions;
 
 builder.Services
     .AddWincheDatabase(config =>
@@ -64,57 +65,64 @@ builder.Services
         // Store behavior (optional; these are the defaults)
         config.TransactionConfig = new() { IdleTimeoutSpan = TimeSpan.FromMinutes(1) };
 
-        // Access rules (evaluated on every protected operation)
-        config.AddDocumentAccessRule<MyReadRule>();
-        config.AddDocumentAccessRule<MyWriteRule>();
+        // Firestore-style access rules (evaluated in memory on every operation)
+        config.UseRules(r =>
+            r.Match("users/{userId}", u =>
+            {
+                u.Allow(RuleOperations.Read,  Expr.Auth("uid").Eq(Expr.Param("userId")));
+                u.Allow(RuleOperations.Write, Expr.Auth("uid").Eq(Expr.Param("userId")));
+            }));
 
         // Document lifecycle hooks (at-least-once, feed-driven, must be idempotent)
-        config.AddDocumentStoreHook<MyHook>();
+        config.AddHook<MyHook>();
 
-        // Secondary index definitions
-        config.AddIndexDefinition<MyIndexDefinition>();
+        // Secondary indexes
+        config.UseIndexes(i => i.Add("userData/*/sessionHistory", new IndexField("startedAt", SortDirection.Desc)));
 
-        // Claims accessor — reads auth context from the HTTP request or WebSocket connection
-        config.SetCallerClaimsAccessor<MyClaimsAccessor>();
+        // Claims — maps the request principal to caller claims (DI available via http.RequestServices)
+        config.MapClaims(http => new Dictionary<string, object?> { ["uid"] = http.User.FindFirst("sub")?.Value });
     })
     .AddWincheDatabaseWsApi();   // WebSocket transport
 ```
 
-`SetCallerClaimsAccessor` is provided by `Winche.Database.AspNetCore.DependencyInjection` and registers the accessor for both the REST and WebSocket transports in one call.
+`MapClaims` is provided by `Winche.Database.AspNetCore.DependencyInjection` and registers the accessor for both the REST and WebSocket transports in one call.
 
 ### 3. Initialize schema and map routes
 
 ```csharp
 await app.InitializeWincheDatabaseAsync();   // Creates winche_* tables/functions and syncs indexes
+app.UseWincheWsQueryToken();                 // surfaces ?access_token= to your auth scheme (before UseAuthentication)
+app.UseAuthentication();
 app.UseWebSockets();                         // required before mapping the WS endpoint
-app.MapWincheDatabaseWsApi();                // WebSocket endpoint: /documents/ws
-app.MapWincheDatabaseRestApi();              // REST routes under /documents (configurable)
+app.MapWincheDatabaseWsApi().RequireAuthorization();   // WebSocket endpoint: /documents/ws
+app.MapWincheDatabaseRestApi();                        // REST routes under /documents (configurable)
 ```
 
-Both `Map*` methods return an `IEndpointConventionBuilder` covering **all** of their endpoints — for REST that includes the CRUD routes *and* every colon-verb (`:commit`, `:runQuery`, `:aggregate`, …); for WS the upgrade route. Apply cross-cutting policy on it once and it lands everywhere:
+Both `Map*` methods return an `IEndpointConventionBuilder` covering **all** of their endpoints — for REST that includes the CRUD routes *and* every colon-verb (`:commit`, `:runQuery`, …); for WS the upgrade route. Apply cross-cutting policy on it once and it lands everywhere:
 
 ```csharp
-app.MapWincheDatabaseRestApi().RequireAuthorization();   // CRUD AND :commit/:runQuery/:aggregate/…
-app.MapWincheDatabaseWsApi().RequireRateLimiting("ws");  // throttle socket upgrades
+app.MapWincheDatabaseRestApi().RequireAuthorization();  // CRUD AND :commit/:runQuery/…
+app.MapWincheDatabaseWsApi().RequireRateLimiting("ws"); // throttle socket upgrades
 ```
 
 The built-in claims/exception filters are always applied internally and run outermost, so caller conventions compose on top of them.
 
-> **WebSocket auth is in-band, not at the upgrade.** A WS connection authenticates via the token in its `hello` frame, validated by `IWsAuthenticator` (this exists because browsers can't set request headers on the upgrade). Do **not** rely on `.RequireAuthorization()` to secure WS — it gates the HTTP *upgrade* against `HttpContext.User` and is independent of the hello token. Use it only as an optional defense-in-depth gate, and only if you have a scheme that authenticates the upgrade request itself (cookies, or a query-string token — not a bearer header).
+> **WebSocket authentication is at the HTTP upgrade.** Browsers cannot set `Authorization` headers on WebSocket upgrades, so the library provides `app.UseWincheWsQueryToken()` — middleware that promotes a `?access_token=<jwt>` query parameter to an `Authorization: Bearer …` header so your existing auth scheme (JWT bearer, etc.) can validate it at the upgrade. Place it **before** `app.UseAuthentication()`. The library does **not** validate the token; that is the responsibility of your registered authentication handler. Once the upgrade succeeds, `HttpContext.User` is populated for the lifetime of the connection and the server sends a `welcome` frame immediately — there is no in-band `hello` handshake or `auth.refresh` message. Gate with `.RequireAuthorization()` to reject unauthenticated upgrades before the socket is accepted. Connect at `/documents/ws?access_token=<jwt>`.
+>
+> **Security notes:** always require TLS in production (tokens in query strings appear in server logs and proxies); use short-lived tokens and reconnect on expiry.
 
 ## Features
 
 - **typed engine** — 11 tagged value types (`null`, `bool`, `int64`, `double`, `timestamp`, `string`, `bytes`, `reference`, `geopoint`, `array`, `map`); cross-type total order; same-type-class inequality semantics; `__name__` tiebreaker; int/double numeric equality
 - **Document storage** — Store documents as typed field maps; each document carries `path`, `id`, `collection`, `createTime`, `updateTime`, and `version` metadata
-- **Querying** — 15 filter operators (including Winche extensions: `arrayContainsAll`, `contains`, `startsWith`, `endsWith`, `regex`, field-compare); `and`/`or`/`not` composites; `orderBy` with `__name__` tiebreaker; cursor-based pagination (`startAt`/`startAfter`/`endAt`/`endBefore`)
+- **Querying** — 15 filter operators (including Winche extensions: `arrayContainsAll`, `contains`, `startsWith`, `endsWith`, `regex`, field-compare); `and`/`or`/`not` composites; `orderBy` with `__name__` tiebreaker; cursor-based pagination (`startAt`/`startAfter`/`endAt`/`endBefore`); field projection via `select`
 - **Live queries with delta listeners** — Subscribe to a query and receive an initial full snapshot, then indexed `added`/`modified`/`removed` deltas with `count` checksum; `listen.snapshot` REPLACES client state, `listen.delta` MUTATES it
 - **Optimistic transactions** — Optimistic read-version ledger; `ABORTED` on conflict with safe retry; `RunTransactionAsync` with automatic retry; reads-before-writes enforced; idle (60 s) and absolute (5 min) timeouts
 - **Batch writes** — Atomic commit of up to 500 `set`/`update`/`delete` operations with field transforms, preconditions, and a single commit timestamp; use `new WriteBatch(db)` for a fluent builder
 - **Field transforms** — `serverTimestamp`, `increment` (saturating int, promotes to double on mixed), `maximum`, `minimum`, `arrayUnion`, `arrayRemove`
-- **Aggregation pipelines** — Multi-stage pipelines: `match`, `filter`, `lookup`, `unwind`, `group` (with `having`), `project`, `sort`, `limit`, `skip`; 9 accumulators: `count`, `sum`, `avg`, `min`, `max`, `push`, `addToSet`, `first`, `last`
 - **Durable hooks** — Feed-driven, true at-least-once end-to-end; hooks execute inline+sequentially per batch; failed batches retried with capped backoff; hooks fire for writes from any node; cursor persisted across restarts; idempotency required
 - **Secondary indexes** — composite expression indexes per collection; `IndexDefinition.Where` for filtered/partial indexes (agreement tested against engine); **wildcard `Path` patterns** back a whole family of sibling subcollections from one definition (see below)
-- **Access control** — Per-document and collection-level access rules via Winche.Sentinel; OR semantics with default-deny (any matching rule that grants allows; nothing grants ⇒ denied); reads filtered post-execution; counts and aggregations require a dedicated `Aggregate` grant (read access does not imply aggregate access)
+- **Access control** — Firestore-style in-memory rules engine (Winche.Rules); OR semantics with default-deny; for `list`/query operations the query must provably satisfy a read rule or it is rejected with PERMISSION_DENIED (rules are not post-filters)
 - **PostgreSQL backend** — All data stored as typed JSONB; queries compiled to native PostgreSQL SQL with `winche_rank`/`winche_num`/`winche_text` helper functions; `IMMUTABLE` functions back expression indexes
 
 ## Secondary Indexes
@@ -125,17 +133,14 @@ with `*` at document-id positions, letting one definition back a whole family of
 subcollections:
 
 ```csharp
-// pattern index — one definition backs every user's per-entity subcollection
-public sealed class SessionHistoryByStartedAt : IndexDefinition
-{
-    public override string Path => "userData/*/sessionHistory";
-    public override IReadOnlyList<IndexField> Fields => [new("startedAt", SortDirection.Desc)];
-}
+// record — one definition backs every user's per-entity subcollection
+config.UseIndexes(i =>
+    i.Add("userData/*/sessionHistory", new IndexField("startedAt", SortDirection.Desc)));
 ```
 
 You may pin some ancestor ids and wildcard others (`orgs/acme/teams/*/members`). Per-entity queries
-(`collection = "userData/alice/sessionHistory"`) and per-entity aggregation pipelines use the matching
-pattern index automatically — **no change to query code**.
+(`collection = "userData/alice/sessionHistory"`) use the matching pattern index automatically —
+**no change to query code**.
 
 Pattern grammar (violations throw `InvalidPathPatternException` at schema-sync):
 
@@ -148,68 +153,93 @@ once — are not yet supported.
 
 ## Access Rules
 
-Access rules determine whether a caller can perform an operation. Implement `DocumentAccessRule` and register it with `AddDocumentAccessRule<T>()`.
+Access rules determine whether a caller can perform an operation. Rules are defined with
+`UseRules(r => r.Match(path, m => m.Allow(operations, condition)))` and evaluated in-memory by
+Winche.Rules on every operation.
 
 ```csharp
-using Winche.Database.Abstraction;
-using Winche.Database.Documents;
-using Winche.Sentinel.Models;
+using Winche.Rules;
+using Winche.Rules.Expressions;
 
-public class OwnerReadRule : DocumentAccessRule
-{
-    // Path pattern: literal segments and {param} wildcards; ** matches any depth
-    public override string Path => "users/{userId}";
-
-    public override IReadOnlySet<AccessOperation> Operations =>
-        new HashSet<AccessOperation> { AccessOperation.Read };
-
-    public override Task<bool> EvaluateAsync(AccessContext<Document> context, CancellationToken ct)
+config.UseRules(r =>
+    r.Match("users/{userId}", u =>
     {
-        var uid = context.Claims.TryGetValue("uid", out var v) ? v as string : null;
-        context.Params.TryGetValue("userId", out var userId);
-        return Task.FromResult(uid != null && uid == userId);
-    }
-}
+        u.Allow(RuleOperations.Read,  Expr.Auth("uid").Eq(Expr.Param("userId")));
+        u.Allow(RuleOperations.Write, Expr.Auth("uid").Eq(Expr.Param("userId")));
+    }));
 ```
 
-**Semantics:** Rules **grant** access; there is no explicit deny (Firestore-style). A request is allowed if **any** rule whose path pattern and `Operations` set match returns `true` (OR). A matching rule that returns `false` does not veto — it simply doesn't grant. If no rule grants, access is denied (default-deny). Registration order does not affect the decision.
+### Path patterns
 
-Because a grant cannot be revoked by another rule, **grant narrowly**: don't write a broad `**` read grant and expect a more specific rule to restrict it — instead grant read only where it should be allowed (e.g. an owner-scoped rule like the one above) and let default-deny cover the rest.
+- `{id}` — binds a single document-id segment (e.g. `{userId}` in `users/{userId}`)
+- `{doc=**}` — binds any remaining path depth (e.g. `userData/{userId}/{rest=**}` matches everything under a user's subtree)
 
-The operations are `Read`, `Write`, `Delete`, and `Aggregate`.
+### Operations
 
-**Query access** is checked per-document after the query runs — documents for which the caller is denied are silently dropped from the result set, so partial results are returned rather than an error.
+| Constant | Expands to |
+| --- | --- |
+| `RuleOperations.Read` | `get` + `list` |
+| `RuleOperations.Write` | `create` + `update` + `delete` |
+| `RuleOperations.All` | all five operations |
+| `RuleOperations.Of(...)` | explicit set |
 
-**Aggregation access** is gated by the dedicated `Aggregate` operation, checked at the collection level on the `collection` of every `match` **and** `lookup` stage before the pipeline runs. It is deny-by-default and independent of `Read`: granting read access to a collection does **not** authorize aggregating over it, because an aggregate result (count/sum/min/max, or `push`/`first`) can reveal information about documents the caller cannot read individually. Every collection whose rows can reach the output — including `lookup` targets — needs its own `Aggregate` grant. Individual result rows are not filtered; the collection-level grant is the entire boundary.
+### Conditions
+
+Conditions are `RuleExpr` values built with the `Expr` factory:
+
+| Expression | Firestore equivalent |
+| --- | --- |
+| `Expr.Auth("uid")` | `request.auth.uid` |
+| `Expr.Auth("token", "role")` | `request.auth.token.role` |
+| `Expr.Param("userId")` | path-capture variable `userId` |
+| `Expr.Resource("data", "ownerId")` | `resource.data.ownerId` (existing document) |
+| `Expr.RequestResource("data", "status")` | `request.resource.data.status` (full post-write doc, with field transforms resolved) |
+| `Expr.Time()` | `request.time` |
+| `Expr.Exists(path)` | `exists(path)` — cross-document existence check |
+| `Expr.Get(path)` | `get(path)` — cross-document read |
+| `Expr.Any(a, b)` | `a \|\| b` (OR) |
+| `Expr.All(a, b)` | `a && b` (AND) |
+| `.Eq(...)` / `.Ne(...)` / `.Lt(...)` etc. | comparison operators |
+
+### Semantics
+
+Rules **grant** access; there is no explicit deny (Firestore-style). A request is allowed if **any**
+rule whose path pattern and operations set match returns `true` (OR). A matching rule that returns
+`false` does not veto — it simply doesn't grant. If no rule grants, access is denied (default-deny).
+Multiple `UseRules` calls accumulate — each registered ruleset's blocks are OR-combined with all
+others. Registration order does not affect the decision.
+
+Because a grant cannot be revoked by another rule, **grant narrowly**: don't write a broad `**`
+read grant and expect a more specific rule to restrict it — instead grant read only where it should
+be allowed and let default-deny cover the rest.
+
+### Rules are not filters
+
+**For `list`/query operations, rules are not applied as post-execution row filters.** Instead, the
+query is analyzed before execution: if its constraints provably satisfy a read rule (e.g. it
+constrains `ownerId == request.auth.uid` and there is a matching `allow read` rule), the query is
+permitted. If no read rule is provably satisfied by the query's constraints, the query is
+**rejected** with PERMISSION_DENIED — results are **never** silently post-filtered. This means the
+query itself must carry the constraining filter; the rule engine validates the query's intent, not
+its results.
+
+For `get` operations, the rule is evaluated in-memory against the loaded document.
 
 ### Claims Accessor
 
-To supply per-request caller claims, implement `DocumentClaimsAccessor` (from `Winche.Database.AspNetCore`):
+To supply per-request caller claims, register a delegate with `MapClaims`:
 
 ```csharp
-using Winche.Database.AspNetCore.Abstraction;
-
-public class CallerClaimsAccessor : DocumentClaimsAccessor
-{
-    public override IReadOnlyDictionary<string, object?> MapClaims(HttpContext httpContext)
-    {
-        var uid = httpContext.User.FindFirst("sub")?.Value;
-        return uid is null
-            ? ImmutableDictionary<string, object?>.Empty
-            : new Dictionary<string, object?> { ["uid"] = uid };
-    }
-}
+config.MapClaims(http => new Dictionary<string, object?> { ["uid"] = http.User.FindFirst("sub")?.Value });
 ```
 
-Register it once and it is shared by both the REST and WebSocket transports:
-
-```csharp
-config.SetCallerClaimsAccessor<CallerClaimsAccessor>();
-```
+`MapClaims` is an extension method on `WincheDatabaseOptions` from
+`Winche.Database.AspNetCore.DependencyInjection`. It registers the accessor for both the REST and
+WebSocket transports. DI services are available inside the delegate via `http.RequestServices`.
 
 ## Document Store Hooks
 
-Hooks let you react to document mutations. Implement `DocumentStoreHook` and register with `AddDocumentStoreHook<T>()`. Hooks execute **inline and sequentially** inside `HookFeedConsumer`, which is driven by a durable feed runner. Delivery is **true at-least-once end-to-end** — the cursor advances only after all hooks in a batch succeed, and failed batches are retried with capped backoff (1 s → 30 s). Implementations **must be idempotent** (use the document `version` as an idempotency key).
+Hooks let you react to document mutations. Implement `DocumentStoreHook` and register with `AddHook<T>()`. Hooks execute **inline and sequentially** inside `HookFeedConsumer`, which is driven by a durable feed runner. Delivery is **true at-least-once end-to-end** — the cursor advances only after all hooks in a batch succeed, and failed batches are retried with capped backoff (1 s → 30 s). Implementations **must be idempotent** (use the document `version` as an idempotency key).
 
 ```csharp
 using Winche.Database.Abstraction;
@@ -244,7 +274,7 @@ public class AuditHook : DocumentStoreHook
 
 The primary service. Inject `IDocumentDatabase` to interact with the store from application code.
 
-> **Guarded vs. core.** `IDocumentDatabase` is bound in DI to `GuardedDocumentDatabase`, which enforces access rules on every operation. The concrete `DocumentDatabase` is the **rule-free core** that the guard decorates — inject it *only* in trusted server-side code (seeding, migrations, internal jobs) that should deliberately bypass authorization. Application code subject to access rules must depend on `IDocumentDatabase`, **never** the concrete `DocumentDatabase`.
+> **Guarded vs. core.** `IDocumentDatabase` is bound in DI to `RuleGuardedDocumentDatabase`, which enforces access rules on every operation. The concrete `DocumentDatabase` is the **rule-free core** that the guard decorates — inject it *only* in trusted server-side code (seeding, migrations, internal jobs) that should deliberately bypass authorization. Application code subject to access rules must depend on `IDocumentDatabase`, **never** the concrete `DocumentDatabase`.
 
 ```csharp
 public interface IDocumentDatabase
@@ -254,7 +284,6 @@ public interface IDocumentDatabase
     Task<IReadOnlyList<Document?>> GetAllAsync(IReadOnlyList<string> paths, CancellationToken ct = default);
     Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default);
     Task<long> CountAsync(Query query, CancellationToken ct = default);
-    Task<PipelineResult> AggregateAsync(Pipeline pipeline, CancellationToken ct = default);
 
     // Writes — every mutation is a Write[]; singles are sugar
     Task<IReadOnlyList<WriteResult>> WriteAsync(IReadOnlyList<Write> writes, CancellationToken ct = default);
@@ -325,9 +354,21 @@ var nextPage = new Query("users", OrderBy: [...], Limit: 25, Start: cursor);
 
 `Before: false` = `startAfter` (exclusive); `Before: true` = `startAt` (inclusive). Mirror for `End`.
 
+### Field selection (`select`)
+
+`Query.Select` is an `IReadOnlyList<FieldPath>?` that limits the fields returned. When set, only the
+chosen fields — top-level or nested (e.g. `address.city`) — are projected at the SQL level; the
+full document is never loaded. Field selection is orthogonal to authorization (rules still apply
+normally).
+
+```csharp
+new Query("users", Select: [FieldPath.Parse("displayName"), FieldPath.Parse("address.city")])
+```
+
 ### Counting documents
 
-`CountAsync` runs a `COUNT(*)` over the same match as `QueryAsync`, returning a `long` instead of materializing documents — reusing the `Query`'s collection, filter, and cursor bounds:
+`CountAsync` runs a `COUNT(*)` over the same match as `QueryAsync`, returning a `long` instead of
+materializing documents — reusing the `Query`'s collection, filter, and cursor bounds:
 
 ```csharp
 var total   = await db.CountAsync(new Query("users"));                                   // whole collection
@@ -336,32 +377,14 @@ var active  = await db.CountAsync(new Query("users",
 var capped  = await db.CountAsync(new Query("users", Limit: 1000));                       // count is capped at 1000
 ```
 
-An explicit `Limit` **caps** the count (Firestore `count()` semantics); an absent limit counts the full match. Like aggregation, counting is gated by the `Aggregate` access grant (a count can reveal information about documents the caller cannot read individually) and is enforced at the collection level — row-level read rules are not applied, so scope the count by adding the constraining filter to the query itself.
+An explicit `Limit` **caps** the count (Firestore `count()` semantics); an absent limit counts the
+full match. Counting is authorized like a `list` query under the rules engine — the query must
+provably satisfy a read rule (rules-are-not-filters); add the constraining filter to the query to
+satisfy the rule.
 
-## Aggregation Pipelines
-
-```csharp
-using Winche.Database.Querying.Ast;
-
-var pipeline = new Pipeline([
-    new Match("orders", Where: null),
-    new Lookup("users", FieldPath.Parse("userId"), FieldPath.Parse("id"), "user"),
-    new Unwind(FieldPath.Parse("user"), "user"),
-    new Group(
-        Keys: [new GroupKey("status", FieldPath.Parse("status"))],
-        Accumulators: [new Accumulator("total", AggFunction.Sum, FieldPath.Parse("amount"))]
-    ),
-    new Sort([new Ordering(FieldPath.Parse("total"), SortDirection.Desc)]),
-    new Limit(10),
-]);
-
-var result = await db.AggregateAsync(pipeline);
-// result.Rows : IReadOnlyList<IReadOnlyDictionary<string, Value>>
-```
-
-Available stages: `Match`, `Where`, `Lookup`, `Unwind`, `Group`, `Project`, `Sort`, `Limit`, `Skip`.
-
-Available accumulator functions: `Count`, `Sum`, `Avg`, `Min`, `Max`, `Push`, `AddToSet`, `First`, `Last`.
+> **App-side aggregation:** aggregation beyond counting (sum, average, grouping, joins) is performed
+> app-side over per-collection rule-checked queries. Use `QueryAsync` or `CountAsync` to retrieve
+> the data, then compute aggregates in application code.
 
 ## Transactions
 
@@ -416,7 +439,6 @@ Mapped under `/documents` by default (configurable via `MapWincheDatabaseRestApi
 | `POST` | `/documents:batchGet` | Bulk read preserving input order; missing docs are `null` |
 | `POST` | `/documents:runQuery` | Execute a query |
 | `POST` | `/documents:count` | Count documents matching a query (returns `{ "count": N }`) |
-| `POST` | `/documents:aggregate` | Execute an aggregation pipeline |
 
 Access rules are enforced on all routes. The claims accessor runs as an endpoint filter before every request.
 
@@ -424,19 +446,16 @@ See [PROTOCOL](docs/PROTOCOL.md#7-rest-api) for full request/response examples.
 
 ## WebSocket API
 
-Connect at `/documents/ws`. All operations are exchanged as typed JSON messages over a single WebSocket. Handshake: send `{"type":"hello","protocol":3}` — receive `{"type":"welcome","connectionId":"...","protocol":3}`.
+Connect at `/documents/ws?access_token=<jwt>`. The connection authenticates at the HTTP upgrade (see [WebSocket authentication](#3-initialize-schema-and-map-routes) above). On a successful upgrade the server sends `welcome` immediately — there is no `hello` handshake. All subsequent operations are exchanged as typed JSON messages over a single WebSocket.
 
 | Message type | Direction | Description |
 | --- | --- | --- |
-| `hello` | C→S | Handshake (first frame, protocol 3) |
-| `welcome` | S→C | Handshake accepted |
+| `welcome` | S→C | Sent immediately on connect; carries `connectionId` |
 | `ping` | C→S | Connection health check |
-| `auth.refresh` | C→S | Swap connection claims mid-session |
 | `doc.get` | C→S | Get a document |
 | `doc.getAll` | C→S | Get multiple documents (preserves order, null for missing) |
 | `query` | C→S | Execute a one-shot query |
 | `count` | C→S | Count documents matching a query (returns `{ "count": N }`) |
-| `aggregate` | C→S | Execute an aggregation pipeline |
 | `write` | C→S | Atomic write batch |
 | `tx.begin` | C→S | Start an optimistic transaction |
 | `tx.get` | C→S | Get a document inside a transaction (recorded read) |
@@ -450,7 +469,7 @@ Connect at `/documents/ws`. All operations are exchanged as typed JSON messages 
 | `listen.snapshot` | S→C | Full query state (REPLACES client list) |
 | `listen.delta` | S→C | Incremental change (MUTATES client list by index) |
 
-See [PROTOCOL](docs/PROTOCOL.md#8-websocket-protocol-v3) for full message shapes, close codes, and listener protocol details.
+See [PROTOCOL](docs/PROTOCOL.md#8-websocket-protocol) for full message shapes, close codes, and listener protocol details.
 
 ## Requirements
 

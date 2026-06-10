@@ -1,6 +1,5 @@
 using Winche.Database.Abstraction;
-using Winche.Database.Documents;
-using Winche.Sentinel.Interfaces;
+using Winche.Database.Querying;
 
 namespace Winche.Database.Runtime.ChangeFeed;
 
@@ -14,7 +13,7 @@ namespace Winche.Database.Runtime.ChangeFeed;
 /// </summary>
 public sealed class HookFeedConsumer(
     IEnumerable<DocumentStoreHook> hooks,
-    IPathPatternMatcher<Document> matcher
+    IPathPatternMatcher matcher
 ) : IChangeFeedConsumer
 {
     private readonly IReadOnlyList<DocumentStoreHook> _hooks = hooks.ToList();

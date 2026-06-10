@@ -6,33 +6,27 @@ using Winche.Database.Values;
 
 namespace Winche.Database.IntegrationTests;
 
-internal sealed class OpenOrdersIndex : IndexDefinition
-{
-    public override string Path => "fidx";
-    public override IReadOnlyList<IndexField> Fields => [new("amount")];
-    public override Filter? Where =>
-        new FieldFilter(FieldPath.Parse("status"), FilterOperator.Eq, new StringValue("open"));
-}
-
 [Collection("postgres")]
 public class FilteredIndexTests(PostgresFixture fx) : QueryTestBase(fx)
 {
-    private sealed class OpenOrdersIndexNoWhere : IndexDefinition
-    {
-        public override string Path => "fidx";
-        public override IReadOnlyList<IndexField> Fields => [new("amount")];
-        // Where = null (unfiltered)
-    }
+    private static readonly IndexDefinition OpenOrdersIndex = new(
+        "fidx",
+        [new("amount")],
+        Where: new FieldFilter(FieldPath.Parse("status"), FilterOperator.Eq, new StringValue("open")));
+
+    private static readonly IndexDefinition OpenOrdersIndexNoWhere = new(
+        "fidx",
+        [new("amount")]); // Where = null (unfiltered)
 
     [Fact]
     public async Task BuildCreate_WithWhere_Executes_AndNameDiffersFromUnfiltered()
     {
-        var filtered = IndexSql.BuildCreate(new OpenOrdersIndex());
+        var filtered = IndexSql.BuildCreate(OpenOrdersIndex);
         Assert.Contains("status", filtered);
         Assert.Contains("'open'", filtered);
 
         // Extract names from both DDL strings and assert they differ
-        var unfiltered = IndexSql.BuildCreate(new OpenOrdersIndexNoWhere());
+        var unfiltered = IndexSql.BuildCreate(OpenOrdersIndexNoWhere);
         var filteredName = ExtractIndexName(filtered);
         var unfilteredName = ExtractIndexName(unfiltered);
         Assert.NotEqual(filteredName, unfilteredName);

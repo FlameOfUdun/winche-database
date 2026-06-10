@@ -15,7 +15,6 @@ public sealed record WelcomeMessage : ServerMessage
 {
     [JsonPropertyName("type")] public string Type { get; } = "welcome";
     [JsonPropertyName("connectionId")] public required string ConnectionId { get; init; }
-    [JsonPropertyName("protocol")] public int Protocol { get; init; } = 3;
 }
 
 public sealed record ResponseMessage : ServerMessage

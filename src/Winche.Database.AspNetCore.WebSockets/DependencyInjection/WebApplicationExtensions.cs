@@ -20,17 +20,40 @@ public static class WebApplicationExtensions
     /// <see cref="IEndpointConventionBuilder"/> so callers can apply conventions to the upgrade route
     /// (e.g. rate limiting, CORS). The caller must call <c>app.UseWebSockets()</c> before mapping.
     /// <para>
-    /// Connection authentication is performed <b>in-band</b>: the token in the client's <c>hello</c>
-    /// frame is validated by <see cref="IWsAuthenticator"/> during the handshake, and its claims feed
-    /// the access guard. <c>.RequireAuthorization()</c> on this builder gates the HTTP <i>upgrade</i>
-    /// against <c>HttpContext.User</c> instead — it is independent of the hello token and only an
-    /// optional defense-in-depth layer, usable only with a scheme that authenticates the upgrade
-    /// request itself (cookies or a query-string token; browsers cannot set a bearer header on a WS
-    /// upgrade).
+    /// Authentication is performed at the HTTP upgrade: the app's authentication scheme validates
+    /// the request (e.g. a query-string token surfaced by <see cref="UseWincheWsQueryToken"/>),
+    /// and the resulting <c>HttpContext.User</c> provides the caller's identity for the entire
+    /// connection lifetime. There is no in-band hello handshake or token refresh — if a token
+    /// expires the client reconnects. <c>.RequireAuthorization()</c> on this builder is the
+    /// recommended gate (rejects the upgrade before the socket is accepted).
     /// </para>
     /// </summary>
     public static IEndpointConventionBuilder MapWincheDatabaseWsApi(this WebApplication app, string prefix = "documents") =>
         app.Map($"/{prefix}/ws", HandleAsync);
+
+    /// <summary>
+    /// Adds middleware that promotes a WebSocket query-string token to an
+    /// <c>Authorization: Bearer …</c> header so the app's authentication scheme can validate it
+    /// at the HTTP upgrade. Must be placed <b>before</b> <c>UseAuthentication()</c>.
+    /// <para>
+    /// The library does NOT validate the token; validation is the responsibility of the
+    /// app's registered authentication handler (issuer, keys, audience are all app-specific).
+    /// </para>
+    /// </summary>
+    /// <param name="app">The application builder.</param>
+    /// <param name="paramName">Query-string parameter name (default: <c>access_token</c>).</param>
+    public static IApplicationBuilder UseWincheWsQueryToken(this IApplicationBuilder app, string paramName = "access_token") =>
+        app.Use(async (context, next) =>
+        {
+            if (context.WebSockets.IsWebSocketRequest
+                && !context.Request.Headers.ContainsKey("Authorization")
+                && context.Request.Query.TryGetValue(paramName, out var token)
+                && !string.IsNullOrEmpty(token))
+            {
+                context.Request.Headers["Authorization"] = $"Bearer {token}";
+            }
+            await next(context);
+        });
 
     private static async Task HandleAsync(HttpContext context)
     {
@@ -42,7 +65,6 @@ public static class WebApplicationExtensions
 
         var options = context.RequestServices.GetRequiredService<WsOptions>();
         var router = context.RequestServices.GetRequiredService<MessageRouter>();
-        var authenticator = context.RequestServices.GetRequiredService<IWsAuthenticator>();
         var db = context.RequestServices.GetRequiredService<IDocumentDatabase>();
         var claimsAccessor = context.RequestServices.GetRequiredService<DocumentClaimsAccessor>();
         var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("WincheWs");
@@ -52,58 +74,17 @@ public static class WebApplicationExtensions
         using var sendLoopCts = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, conn.Closed);
         var sendLoop = conn.RunSendLoopAsync(sendLoopCts.Token);
 
-        ConnectionScope? scope = null;
+        var scope = new ConnectionScope(Guid.NewGuid().ToString("N"), db, claimsAccessor);
         try
         {
-            // ── hello handshake (spec §1) ─────────────────────────────────────
-            using var helloCts = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
-            helloCts.CancelAfter(options.HelloTimeout);
+            // ── authenticate from the already-validated HttpContext.User ─────────
+            var claims = claimsAccessor.MapClaims(context);
+            scope.SetClaims(claims ?? new Dictionary<string, object?>());
 
-            JsonDocument? first;
-            try { first = await conn.ReceiveAsync(helloCts.Token); }
-            catch (OperationCanceledException) when (!context.RequestAborted.IsCancellationRequested)
-            {
-                await conn.DrainAndCloseAsync(sendLoop, (WebSocketCloseStatus)4408, "hello timeout");
-                return;
-            }
-            if (first is null) return;
-
-            HelloMessage? hello;
-            using (first)
-            {
-                try
-                {
-                    hello = JsonSerializer.Deserialize<ClientMessage>(first) as HelloMessage;
-                }
-                catch (Exception ex) when (ex is JsonException or NotSupportedException)
-                {
-                    hello = null;
-                }
-            }
-            if (hello is null || hello.Protocol != 3)
-            {
-                conn.TrySend(new ErrorMessage { Status = "INVALID_ARGUMENT", Message = "Expected hello with protocol 3." });
-                await conn.DrainAndCloseAsync(sendLoop, (WebSocketCloseStatus)4400, "protocol violation");
-                return;
-            }
-
-            IReadOnlyDictionary<string, object?> claims;
-            try
-            {
-                claims = await authenticator.AuthenticateAsync(context, hello.Token, context.RequestAborted);
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                conn.TrySend(new ErrorMessage { Status = "UNAUTHENTICATED", Message = ex.Message });
-                await conn.DrainAndCloseAsync(sendLoop, (WebSocketCloseStatus)4401, "authentication failed");
-                return;
-            }
-
-            scope = new ConnectionScope(Guid.NewGuid().ToString("N"), db, claimsAccessor);
-            scope.SetClaims(claims);
+            // ── server-initiated welcome (no client hello frame) ─────────────────
             conn.TrySend(new WelcomeMessage { ConnectionId = scope.ConnectionId });
 
-            // ── serial message loop ───────────────────────────────────────────
+            // ── serial message loop ───────────────────────────────────────────────
             while (!context.RequestAborted.IsCancellationRequested)
             {
                 var doc = await conn.ReceiveAsync(context.RequestAborted);
@@ -143,7 +124,7 @@ public static class WebApplicationExtensions
         }
         finally
         {
-            if (scope is not null) await scope.DisposeAsync();
+            await scope.DisposeAsync();
             await conn.DrainAndCloseAsync(sendLoop, WebSocketCloseStatus.NormalClosure, "bye");
         }
     }

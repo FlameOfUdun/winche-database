@@ -1,9 +1,9 @@
 using System.Text.Json.Nodes;
+using Winche.Database.Authorization;
 using Winche.Database.Querying.Ast;
 using Winche.Database.Querying.Planning;
 using Winche.Database.Runtime;
 using Winche.Database.Values;
-using Winche.Sentinel.Models;
 
 namespace Winche.Database.Wire;
 
@@ -28,8 +28,8 @@ public static class ErrorMapper
         PlanValidationException pv => new WireError("INVALID_QUERY", pv.Message,
             new JsonObject { ["code"] = pv.Code }),
         WireFormatException wf => new WireError("INVALID_ARGUMENT", wf.Message),
-        AccessDeniedException => new WireError("PERMISSION_DENIED", "Access denied."),
-        NoRulesMatchedException => new WireError("PERMISSION_DENIED", "No rule matched."),
+        // Native Winche.Database rules-engine denial
+        Authorization.AccessDeniedException => new WireError("PERMISSION_DENIED", "Access denied."),
         UnauthorizedAccessException ua => new WireError("UNAUTHENTICATED", ua.Message),
         System.Text.Json.JsonException { InnerException: QueryParseException qp2 } =>
             new WireError("INVALID_QUERY", qp2.Message, new JsonObject { ["jsonPath"] = qp2.JsonPath }),

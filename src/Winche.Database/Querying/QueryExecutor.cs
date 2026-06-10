@@ -13,7 +13,7 @@ public sealed class QueryExecutor(NpgsqlConnection conn, NpgsqlTransaction? tx, 
     {
         var plan = Normalizer.Normalize(query);
         var limit = plan.Nodes.OfType<PageNode>().Single().Limit;
-        var compiled = SqlCompiler.Compile(plan, scopes?.ScopeRegexes(query.Collection));
+        var compiled = SqlCompiler.Compile(plan, scopes?.ScopeRegexes(query.Collection), query.Select);
 
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
@@ -23,7 +23,9 @@ public sealed class QueryExecutor(NpgsqlConnection conn, NpgsqlTransaction? tx, 
         var docs = await TypedDocumentReader.ReadAllAsync(reader, ct);
 
         var hasMore = docs.Count > limit;
-        return new QueryResult(hasMore ? docs.Take(limit).ToList() : docs, hasMore);
+        var page = hasMore ? docs.Take(limit).ToList() : docs;
+
+        return new QueryResult(page, hasMore);
     }
 
     /// <summary>

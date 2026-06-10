@@ -156,29 +156,6 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         Assert.Equal(2, er.Current.Documents.Count);                       // fresh full snapshot
     }
 
-    [Fact]
-    public async Task GuardedListener_FiltersAndReDiffs()
-    {
-        await using var rig = Start();
-        var rules = new DenyPrefixEvaluator("c/secret");
-        var guarded = new GuardedDocumentDatabase(rig.Db, rules);
-
-        await using var listener = guarded.Listen(new Query("c"));
-        await using var e = listener.Snapshots().GetAsyncEnumerator();
-        await NextAsync(e);                                                // empty initial
-
-        await rig.Db.WriteAsync(
-        [
-            new SetWrite { Path = "c/secret1", Fields = Map() },           // wait: prefix is c/secret
-            new SetWrite { Path = "c/visible", Fields = Map() },
-        ]);
-
-        var snap = await NextAsync(e);
-        Assert.Equal("visible", Assert.Single(snap.Documents).Id);         // secret filtered out
-        var add = Assert.Single(snap.Changes);
-        Assert.Equal((ListenChangeType.Added, 0), (add.Type, add.NewIndex)); // re-diffed index, not the core's
-    }
-
     // ── Tests: I1 resume paths ───────────────────────────────────────────────
 
     [Fact]
@@ -265,41 +242,5 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         Assert.False(await e.MoveNextAsync());
     }
 
-    // ── Test: guarded all-filtered non-initial skip ──────────────────────────
-
-    [Fact]
-    public async Task GuardedListener_AllDenied_NoEmissionUntilVisibleDoc()
-    {
-        await using var rig = Start();
-        var rules = new DenyPrefixEvaluator("c/secret");
-        var guarded = new GuardedDocumentDatabase(rig.Db, rules);
-
-        await using var listener = guarded.Listen(new Query("c"));
-        await using var e = listener.Snapshots().GetAsyncEnumerator();
-        await NextAsync(e);                                                   // empty initial
-
-        // write ONLY denied docs
-        await rig.Db.WriteAsync([new SetWrite { Path = "c/secret1", Fields = Map() }]);
-        await rig.Db.WriteAsync([new SetWrite { Path = "c/secret2", Fields = Map() }]);
-
-        // no emission within 1.5s
-        var next = e.MoveNextAsync().AsTask();
-        Assert.NotSame(next, await Task.WhenAny(next, Task.Delay(1500)));
-
-        // write a visible doc → snapshot arrives with just it
-        await rig.Db.WriteAsync([new SetWrite { Path = "c/visible", Fields = Map() }]);
-        Assert.True(await next);
-        Assert.Equal("visible", Assert.Single(e.Current.Documents).Id);
-    }
 }
 
-internal sealed class DenyPrefixEvaluator(string prefix) : Winche.Sentinel.Interfaces.IAccessRuleEvaluator<Winche.Database.Documents.Document>
-{
-    public Task EvaluateAsync(Winche.Sentinel.Models.AccessOperation operation, string path, object? data,
-        Func<CancellationToken, Task<Winche.Database.Documents.Document?>>? getResource, CancellationToken ct = default)
-    {
-        if (operation == Winche.Sentinel.Models.AccessOperation.Read && path.StartsWith(prefix, StringComparison.Ordinal))
-            throw new Winche.Sentinel.Models.AccessDeniedException(operation, path);
-        return Task.CompletedTask;
-    }
-}

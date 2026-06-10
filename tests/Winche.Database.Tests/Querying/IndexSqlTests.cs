@@ -4,56 +4,31 @@ using Winche.Database.Querying.Sql;
 
 namespace Winche.Database.Tests.Querying;
 
-file sealed class AgeIndex : IndexDefinition
-{
-    public override string Path => "users";
-    public override IReadOnlyList<IndexField> Fields => [new("age"), new("addr.city", SortDirection.Desc)];
-}
-
-file sealed class EvilIndex(string path) : IndexDefinition
-{
-    private readonly string _path = path;
-    public override string Path => "users";
-    public override IReadOnlyList<IndexField> Fields => [new(_path)];
-}
-
-// Two index definitions whose old (pre-hash) names would collide: "a.b"+"c" vs "a"+"b-c"
-file sealed class CollidingIndexA : IndexDefinition
-{
-    public override string Path => "col";
-    public override IReadOnlyList<IndexField> Fields => [new("a.b"), new("c")];
-}
-
-file sealed class CollidingIndexB : IndexDefinition
-{
-    public override string Path => "col";
-    public override IReadOnlyList<IndexField> Fields => [new("a"), new("b-c")];
-}
-
-file sealed class EmptyFieldsIndex : IndexDefinition
-{
-    public override string Path => "col";
-    public override IReadOnlyList<IndexField> Fields => [];
-}
-
-file sealed class SessionHistoryPatternIndex : IndexDefinition
-{
-    public override string Path => "userData/*/sessionHistory";
-    public override IReadOnlyList<IndexField> Fields => [new("startedAt", SortDirection.Desc)];
-}
-
-file sealed class BadCharsetIndex : IndexDefinition
-{
-    public override string Path => "user.Data/*/sessionHistory"; // '.' not allowed in literal segment
-    public override IReadOnlyList<IndexField> Fields => [new("name")];
-}
-
 public class IndexSqlTests
 {
+    private static readonly IndexDefinition AgeIndex =
+        new("users", [new("age"), new("addr.city", SortDirection.Desc)]);
+
+    // Two index definitions whose old (pre-hash) names would collide: "a.b"+"c" vs "a"+"b-c"
+    private static readonly IndexDefinition CollidingIndexA =
+        new("col", [new("a.b"), new("c")]);
+
+    private static readonly IndexDefinition CollidingIndexB =
+        new("col", [new("a"), new("b-c")]);
+
+    private static readonly IndexDefinition EmptyFieldsIndex =
+        new("col", []);
+
+    private static readonly IndexDefinition SessionHistoryPatternIndex =
+        new("userData/*/sessionHistory", [new("startedAt", SortDirection.Desc)]);
+
+    private static readonly IndexDefinition BadCharsetIndex =
+        new("user.Data/*/sessionHistory", [new("name")]); // '.' not allowed in literal segment
+
     [Fact]
     public void BuildCreate_EmitsExpressionFamilyAndPartialClause()
     {
-        var sql = IndexSql.BuildCreate(new AgeIndex());
+        var sql = IndexSql.BuildCreate(AgeIndex);
         Assert.Contains("CREATE INDEX IF NOT EXISTS", sql);
         Assert.Contains("winche_rank(", sql);
         Assert.Contains("winche_key(", sql);
@@ -69,7 +44,7 @@ public class IndexSqlTests
     [InlineData("a b")]
     [InlineData("")]
     public void BuildCreate_RejectsInvalidSegments(string path) =>
-        Assert.Throws<ArgumentException>(() => IndexSql.BuildCreate(new EvilIndex(path)));
+        Assert.Throws<ArgumentException>(() => IndexSql.BuildCreate(new IndexDefinition("users", [new(path)])));
 
     [Fact]
     public void BuildDrop_QuotesName()
@@ -81,8 +56,8 @@ public class IndexSqlTests
     [Fact]
     public void BuildCreate_DistinctDefinitions_ProduceDifferentNames()
     {
-        var sqlA = IndexSql.BuildCreate(new CollidingIndexA());
-        var sqlB = IndexSql.BuildCreate(new CollidingIndexB());
+        var sqlA = IndexSql.BuildCreate(CollidingIndexA);
+        var sqlB = IndexSql.BuildCreate(CollidingIndexB);
         // Extract names from the SQL (between the first pair of quotes after IF NOT EXISTS)
         static string ExtractName(string sql)
         {
@@ -95,12 +70,12 @@ public class IndexSqlTests
 
     [Fact]
     public void BuildCreate_EmptyFields_Throws() =>
-        Assert.Throws<ArgumentException>(() => IndexSql.BuildCreate(new EmptyFieldsIndex()));
+        Assert.Throws<ArgumentException>(() => IndexSql.BuildCreate(EmptyFieldsIndex));
 
     [Fact]
     public void BuildCreate_Pattern_EmitsCollectionLeadingKeyAndRegexPredicate()
     {
-        var sql = IndexSql.BuildCreate(new SessionHistoryPatternIndex());
+        var sql = IndexSql.BuildCreate(SessionHistoryPatternIndex);
         var open = sql.IndexOf('(', sql.IndexOf(" ON ", StringComparison.Ordinal));
         Assert.StartsWith("collection,", sql[(open + 1)..].TrimStart());
         Assert.Contains("winche_rank(data->'startedAt')", sql);
@@ -110,7 +85,7 @@ public class IndexSqlTests
     [Fact]
     public void BuildCreate_Exact_StillUsesCollectionEquality()
     {
-        var sql = IndexSql.BuildCreate(new AgeIndex()); // Path => "users"
+        var sql = IndexSql.BuildCreate(AgeIndex); // Path => "users"
         Assert.Contains("WHERE collection = 'users'", sql);
         Assert.DoesNotContain("collection ~", sql);
     }
@@ -118,7 +93,7 @@ public class IndexSqlTests
     [Fact]
     public void BuildCreate_InvalidPath_ThrowsInvalidPathPatternException()
     {
-        var ex = Assert.Throws<InvalidPathPatternException>(() => IndexSql.BuildCreate(new BadCharsetIndex()));
+        var ex = Assert.Throws<InvalidPathPatternException>(() => IndexSql.BuildCreate(BadCharsetIndex));
         Assert.Equal("user.Data/*/sessionHistory", ex.Path);
         Assert.False(string.IsNullOrEmpty(ex.Reason));
     }

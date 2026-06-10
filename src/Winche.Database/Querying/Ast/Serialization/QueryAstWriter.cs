@@ -19,6 +19,8 @@ public static class QueryAstWriter
         if (q.Limit is not null) obj["limit"] = q.Limit;
         if (q.Start is not null) obj["start"] = WriteCursor(q.Start);
         if (q.End is not null) obj["end"] = WriteCursor(q.End);
+        if (q.Select is { Count: > 0 })
+            obj["select"] = new JsonArray([.. q.Select.Select(f => (JsonNode)f.ToString())]);
         return obj;
     }
 

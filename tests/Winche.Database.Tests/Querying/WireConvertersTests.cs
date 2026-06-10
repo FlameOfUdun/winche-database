@@ -64,17 +64,6 @@ public class WireConvertersTests
     }
 
     [Fact]
-    public void PipelineAst_RoundTrips()
-    {
-        var json = """{"pipeline":[{"match":{"collection":"c"}},{"group":{"keys":[{"as":"k","field":"x"}],"accumulators":[{"as":"n","fn":"count"}]}},{"limit":3}]}""";
-        var p = JsonSerializer.Deserialize<Pipeline>(json)!;
-        Assert.Equal(3, p.Stages.Count);
-        var p2 = JsonSerializer.Deserialize<Pipeline>(JsonSerializer.Serialize(p))!;
-        Assert.Equal(p.Stages.Count, p2.Stages.Count);
-        Assert.Equal(p.Stages[1], p2.Stages[1]);
-    }
-
-    [Fact]
     public void QueryAst_BadWire_ThrowsJsonExceptionWithPath()
     {
         var ex = Assert.Throws<JsonException>(() =>

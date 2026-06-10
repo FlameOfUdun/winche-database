@@ -12,7 +12,6 @@ public static class ServiceCollectionExtensions
         var options = new WsOptions();
         configure?.Invoke(options);
         services.AddSingleton(options);
-        services.AddSingleton<IWsAuthenticator, DefaultWsAuthenticator>();
         services.AddSingleton<MessageRouter>();
         return services;
     }

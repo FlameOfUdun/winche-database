@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>Winche.Database</PackageId>
-    <Description>A document-oriented database library backed by PostgreSQL. Provides schema management, querying, aggregation pipelines, transactions, real-time subscriptions, and hook-based extensibility.</Description>
+    <Description>A document-oriented database library backed by PostgreSQL. Provides schema management, querying with field selection, Firestore-style access rules, optimistic transactions, real-time delta subscriptions, durable hooks, and secondary indexes.</Description>
     <PackageTags>winche database document-store postgresql nosql realtime</PackageTags>
   </PropertyGroup>
 
@@ -23,7 +23,7 @@
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.6" />
     <PackageReference Include="Npgsql" Version="10.0.2" />
     <PackageReference Include="Npgsql.DependencyInjection" Version="10.0.2" />
-    <PackageReference Include="Winche.Sentinel" Version="3.0.0" />
+    <PackageReference Include="Winche.Rules" Version="1.0.0" />
   </ItemGroup>
 
 </Project>

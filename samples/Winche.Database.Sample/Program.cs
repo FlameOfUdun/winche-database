@@ -3,6 +3,8 @@ using Winche.Database.AspNetCore.Rest.DependencyInjection;
 using Winche.Database.AspNetCore.WebSockets.DependencyInjection;
 using Winche.Database.DependencyInjection;
 using Winche.Database.Sample.Configurations;
+using Winche.Rules;
+using Winche.Rules.Expressions;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -13,14 +15,17 @@ builder.Services
             builder.Configuration.GetConnectionString("WincheDatabase") ??
             builder.Configuration.GetConnectionString("DefaultConnection") ??
             throw new InvalidOperationException("No connection string found for WincheDatabase.");
-            
-        opts.AddDocumentAccessRule<AllowPublicAccessRule>();
-        opts.AddDocumentAccessRule<SmokeUsersCollectionReadRule>();
-        opts.AddDocumentAccessRule<SmokeUsersAggregateRule>();
-        opts.AddDocumentAccessRule<OwnerReadRule>();
-        opts.AddDocumentStoreHook<DocumentUpdateHook>();
-        opts.AddIndexDefinition<WildcardIndexDefinition>();
-        opts.SetCallerClaimsAccessor<CallerClaimsAccessor>();
+
+        opts.AddHook<DocumentUpdateHook>();
+        opts.MapClaims(_ => new Dictionary<string, object?> { ["uid"] = "user-123" });
+
+        // Each caller may perform ANY operation within their own userData/{userId} subtree
+        // (the document itself and everything beneath it), and nothing outside it. The {userId}
+        // segment is bound from the path and compared to the caller's uid; a list/query is allowed
+        // only under the caller's own subtree (you cannot list across users).
+        opts.UseRules(r =>
+            r.Match("userData/{userId}/{document=**}", owned =>
+                owned.Allow(RuleOperations.All, Expr.Auth("uid").Eq(Expr.Param("userId")))));
     });
 builder.Services.AddWincheDatabaseWsApi();
 
@@ -40,11 +45,5 @@ app.UseWebSockets();
 app.MapWincheDatabaseWsApi();
 app.MapWincheDatabaseRestApi();
 
-// Start the host BEFORE the smoke tests: hooks are post-commit and delivered by the
-// change-feed hosted services, which only run once the host has started.
-await app.StartAsync();
-
-await CascadeDeleteSmokeTest.RunAsync(app.Services);
-await AccessRuleSmokeTest.RunAsync(app.Services);
-
-await app.WaitForShutdownAsync();
+ app.Start();
+ app.WaitForShutdown();

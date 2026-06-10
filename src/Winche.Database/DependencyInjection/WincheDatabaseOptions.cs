@@ -1,7 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Winche.Database.Abstraction;
 using Winche.Database.Documents;
-using Winche.Sentinel.DependencyInjection;
+using Winche.Rules;
 
 namespace Winche.Database.DependencyInjection;
 
@@ -9,7 +9,7 @@ namespace Winche.Database.DependencyInjection;
 /// The single options surface for Winche.Database: connection, store behavior, and component
 /// registrations (access rules, hooks, index definitions). Configured through the
 /// <c>AddWincheDatabase</c> lambda and consumed at runtime via <c>IOptions&lt;WincheDatabaseOptions&gt;</c>.
-/// Transport packages extend this type (e.g. <c>SetCallerClaimsAccessor</c>) through <see cref="Services"/>.
+/// Transport packages extend this type (e.g. <c>MapClaims</c>) through <see cref="Services"/>.
 /// </summary>
 public sealed class WincheDatabaseOptions
 {
@@ -32,24 +32,58 @@ public sealed class WincheDatabaseOptions
     public TransactionConfig TransactionConfig { get; set; } = new();
     public ChangeFeedConfig ChangeFeed { get; set; } = new();
 
-    public WincheDatabaseOptions AddDocumentAccessRule<TRule>() where TRule : DocumentAccessRule
+    /// <summary>
+    /// Registers one or more <see cref="IndexDefinition"/> instances. Multiple calls accumulate —
+    /// each definition is registered as a singleton so that <c>GetServices&lt;IndexDefinition&gt;()</c>
+    /// returns them all at startup.
+    /// </summary>
+    public WincheDatabaseOptions UseIndexes(Action<IndexBuilder> configure)
     {
-        Services.ConfigureWincheSentinel<Document>(configurator =>
-        {
-            configurator.AddResourceAccessRule<TRule>();
-        });
+        var builder = new IndexBuilder(Services);
+        configure(builder);
         return this;
     }
 
-    public WincheDatabaseOptions AddIndexDefinition<TIndex>() where TIndex : IndexDefinition
+    /// <summary>Convenience overload — registers the supplied definitions directly.</summary>
+    public WincheDatabaseOptions UseIndexes(params IndexDefinition[] definitions)
     {
-        Services.AddSingleton<IndexDefinition, TIndex>();
+        foreach (var def in definitions)
+            Services.AddSingleton(def);
         return this;
     }
 
-    public WincheDatabaseOptions AddDocumentStoreHook<THook>() where THook : DocumentStoreHook
+    public WincheDatabaseOptions AddHook<THook>() where THook : DocumentStoreHook
     {
         Services.AddSingleton<DocumentStoreHook, THook>();
+        return this;
+    }
+
+    /// <summary>
+    /// Adds a <see cref="Ruleset"/> to the Winche.Rules guard
+    /// (<see cref="Authorization.RuleGuardedDocumentDatabase"/>), which is the default
+    /// <see cref="Runtime.IDocumentDatabase"/> since Phase 4b.
+    /// The ruleset is registered as a singleton in the DI container and <strong>merged</strong>
+    /// with any other rulesets registered via previous or subsequent <c>UseRules</c> calls
+    /// (including the default empty deny-all ruleset that <c>AddWincheDatabase</c> installs
+    /// automatically). Multiple <c>UseRules</c> calls accumulate: each call's blocks are
+    /// OR-combined with all others. With no <c>UseRules</c> call, access is default-deny.
+    /// </summary>
+    public WincheDatabaseOptions UseRules(Ruleset ruleset)
+    {
+        Services.AddSingleton(ruleset);
+        return this;
+    }
+
+    /// <summary>
+    /// Builds a <see cref="Ruleset"/> from a <see cref="RulesetBuilder"/> delegate and adds it
+    /// to the merged set of active rulesets. Shorthand for <c>UseRules(RulesetBuilder.Build(configure))</c>.
+    /// Multiple <c>UseRules</c> calls accumulate — each registered ruleset's blocks are
+    /// OR-combined with all others. With no <c>UseRules</c> call, access is default-deny.
+    /// </summary>
+    public WincheDatabaseOptions UseRules(Action<RulesetBuilder> configure)
+    {
+        var ruleset = RulesetBuilder.Build(configure);
+        Services.AddSingleton(ruleset);
         return this;
     }
 }
@@ -71,4 +105,29 @@ public sealed record TransactionConfig
     /// <summary>Spec (runtime §3): optimistic transactions idle out after 60 seconds by default.</summary>
     public TimeSpan IdleTimeoutSpan { get; init; } = TimeSpan.FromMinutes(1);
     public TimeSpan CleanupInterval { get; init; } = TimeSpan.FromSeconds(1);
+}
+
+/// <summary>
+/// Fluent builder used inside <see cref="WincheDatabaseOptions.UseIndexes(Action{IndexBuilder})"/>.
+/// Each <see cref="Add"/> call registers one <see cref="IndexDefinition"/> as a singleton so
+/// that <c>GetServices&lt;IndexDefinition&gt;()</c> returns them all at startup.
+/// </summary>
+public sealed class IndexBuilder(IServiceCollection services)
+{
+    /// <summary>Adds a fully-constructed <see cref="IndexDefinition"/>.</summary>
+    public IndexBuilder Add(IndexDefinition definition)
+    {
+        services.AddSingleton(definition);
+        return this;
+    }
+
+    /// <summary>
+    /// Convenience overload: creates and registers an <see cref="IndexDefinition"/> from
+    /// <paramref name="path"/> and one or more <paramref name="fields"/>.
+    /// </summary>
+    public IndexBuilder Add(string path, params IndexField[] fields)
+    {
+        services.AddSingleton(new IndexDefinition(path, fields));
+        return this;
+    }
 }

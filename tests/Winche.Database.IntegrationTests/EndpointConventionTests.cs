@@ -5,7 +5,6 @@ using Winche.Database.AspNetCore.DependencyInjection;
 using Winche.Database.AspNetCore.Rest.DependencyInjection;
 using Winche.Database.AspNetCore.WebSockets.DependencyInjection;
 using Winche.Database.DependencyInjection;
-using Winche.Database.IntegrationTests.Ws;
 
 namespace Winche.Database.IntegrationTests;
 
@@ -25,7 +24,7 @@ public class EndpointConventionTests
         builder.Services.AddWincheDatabase(o =>
         {
             o.ConnectionString = "Host=localhost;Database=t;Username=t;Password=t";   // never connected
-            o.SetCallerClaimsAccessor<TestClaimsAccessor>();
+            o.MapClaims(_ => null);
         });
         builder.Services.AddWincheDatabaseWsApi();
 
@@ -50,7 +49,7 @@ public class EndpointConventionTests
 
         // Every colon-verb must carry the convention — this is what the composite builder guarantees
         // and what a bare RouteGroupBuilder return would have silently missed.
-        foreach (var verb in new[] { ":commit", ":beginTransaction", ":rollback", ":batchGet", ":runQuery", ":aggregate" })
+        foreach (var verb in new[] { ":commit", ":beginTransaction", ":rollback", ":batchGet", ":runQuery", ":count" })
         {
             var verbRoute = endpoints.First(e => e.RoutePattern.RawText!.Contains(verb));
             Assert.Contains(restMarker, verbRoute.Metadata);

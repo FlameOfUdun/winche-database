@@ -30,11 +30,17 @@ public sealed class WsTestClient : IAsyncDisposable
         return new WsTestClient(socket);
     }
 
-    /// <summary>Connect + hello + await welcome.</summary>
-    public static async Task<WsTestClient> ConnectV3Async(TestServer server, string? token = null)
+    /// <summary>
+    /// Connect with optional <c>access_token</c> query parameter and await the server-initiated
+    /// <c>welcome</c> frame. No hello frame is sent — the server sends welcome immediately after
+    /// the upgrade.
+    /// </summary>
+    public static async Task<WsTestClient> ConnectAndWelcomeAsync(TestServer server, string? token = null)
     {
-        var ws = await ConnectAsync(server);
-        await ws.SendAsync(new JsonObject { ["type"] = "hello", ["protocol"] = 3, ["token"] = token });
+        var path = token is not null
+            ? $"/documents/ws?access_token={Uri.EscapeDataString(token)}"
+            : "/documents/ws";
+        var ws = await ConnectAsync(server, path);
         await ws.WaitForAsync(f => (string?)f["type"] == "welcome");
         return ws;
     }

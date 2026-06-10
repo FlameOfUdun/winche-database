@@ -5,12 +5,15 @@ using Winche.Database.Runtime.Listening;
 namespace Winche.Database.AspNetCore.WebSockets.Connections;
 
 /// <summary>
-/// Per-socket state (spec §4): captured claims, open transaction ids, active subscriptions.
-/// ApplyClaims() pins the connection's CURRENT claims onto the Sentinel AsyncLocal accessor —
+/// Per-socket state: claims fixed at connect time, open transaction ids, active subscriptions.
+/// Claims are set once at upgrade from <c>HttpContext.User</c> and never change; the connection
+/// must be re-established (client reconnects with a fresh token) to change identity.
+///
+/// ApplyClaims() pins the connection's claims onto the DocumentClaimsAccessor's AsyncLocal —
 /// call it before every IDocumentDatabase touch (request handlers and pump iterations).
 ///
-/// Claims-accessor verdict: AsyncCallerClaimsAccessor&lt;T&gt;.SetClaims stores claims in
-/// AsyncLocal&lt;IReadOnlyDictionary&lt;string, object?&gt;&gt;. Each async context (message-loop
+/// Claims-accessor design: DocumentClaimsAccessor.SetClaims stores claims in
+/// AsyncLocal&lt;IReadOnlyDictionary&lt;string, object?&gt;?&gt;. Each async context (message-loop
 /// and each pump Task) sets its own AsyncLocal slot right before evaluation — this is correct
 /// and thread-safe. No fallback ClaimsScopedEvaluator is required.
 ///
@@ -34,9 +37,9 @@ public sealed class ConnectionScope(
     public void SetClaims(IReadOnlyDictionary<string, object?> claims) => _claims = claims;
 
     /// <summary>
-    /// Pushes the connection's current claims into the Sentinel AsyncLocal for this async context.
-    /// Must be called before any IDocumentDatabase operation — in the message loop and at the top
-    /// of each SubscriptionPump iteration.
+    /// Pushes the connection's current claims into the DocumentClaimsAccessor's AsyncLocal for
+    /// this async context. Must be called before any IDocumentDatabase operation — in the message
+    /// loop and at the top of each SubscriptionPump iteration.
     /// </summary>
     public void ApplyClaims() => claimsAccessor.SetClaims(_claims);
 

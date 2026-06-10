@@ -22,12 +22,4 @@ public class PatternScopeCompilerTests
         var plan = Normalizer.Normalize(new Query("userData/alice/sessionHistory"));
         Assert.DoesNotContain("collection ~", SqlCompiler.Compile(plan).Sql);
     }
-
-    [Fact]
-    public void Pipeline_WithScopeRegex_EmitsRegexPredicate()
-    {
-        var plan = PipelineNormalizer.Normalize(new Pipeline([new Match("userData/alice/sessionHistory", null)]));
-        var (compiled, _) = PipelineCompiler.Compile(plan, Rx);
-        Assert.Contains("collection ~ '^userData/[^/]+/sessionHistory$'", compiled.Sql);
-    }
 }

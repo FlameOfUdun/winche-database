@@ -4,6 +4,17 @@ using Winche.Database.Documents;
 
 namespace Winche.Database.Querying.Sql;
 
+internal enum ColumnShape
+{
+    TaggedValue,   // jsonb tagged value ({"integerValue":"5"}, …) or SQL NULL (missing)
+}
+
+/// <summary>Document rows: metadata + tagged `data`, plus extra tagged columns.</summary>
+internal sealed record DocumentSchema(IReadOnlyDictionary<string, ColumnShape> Extra)
+{
+    public static readonly DocumentSchema Plain = new(new Dictionary<string, ColumnShape>());
+}
+
 internal abstract record FieldRef;
 /// <summary>SQL expression yielding a tagged value jsonb (or SQL NULL = missing field).</summary>
 internal sealed record TaggedRef(string Sql) : FieldRef;
@@ -11,33 +22,20 @@ internal sealed record TaggedRef(string Sql) : FieldRef;
 internal sealed record PathRef(string Sql) : FieldRef;
 
 /// <summary>
-/// Resolves a FieldPath against the current stage schema. Column names come from
-/// validated `as` identifiers (Normalizer rule AS_NAME) so quoting them is safe;
-/// data-path segments remain parameterized.
+/// Resolves a FieldPath against the current document schema. Column names come from
+/// validated identifiers so quoting them is safe; data-path segments remain parameterized.
 /// </summary>
-internal sealed class SchemaResolver(StageSchema schema, string alias)
+internal sealed class SchemaResolver(DocumentSchema schema, string alias)
 {
     public string Alias => alias;
 
     public FieldRef Resolve(FieldPath path, ParameterBag bag)
     {
-        switch (schema)
-        {
-            case DocumentSchema doc:
-                if (FieldAccessSql.IsName(path))
-                    return new PathRef($"{alias}.path");
-                if (doc.Extra.ContainsKey(path.Segments[0]))
-                    return new TaggedRef(NestedFromColumn(path, bag));
-                return new TaggedRef(FieldAccessSql.Tagged(path, bag, alias));
-
-            case RowSchema row:
-                if (!row.Columns.ContainsKey(path.Segments[0]))
-                    return new TaggedRef("NULL::jsonb");
-                return new TaggedRef(NestedFromColumn(path, bag));
-
-            default:
-                throw new NotSupportedException($"Unknown schema: {schema.GetType().Name}");
-        }
+        if (FieldAccessSql.IsName(path))
+            return new PathRef($"{alias}.path");
+        if (schema.Extra.ContainsKey(path.Segments[0]))
+            return new TaggedRef(NestedFromColumn(path, bag));
+        return new TaggedRef(FieldAccessSql.Tagged(path, bag, alias));
     }
 
     private string NestedFromColumn(FieldPath path, ParameterBag bag)

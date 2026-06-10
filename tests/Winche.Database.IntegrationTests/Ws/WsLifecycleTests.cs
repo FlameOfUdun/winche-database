@@ -1,5 +1,4 @@
 using System.Net.WebSockets;
-using System.Text;
 using System.Text.Json.Nodes;
 using Winche.Database.AspNetCore.WebSockets.Connections;
 
@@ -13,56 +12,46 @@ public class WsLifecycleTests(PostgresFixture fx) : QueryTestBase(fx)
 {
     private Task<WsTestHost> Host() => WsTestHost.StartAsync(Fx.ConnectionString);
 
+    // ── Happy path: connect → server welcome → ping/pong ────────────────────
     [Fact]
-    public async Task Hello_Welcome_Ping()
+    public async Task Connect_Welcome_Ping()
     {
         await using var host = await Host();
-        await using var ws = await WsTestClient.ConnectV3Async(host.Server);
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
         var pong = await ws.RequestAsync(new JsonObject { ["type"] = "ping" });
         Assert.Equal("response", (string?)pong["type"]);
     }
 
+    // ── Welcome frame carries connectionId ───────────────────────────────────
     [Fact]
-    public async Task WrongProtocol_Closes4400()
+    public async Task Connect_WelcomeFrame_HasConnectionId()
     {
         await using var host = await Host();
-        await using var ws = await WsTestClient.ConnectAsync(host.Server);
-        await ws.SendAsync(new JsonObject { ["type"] = "hello", ["protocol"] = 2 });
-        await ws.WaitForAsync(f => (string?)f["type"] == "error");
-        await ws.WaitForCloseAsync();
-        Assert.Equal((WebSocketCloseStatus)4400, ws.CloseStatus);
+        var ws = await WsTestClient.ConnectAsync(host.Server);
+        var welcome = await ws.WaitForAsync(f => (string?)f["type"] == "welcome");
+        Assert.False(string.IsNullOrEmpty((string?)welcome["connectionId"]));
+        await ws.DisposeAsync();
     }
 
+    // ── Unauthenticated upgrade is rejected when RequireAuthorization is set ─
     [Fact]
-    public async Task BadToken_Closes4401()
+    public async Task UnauthenticatedUpgrade_Rejected_WhenRequireAuthorizationConfigured()
     {
-        await using var host = await Host();
-        await using var ws = await WsTestClient.ConnectAsync(host.Server);
-        await ws.SendAsync(new JsonObject { ["type"] = "hello", ["protocol"] = 3, ["token"] = "deny" });
-        await ws.WaitForAsync(f => (string?)f["type"] == "error" && (string?)f["status"] == "UNAUTHENTICATED");
-        await ws.WaitForCloseAsync();
-        Assert.Equal((WebSocketCloseStatus)4401, ws.CloseStatus);
+        await using var host = await WsTestHost.StartAsync(Fx.ConnectionString, requireAuth: true);
+        // No token → auth handler returns NoResult → 401 → WebSocket upgrade is refused
+        // TestServer throws on ConnectAsync when the upgrade is rejected with a non-101 status
+        await Assert.ThrowsAnyAsync<Exception>(async () =>
+            await WsTestClient.ConnectAsync(host.Server));
     }
 
+    // ── Authenticated upgrade succeeds; claims are the token identity ────────
     [Fact]
-    public async Task NonHelloFirstFrame_Closes4400()
+    public async Task AuthenticatedUpgrade_WelcomeReceived()
     {
-        await using var host = await Host();
-        await using var ws = await WsTestClient.ConnectAsync(host.Server);
-        await ws.SendAsync(new JsonObject { ["type"] = "ping", ["id"] = "1" });
-        await ws.WaitForCloseAsync();
-        Assert.Equal((WebSocketCloseStatus)4400, ws.CloseStatus);
-    }
-
-    [Fact]
-    public async Task AuthRefresh_Succeeds_And_DenyFails()
-    {
-        await using var host = await Host();
-        await using var ws = await WsTestClient.ConnectV3Async(host.Server, "uid:alice");
-        var ok = await ws.RequestAsync(new JsonObject { ["type"] = "auth.refresh", ["token"] = "uid:bob" });
-        Assert.Equal("response", (string?)ok["type"]);
-        var bad = await ws.RequestAsync(new JsonObject { ["type"] = "auth.refresh", ["token"] = "deny" });
-        Assert.Equal("UNAUTHENTICATED", (string?)bad["status"]);
+        await using var host = await WsTestHost.StartAsync(Fx.ConnectionString, requireAuth: true);
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server, "uid:alice");
+        var pong = await ws.RequestAsync(new JsonObject { ["type"] = "ping" });
+        Assert.Equal("response", (string?)pong["type"]);
     }
 
     // ── C1: typeless frame mid-connection ────────────────────────────────────
@@ -70,36 +59,12 @@ public class WsLifecycleTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task TypelessFrame_ErrorFrame_ConnectionSurvives()
     {
         await using var host = await Host();
-        await using var ws = await WsTestClient.ConnectV3Async(host.Server);
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
         await ws.SendAsync(new JsonObject { ["id"] = "q1" });                     // no "type"
         var err = await ws.WaitForAsync(f => (string?)f["type"] == "error");
         Assert.Equal("INVALID_ARGUMENT", (string?)err["status"]);
         var pong = await ws.RequestAsync(new JsonObject { ["type"] = "ping" });   // still alive
         Assert.Equal("response", (string?)pong["type"]);
-    }
-
-    // ── I2: garbage first frame → error frame + close 4400 ──────────────────
-    [Fact]
-    public async Task GarbageFirstFrame_ErrorFrame_Closes4400()
-    {
-        await using var host = await Host();
-        await using var ws = await WsTestClient.ConnectAsync(host.Server);
-        await ws.SendAsync(new JsonObject { ["type"] = "bogus" });
-        await ws.WaitForAsync(f => (string?)f["type"] == "error");
-        await ws.WaitForCloseAsync();
-        Assert.Equal((WebSocketCloseStatus)4400, ws.CloseStatus);
-    }
-
-    // ── I3.1: hello timeout → close 4408 ────────────────────────────────────
-    [Fact]
-    public async Task HelloTimeout_Closes4408()
-    {
-        await using var host = await WsTestHost.StartAsync(Fx.ConnectionString,
-            configureWs: o => o.HelloTimeout = TimeSpan.FromMilliseconds(300));
-        await using var ws = await WsTestClient.ConnectAsync(host.Server);
-        // send nothing — timeout fires
-        await ws.WaitForCloseAsync(timeoutMs: 5000);
-        Assert.Equal((WebSocketCloseStatus)4408, ws.CloseStatus);
     }
 
     // ── I3.2: oversized frame → close 4413 ──────────────────────────────────
@@ -108,7 +73,7 @@ public class WsLifecycleTests(PostgresFixture fx) : QueryTestBase(fx)
     {
         await using var host = await WsTestHost.StartAsync(Fx.ConnectionString,
             configureWs: o => o.MaxFrameBytes = 1024);
-        await using var ws = await WsTestClient.ConnectV3Async(host.Server);
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
         // frame with a 4 KB string value
         await ws.SendAsync(new JsonObject { ["type"] = "ping", ["id"] = "x", ["pad"] = new string('A', 4096) });
         await ws.WaitForCloseAsync();
@@ -120,7 +85,7 @@ public class WsLifecycleTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task BinaryFrame_Closes4400()
     {
         await using var host = await Host();
-        await using var ws = await WsTestClient.ConnectV3Async(host.Server);
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
         await ws.SendBinaryAsync([0x01, 0x02, 0x03]);
         await ws.WaitForCloseAsync();
         Assert.Equal((WebSocketCloseStatus)4400, ws.CloseStatus);
@@ -131,7 +96,7 @@ public class WsLifecycleTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task MalformedJson_ErrorFrame_ConnectionSurvives()
     {
         await using var host = await Host();
-        await using var ws = await WsTestClient.ConnectV3Async(host.Server);
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
         await ws.SendRawAsync("{not json");
         var err = await ws.WaitForAsync(f => (string?)f["type"] == "error");
         Assert.Equal("INVALID_ARGUMENT", (string?)err["status"]);

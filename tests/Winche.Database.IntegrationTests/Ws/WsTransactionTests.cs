@@ -1,4 +1,6 @@
 using System.Text.Json.Nodes;
+using Winche.Rules;
+using Winche.Rules.Expressions;
 
 namespace Winche.Database.IntegrationTests.Ws;
 
@@ -6,7 +8,7 @@ namespace Winche.Database.IntegrationTests.Ws;
 public class WsTransactionTests(PostgresFixture fx) : QueryTestBase(fx)
 {
     private Task<WsTestHost> Host() => WsTestHost.StartAsync(Fx.ConnectionString,
-        c => c.AddDocumentAccessRule<AllowAllWritesRule>());
+        c => c.UseRules(r => r.Match("{document=**}", b => b.Allow(RuleOperations.All, Expr.Const(true)))));
 
     private static JsonObject Set(string path, long n) => new()
     {
@@ -25,7 +27,7 @@ public class WsTransactionTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Tx_ReadCommit_HappyPath_And_ConflictAborts()
     {
         await using var host = await Host();
-        await using var ws = await WsTestClient.ConnectV3Async(host.Server);
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
         await ws.RequestAsync(Set("wstx/a", 1));
 
         // happy path
@@ -56,8 +58,8 @@ public class WsTransactionTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task ForeignTxId_Aborts_CrossConnection()
     {
         await using var host = await Host();
-        await using var ws1 = await WsTestClient.ConnectV3Async(host.Server);
-        await using var ws2 = await WsTestClient.ConnectV3Async(host.Server);
+        await using var ws1 = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
+        await using var ws2 = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
 
         var begin = await ws1.RequestAsync(new JsonObject { ["type"] = "tx.begin" });
         var txId = (string)begin["result"]!["transactionId"]!;
@@ -72,8 +74,8 @@ public class WsTransactionTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task ForeignTxRollback_IsIdempotent_OriginalConnectionCanStillCommit()
     {
         await using var host = await Host();
-        await using var ws1 = await WsTestClient.ConnectV3Async(host.Server);
-        await using var ws2 = await WsTestClient.ConnectV3Async(host.Server);
+        await using var ws1 = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
+        await using var ws2 = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
 
         // Seed a document so ws1's tx.get populates the read set (commit requires ≥1 read or write)
         await ws1.RequestAsync(Set("wstx/c2seed", 0));
@@ -102,13 +104,13 @@ public class WsTransactionTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Disconnect_RollsBackOpenTransaction()
     {
         await using var host = await Host();
-        var ws = await WsTestClient.ConnectV3Async(host.Server);
+        var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
         var begin = await ws.RequestAsync(new JsonObject { ["type"] = "tx.begin" });
         var txId = (string)begin["result"]!["transactionId"]!;
         await ws.DisposeAsync();                                          // abrupt disconnect
 
         await Task.Delay(500);                                            // scope disposal runs server-side
-        await using var ws2 = await WsTestClient.ConnectV3Async(host.Server);
+        await using var ws2 = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
         // a foreign-connection commit would be ABORTED regardless; prove the LEDGER dropped it
         // by beginning + committing fresh — and asserting the old id is gone via tx.get on ws2:
         var gone = await ws2.RequestAsync(new JsonObject

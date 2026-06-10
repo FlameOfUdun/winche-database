@@ -4,6 +4,7 @@ using Winche.Database.Values;
 
 namespace Winche.Database.Runtime.Writes;
 
+[JsonConverter(typeof(WriteJsonConverter))]
 public abstract record Write
 {
     public required string Path { get; init; }

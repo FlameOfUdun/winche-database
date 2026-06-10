@@ -23,7 +23,7 @@ public static class ValueSerializer
         ReferenceValue r => new JsonObject { ["referenceValue"] = r.Path },
         GeoPointValue g => new JsonObject { ["geoPointValue"] = new JsonObject { ["latitude"] = g.Latitude, ["longitude"] = g.Longitude } },
         ArrayValue a => new JsonObject { ["arrayValue"] = new JsonObject { ["values"] = new JsonArray([.. a.Values.Select(v => (JsonNode)Write(v))]) } },
-        MapValue m => new JsonObject { ["mapValue"] = new JsonObject { ["fields"] = WriteFields(m.Fields) } },
+        MapValue m => new JsonObject { [WireTags.MapValue] = new JsonObject { [WireTags.Fields] = WriteFields(m.Fields) } },
         _ => throw new NotSupportedException($"Unknown Value type: {value.GetType().Name}")
     };
 
@@ -66,7 +66,7 @@ public static class ValueSerializer
             "referenceValue" => new ReferenceValue(GetString(payload, tag)),
             "geoPointValue" => ReadGeoPoint(payload),
             "arrayValue" => ReadArray(payload),
-            "mapValue" => ReadMap(payload),
+            WireTags.MapValue => ReadMap(payload),
             _ => throw new WireFormatException($"Unknown value tag: '{tag}'")
         };
     }
@@ -147,8 +147,8 @@ public static class ValueSerializer
     private static MapValue ReadMap(JsonNode? n)
     {
         if (n is not JsonObject o) throw new WireFormatException("mapValue must be an object");
-        if (o["fields"] is null) return new MapValue(new Dictionary<string, Value>()); // Firestore omits empty fields
-        if (o["fields"] is not JsonObject fields) throw new WireFormatException("mapValue.fields must be an object");
+        if (o[WireTags.Fields] is null) return new MapValue(new Dictionary<string, Value>()); // Firestore omits empty fields
+        if (o[WireTags.Fields] is not JsonObject fields) throw new WireFormatException("mapValue.fields must be an object");
         return new MapValue(ReadFields(fields));
     }
 }

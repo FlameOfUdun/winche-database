@@ -1,8 +1,8 @@
-# Winche.Database v3 — Wire Protocol Reference
+# Winche.Database — Wire Protocol Reference
 
-**Version:** 3 | **Last updated:** 2026-06-07
+**Last updated:** 2026-06-07
 
-> This document is the authoritative reference for all v3 wire formats: typed values, documents, write operations, queries, aggregation pipelines, error codes, the REST API, and the WebSocket protocol. Every JSON example is a shape verified against the parser source and integration tests.
+> This document is the authoritative reference for all wire formats: typed values, documents, write operations, queries, error codes, the REST API, and the WebSocket protocol. Every JSON example is a shape verified against the parser source and integration tests.
 
 ---
 
@@ -12,11 +12,10 @@
 2. [Documents & Paths](#2-documents--paths)
 3. [Writes](#3-writes)
 4. [Queries](#4-queries)
-5. [Pipelines](#5-pipelines)
-6. [Errors](#6-errors)
-7. [REST API](#7-rest-api)
-8. [WebSocket Protocol v3](#8-websocket-protocol-v3)
-9. [Operational Notes](#9-operational-notes)
+5. [Errors](#5-errors)
+6. [REST API](#6-rest-api)
+7. [WebSocket Protocol](#7-websocket-protocol)
+8. [Operational Notes](#8-operational-notes)
 
 ---
 
@@ -320,6 +319,7 @@ All writes in a batch share the same `updateTime` (single commit timestamp). `tr
   "where": { ... },
   "orderBy": [ ... ],
   "limit": 25,
+  "select": ["displayName", "address.city"],
   "start": {"values": [...], "before": true},
   "end":   {"values": [...], "before": false}
 }
@@ -331,8 +331,11 @@ All writes in a batch share the same `updateTime` (single commit timestamp). `tr
 | `where` | object | No | Filter — see §4.2. |
 | `orderBy` | array | No | Sort keys — see §4.3. |
 | `limit` | integer | No | Maximum documents to return. Default **100** when omitted. |
+| `select` | array | No | Field-projection list — see below. |
 | `start` | cursor | No | Lower bound cursor — see §4.4. |
 | `end` | cursor | No | Upper bound cursor. |
+
+**`select` — field projection.** When present, `select` is a JSON array of dotted field-path strings (e.g. `["displayName", "address.city"]`). The response documents contain **only** those fields; top-level and nested paths are both supported. Document id, path, and metadata (`createTime`, `updateTime`, `version`) are always preserved. Projection is applied server-side — the full document is never materialized. `select` is orthogonal to authorization: rules are evaluated against the full document as normal.
 
 Query response:
 
@@ -435,124 +438,16 @@ The engine automatically appends `__name__` (the document path) as a tiebreaker 
 
 ---
 
-## 5. Pipelines
+## 5. Errors
 
-Pipelines are an array of stage objects. Each stage object has exactly **one** of the stage keys. The pipeline JSON wrapper key is `"pipeline"`.
-
-### 5.1 Pipeline request shape
-
-```json
-{
-  "pipeline": [
-    {"match": {"collection": "orders", "where": { ... }}},
-    {"group": {"keys": [...], "accumulators": [...]}}
-  ]
-}
-```
-
-Pipeline response:
-
-```json
-{"rows": [ {"total": {"integerValue": "42"}} ]}
-```
-
-### 5.2 Stage reference
-
-| Stage key | Body shape | Description |
-| - | - | - |
-| `match` | `{"collection": "col", "where": {…}}` | Initial collection scan with optional filter. `where` is a full filter object (§4.2). |
-| `filter` | A filter object (§4.2) | Post-stage filter, like MongoDB `$match` without a collection. |
-| `lookup` | See §5.3 | Left join from a related collection. |
-| `unwind` | `{"field": "tags", "as": "tag", "preserveNullAndEmpty": false}` | Deconstructs an array field into one row per element. |
-| `group` | `{"keys": [...], "accumulators": [...], "having": {…}}` | Aggregation. See §5.4. |
-| `project` | `{"fields": [...]}` | Reshape output. See §5.5. |
-| `sort` | `[{"field": "score", "direction": "desc"}]` | Order rows. |
-| `limit` | integer | Maximum output rows. |
-| `skip` | integer | Skip the first N rows. |
-
-### 5.3 Lookup stage
-
-```json
-{
-  "lookup": {
-    "collection":   "products",
-    "localField":   "productId",
-    "foreignField": "id",
-    "as":           "product",
-    "where":        { ... },
-    "orderBy":      [{"field": "name", "direction": "asc"}],
-    "limit":        100
-  }
-}
-```
-
-`limit` defaults to 100. `where` and `orderBy` are optional additional filters/sorts on the joined collection.
-
-### 5.4 Group stage
-
-```json
-{
-  "group": {
-    "keys": [
-      {"as": "status", "field": "status"}
-    ],
-    "accumulators": [
-      {"as": "total", "fn": "sum",   "field": "amount"},
-      {"as": "n",     "fn": "count"}
-    ],
-    "having": {"field": "total", "op": "gt", "value": {"integerValue": "0"}}
-  }
-}
-```
-
-`keys` may be an empty array for a global aggregation. `having` is an optional post-group filter. `field` is required for all accumulator functions except `count`.
-
-**Accumulator functions:**
-
-| Wire string | Description |
-| - | - |
-| `count` | Number of rows in the group |
-| `sum` | Sum of numeric field values |
-| `avg` | Average of numeric field values |
-| `min` | Minimum value in the group |
-| `max` | Maximum value in the group |
-| `push` | Array of all values |
-| `addToSet` | Array of unique values |
-| `first` | First value in group order |
-| `last` | Last value in group order |
-
-### 5.5 Project stage
-
-```json
-{
-  "project": {
-    "fields": [
-      {"as": "name",  "field": "user.name"},
-      {"as": "zero",  "value": {"integerValue": "0"}},
-      {"as": "total", "fn": "sum", "field": "amount"}
-    ]
-  }
-}
-```
-
-Each projection is exactly one of:
-
-- `{"as": "...", "field": "..."}` — field reference (dotted path)
-- `{"as": "...", "value": <tagged-value>}` — literal value
-- `{"as": "...", "fn": "<aggFunction>", "field": "..."}` — aggregate expression (for use in post-group projection)
-
----
-
-## 6. Errors
-
-### 6.1 Error status vocabulary
+### 5.1 Error status vocabulary
 
 All errors — WS `error` frames and REST error bodies — use this status vocabulary:
 
 | Status | Description |
 | - | - |
 | `INVALID_ARGUMENT` | Malformed request, bad field types, batch size exceeded, write shape invalid |
-| `INVALID_QUERY` | Query or pipeline parse error (surfaces on **both** REST 400 and WS error frame; `details.jsonPath` for JSON parse errors, `details.code` for plan-validation failures) |
+| `INVALID_QUERY` | Query parse error (surfaces on **both** REST 400 and WS error frame; `details.jsonPath` for JSON parse errors, `details.code` for plan-validation failures) |
 | `NOT_FOUND` | `UpdateWrite`/`exists:true` precondition on a missing document |
 | `ALREADY_EXISTS` | `exists:false` precondition on an existing document |
 | `FAILED_PRECONDITION` | `updateTime` precondition mismatch |
@@ -562,7 +457,7 @@ All errors — WS `error` frames and REST error bodies — use this status vocab
 | `DEADLINE_EXCEEDED` | Operation timed out |
 | `INTERNAL` | Unexpected server error (always a bug; report it) |
 
-### 6.2 REST error body
+### 5.2 REST error body
 
 ```json
 {"status": "NOT_FOUND", "message": "Document 'users/u99' does not exist.", "details": null}
@@ -580,7 +475,7 @@ For `INVALID_QUERY` plan-validation failures it contains `code`:
 {"status": "INVALID_QUERY", "message": "orderBy field missing from where clause", "details": {"code": "ORDERBY_FIELD_NOT_FILTERED"}}
 ```
 
-### 6.3 REST status → HTTP code mapping
+### 5.3 REST status → HTTP code mapping
 
 | Status | HTTP |
 | - | - |
@@ -595,11 +490,11 @@ For `INVALID_QUERY` plan-validation failures it contains `code`:
 
 ---
 
-## 7. REST API
+## 6. REST API
 
 The REST API is mounted at a configurable prefix (default `documents`). All paths below use `documents` as the prefix.
 
-### 7.1 Convenience endpoints
+### 6.1 Convenience endpoints
 
 Document paths in URL segments are **Base64-encoded** (standard, UTF-8 bytes) to avoid routing conflicts with slashes.
 
@@ -611,7 +506,7 @@ Document paths in URL segments are **Base64-encoded** (standard, UTF-8 bytes) to
 | `DELETE` | `/documents/{base64Path}` | — | 204 or 404 | Delete (cascade). Returns 404 if missing (performs read first). |
 | `GET` | `/documents/ping` | — | 200 | Health check |
 
-### 7.2 Colon-verb endpoints
+### 6.2 Colon-verb endpoints
 
 These endpoints use literal-colon URL segments. They receive the built-in claims and error filters but live outside the `/{prefix}` group — `configure` customizations apply only to the `/{prefix}` group. Use the `configureVerbs` parameter to apply customizations to the colon-verb routes.
 
@@ -622,10 +517,9 @@ These endpoints use literal-colon URL segments. They receive the built-in claims
 | `POST /documents:rollback` | `{"transaction": "id"}` | `{}` | Roll back (idempotent; unknown id is a no-op). |
 | `POST /documents:batchGet` | `{"documents": ["path1","path2",...], "transaction"?: "id"}` | `{"documents": [Document\|null, ...]}` | Bulk read preserving input order; missing docs are `null`. |
 | `POST /documents:runQuery` | `{"query": <Query>, "transaction"?: "id"}` | `{"documents": [...], "hasMore": false}` | Execute a query. Default `limit` = 100 when omitted. |
-| `POST /documents:count` | `{"query": <Query>}` | `{"count": N}` | Count documents matching the query. An explicit `limit` caps the count; omitted = full match (the 100 default does **not** apply). Requires the `Aggregate` access operation on the collection — distinct from `Read`, deny-by-default — else `PERMISSION_DENIED`. |
-| `POST /documents:aggregate` | `{"pipeline": <Pipeline>}` | `{"rows": [...]}` | Execute an aggregation pipeline. Requires the `Aggregate` access operation on every `match`/`lookup` collection — distinct from `Read`, deny-by-default — else `PERMISSION_DENIED`. |
+| `POST /documents:count` | `{"query": <Query>}` | `{"count": N}` | Count documents matching the query. An explicit `limit` caps the count; omitted = full match (the 100 default does **not** apply). Authorized as a `list` operation — the query must provably satisfy a read rule or the request is rejected with `PERMISSION_DENIED`. |
 
-### 7.3 Request/response examples
+### 6.3 Request/response examples
 
 **:commit (batch)**
 
@@ -704,27 +598,7 @@ POST /documents:count
 {"count": 42}
 ```
 
-**:aggregate**
-
-```json
-POST /documents:aggregate
-{
-  "pipeline": {
-    "pipeline": [
-      {"match": {"collection": "orders"}},
-      {"group": {
-        "keys": [{"as": "status", "field": "status"}],
-        "accumulators": [{"as": "total", "fn": "sum", "field": "amount"}]
-      }}
-    ]
-  }
-}
-
-200 OK
-{"rows": [{"status": {"stringValue": "paid"}, "total": {"doubleValue": 1234.5}}]}
-```
-
-### 7.4 Sticky-transaction caveat
+### 6.4 Sticky-transaction caveat
 
 > **IMPORTANT — Multi-node deployments**
 >
@@ -736,44 +610,36 @@ POST /documents:aggregate
 
 ---
 
-## 8. WebSocket Protocol v3
+## 7. WebSocket Protocol
 
-### 8.1 Connection and handshake
+### 7.1 Connection and authentication
 
 Connect via standard WebSocket to `/{prefix}/ws` (default `/documents/ws`).
 
-**Handshake sequence:**
+**Authentication is at the HTTP upgrade.** Because browsers cannot set `Authorization` headers on WebSocket upgrades, the library ships `UseWincheWsQueryToken()` middleware. Place it **before** `UseAuthentication()`: it promotes a `?access_token=<token>` query parameter to an `Authorization: Bearer …` header so the registered authentication handler can validate it at the upgrade. Gate the endpoint with `.RequireAuthorization()` to reject unauthenticated upgrades before the socket is accepted.
 
-1. The **first frame** the client sends must be a `hello` message, within **10 seconds**. Missing the deadline closes the socket with code `4408`.
-2. The server authenticates the token (if any) and replies with `welcome` on success or `error` + close `4401` on authentication failure.
-3. An unsupported `protocol` value sends `error` + close `4400`. A non-`hello` first frame also closes `4400`.
-4. After `welcome`, the connection is fully open for operations.
+An invalid or missing token results in an **HTTP 401** response — the WebSocket connection is never opened. There is no in-band authentication exchange.
 
-```json
-Client: {"type": "hello", "protocol": 3, "token": "<optional-jwt>"}
-Server: {"type": "welcome", "connectionId": "a1b2c3...", "protocol": 3}
-```
-
-On failure:
+On a successful upgrade the server **immediately** sends:
 
 ```json
-Server: {"type": "error", "status": "UNAUTHENTICATED", "message": "Token rejected."}
+{"type": "welcome", "connectionId": "a1b2c3..."}
 ```
 
-(socket then closes with code `4401`)
+The connection's identity is fixed for its lifetime. On token expiry the client reconnects.
 
-### 8.2 Close codes
+> **Security notes:** always require TLS in production (tokens in query strings appear in server logs and proxies); use short-lived tokens and reconnect on expiry.
+
+### 7.2 Close codes
 
 | Code | Meaning |
 | - | - |
-| `4400` | Protocol violation (wrong protocol version, non-`hello` first frame, binary frame) |
-| `4401` | Authentication failed |
-| `4408` | Hello timeout (10 s default; configurable via `WsOptions.HelloTimeout`) |
+| `4400` | Protocol violation (binary frame or other connection-level protocol error) |
 | `4413` | Incoming frame too large (default 1 MiB; configurable via `WsOptions.MaxFrameBytes`) |
 | `1013` | Send queue overflow — server could not drain outbound frames (queue limit 64; configurable via `WsOptions.SendQueueLimit`) |
 | `1000` | Normal closure (server-initiated clean shutdown) |
 
-### 8.3 Envelope and correlation
+### 7.3 Envelope and correlation
 
 Every **client** request carries a client-chosen `id`:
 
@@ -794,7 +660,7 @@ Inbound processing is **serial per connection** — the server awaits each handl
 
 Binary frames are rejected with close code `4400`. Malformed JSON mid-connection yields an `error` frame; the connection remains open.
 
-### 8.4 Operations
+### 7.4 Operations
 
 #### Reads
 
@@ -812,11 +678,6 @@ Server: {"type": "response", "id": "3", "result": {"documents": [...], "hasMore"
 Client: {"type": "count", "id": "4",
          "query": {"collection": "users", "where": {"field": "score", "op": "gte", "value": {"integerValue": "50"}}}}
 Server: {"type": "response", "id": "4", "result": {"count": 42}}
-
-Client: {"type": "aggregate", "id": "5",
-         "pipeline": {"pipeline": [{"match": {"collection": "users"}},
-                                   {"group": {"keys": [], "accumulators": [{"as": "n", "fn": "count"}]}}]}}
-Server: {"type": "response", "id": "5", "result": {"rows": [{"n": {"integerValue": "5"}}]}}
 ```
 
 #### Writes
@@ -845,18 +706,7 @@ Client: {"type": "ping", "id": "6"}
 Server: {"type": "response", "id": "6", "result": {}}
 ```
 
-#### Auth refresh
-
-```json
-Client: {"type": "auth.refresh", "id": "7", "token": "<new-jwt>"}
-Server: {"type": "response", "id": "7", "result": {}}
-```
-
-After a successful `auth.refresh`, subsequent listener deliveries and access-rule evaluations use the new claims. Listener subscriptions that depended on the old claims will produce `removed` deltas for newly-invisible documents.
-
-A failed refresh returns an `error` frame with status `UNAUTHENTICATED`; the connection's claims remain unchanged.
-
-### 8.5 Transactions
+### 7.5 Transactions
 
 Transactions are **connection-owned**. The WS layer enforces ownership: a `tx.get`, `tx.query`, or `tx.commit` from a different connection than the one that called `tx.begin` returns `ABORTED` — not a security error, just an ownership boundary.
 
@@ -895,7 +745,7 @@ Server: {"type": "response", "id": "t5", "result": {}}
 
 **Transaction expiry:** Transactions idle out after **60 seconds** of no activity (default; configurable via `WincheDatabaseOptions.TransactionConfig.IdleTimeoutSpan`). The absolute maximum lifetime is **5 minutes** (configurable via `TotalTimeoutSpan`). Access on an expired or unknown transaction id yields `ABORTED`.
 
-### 8.6 Listener protocol
+### 7.6 Listener protocol
 
 #### Subscribe
 
@@ -980,9 +830,9 @@ The **send queue** is bounded at 64 frames (configurable). If it fills up, the c
 
 ---
 
-## 9. Operational Notes
+## 8. Operational Notes
 
-### 9.1 Hooks: feed-driven, at-least-once, idempotent
+### 8.1 Hooks: feed-driven, at-least-once, idempotent
 
 Document lifecycle hooks (`DocumentStoreHook`) are invoked **inline and sequentially** by `HookFeedConsumer`, which reads from the durable `changes` feed table.
 
@@ -993,7 +843,7 @@ Document lifecycle hooks (`DocumentStoreHook`) are invoked **inline and sequenti
 - **Durable cursor:** the cursor (`HookFeedConsumer.DurableName = "hooks"`) is persisted in `winche_feed_cursors`. On restart, the consumer resumes from the saved position and catches up on any writes that occurred while it was down.
 - **First boot:** on first deploy, the cursor is initialized to `MAX(seq)` at startup — historical documents are not replayed.
 
-### 9.2 Feed retention and pruning
+### 8.2 Feed retention and pruning
 
 The `changes` table is pruned automatically. Feed rows older than the configured retention period are deleted by a background pruner.
 
@@ -1004,7 +854,7 @@ The `changes` table is pruned automatically. Feed rows older than the configured
 | `PollInterval` | 2 seconds | Poll fallback (in addition to `pg_notify` wake-ups) |
 | `BatchSize` | 500 | Maximum feed rows read per pump batch |
 
-### 9.3 Seq/commit-order caveat
+### 8.3 Seq/commit-order caveat
 
 PostgreSQL assigns `BIGSERIAL` sequence values (`seq`) **before** a transaction commits. Two concurrent write transactions can therefore commit out of `seq` order: transaction A (seq 5) may commit **after** transaction B (seq 6). A consumer that advances past seq 6 immediately after B commits will permanently miss seq 5 when A later commits.
 
@@ -1012,15 +862,15 @@ The practical window for this race is the p99 write-transaction duration — typ
 
 **Consequence:** the feed delivers mutations in `seq` order, which is **close to** but **not guaranteed to be** commit order. Hook implementations and feed consumers must tolerate occasional out-of-order delivery and should use idempotency keys (e.g. document `version`) rather than assuming strict ordering.
 
-### 9.4 Listener delivery is per-node
+### 8.4 Listener delivery is per-node
 
 `ListenerRegistry` is in-process (per-node). Listeners on node A do not see writes processed only on node B's feed pump batch. Each node's feed pump reads from the shared `changes` table and dispatches to that node's listeners. In a multi-node deployment, all nodes receive the same feed events (independently) and update their own in-process listener groups accordingly.
 
-### 9.5 Filtered indexes
+### 8.5 Filtered indexes
 
 `IndexDefinition` subclasses may override `Where` to define a partial index predicate. The predicate is evaluated by a restricted literal SQL emitter at index-sync time — it supports `And` composites, field equality/range comparisons, and `Exists`/`IsNull` unary checks. Expressions not in the restricted subset cause an `ArgumentException` at index-sync time with a descriptive message.
 
-### 9.6 Transaction configuration
+### 8.6 Transaction configuration
 
 | `WincheDatabaseOptions.TransactionConfig` field | Default | Description |
 | - | - | - |

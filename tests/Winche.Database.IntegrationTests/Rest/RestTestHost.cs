@@ -1,20 +1,18 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Winche.Database.Abstraction;
 using Winche.Database.AspNetCore.DependencyInjection;
 using Winche.Database.AspNetCore.Rest.DependencyInjection;
 using Winche.Database.DependencyInjection;
-using Winche.Database.IntegrationTests.Ws;
-using Winche.Sentinel.Models;
 
 namespace Winche.Database.IntegrationTests.Rest;
 
 /// <summary>
 /// Real ASP.NET host over the Testcontainers database, exercised via HttpClient.
-/// Mirrors WsTestHost: same AddWincheDatabase + TestClaimsAccessor wiring.
+/// Mirrors WsTestHost: same AddWincheDatabase + MapClaims wiring.
 /// Test auth: no token → empty claims (no access control unless a rule is configured).
 /// </summary>
 public sealed class RestTestHost : IAsyncDisposable
@@ -37,7 +35,13 @@ public sealed class RestTestHost : IAsyncDisposable
         builder.Services.AddWincheDatabase(config =>
         {
             config.ConnectionString = connectionString;
-            config.SetCallerClaimsAccessor<TestClaimsAccessor>();
+            config.MapClaims(http =>
+            {
+                var uid = http.User.FindFirstValue("uid");
+                return uid is not null
+                    ? new Dictionary<string, object?> { ["uid"] = uid }
+                    : new Dictionary<string, object?>();
+            });
             configureDb?.Invoke(config);
         });
 
@@ -53,15 +57,4 @@ public sealed class RestTestHost : IAsyncDisposable
         await _app.StopAsync();
         await _app.DisposeAsync();
     }
-}
-
-/// <summary>Allows all operations (write, delete, read, aggregate) — used by REST tests that don't exercise access control.</summary>
-internal sealed class RestAllowAllRule : DocumentAccessRule
-{
-    public override string Path => "**";
-    public override IReadOnlySet<AccessOperation> Operations =>
-        new HashSet<AccessOperation> { AccessOperation.Write, AccessOperation.Delete, AccessOperation.Read, AccessOperation.Aggregate };
-
-    public override Task<bool> EvaluateAsync(AccessContext<Documents.Document> context, CancellationToken ct) =>
-        Task.FromResult(true);
 }

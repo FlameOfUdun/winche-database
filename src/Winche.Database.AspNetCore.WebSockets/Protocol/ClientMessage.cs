@@ -1,18 +1,15 @@
-using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Winche.Database.Querying.Ast;
+using Winche.Database.Runtime.Writes;
 
 namespace Winche.Database.AspNetCore.WebSockets.Protocol;
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
-[JsonDerivedType(typeof(HelloMessage), "hello")]
 [JsonDerivedType(typeof(PingMessage), "ping")]
-[JsonDerivedType(typeof(AuthRefreshMessage), "auth.refresh")]
 [JsonDerivedType(typeof(DocGetMessage), "doc.get")]
 [JsonDerivedType(typeof(DocGetAllMessage), "doc.getAll")]
 [JsonDerivedType(typeof(QueryMessage), "query")]
 [JsonDerivedType(typeof(CountMessage), "count")]
-[JsonDerivedType(typeof(AggregateMessage), "aggregate")]
 [JsonDerivedType(typeof(WriteMessage), "write")]
 [JsonDerivedType(typeof(TxBeginMessage), "tx.begin")]
 [JsonDerivedType(typeof(TxGetMessage), "tx.get")]
@@ -26,18 +23,7 @@ public abstract record ClientMessage
     [JsonPropertyName("id")] public string? Id { get; init; }
 }
 
-public sealed record HelloMessage : ClientMessage
-{
-    [JsonPropertyName("protocol")] public int Protocol { get; init; }
-    [JsonPropertyName("token")] public string? Token { get; init; }
-}
-
 public sealed record PingMessage : ClientMessage;
-
-public sealed record AuthRefreshMessage : ClientMessage
-{
-    [JsonPropertyName("token")] public required string Token { get; init; }
-}
 
 public sealed record DocGetMessage : ClientMessage
 {
@@ -59,15 +45,9 @@ public sealed record CountMessage : ClientMessage
     [JsonPropertyName("query")] public required Query Query { get; init; }
 }
 
-public sealed record AggregateMessage : ClientMessage
-{
-    [JsonPropertyName("pipeline")] public required Pipeline Pipeline { get; init; }
-}
-
-/// <summary>writes stay raw JSON here; WriteWireParser owns the Write wire format.</summary>
 public sealed record WriteMessage : ClientMessage
 {
-    [JsonPropertyName("writes")] public required JsonArray Writes { get; init; }
+    [JsonPropertyName("writes")] public required IReadOnlyList<Write> Writes { get; init; }
 }
 
 public sealed record TxBeginMessage : ClientMessage;
@@ -87,7 +67,7 @@ public sealed record TxQueryMessage : ClientMessage
 public sealed record TxCommitMessage : ClientMessage
 {
     [JsonPropertyName("transactionId")] public required string TransactionId { get; init; }
-    [JsonPropertyName("writes")] public required JsonArray Writes { get; init; }
+    [JsonPropertyName("writes")] public required IReadOnlyList<Write> Writes { get; init; }
 }
 
 public sealed record TxRollbackMessage : ClientMessage

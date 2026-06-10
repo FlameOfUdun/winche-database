@@ -1,20 +1,23 @@
 using System.Text;
 using Winche.Database.Constants;
+using Winche.Database.Documents;
 using Winche.Database.Querying.Planning;
 
 namespace Winche.Database.Querying.Sql;
 
 /// <summary>
-/// LogicalPlan → CompiledSql. Phase 2 compiles the linear query shape
+/// LogicalPlan → CompiledSql. Compiles the linear query shape
 /// [Scan, Filter?, Sort, CursorRange?, Page] into ONE flat SELECT.
-/// Pipeline nodes (Group, Project, …) arrive in Phase 3 with CTE chaining.
 /// </summary>
 internal static class SqlCompiler
 {
     private const string Alias = "d";
     private const string Columns = "path, id, collection, data, created_at, updated_at, version";
 
-    public static CompiledSql Compile(LogicalPlan plan, IReadOnlyList<string>? scopeRegexes = null)
+    public static CompiledSql Compile(
+        LogicalPlan plan,
+        IReadOnlyList<string>? scopeRegexes = null,
+        IReadOnlyList<FieldPath>? select = null)
     {
         CollectionScan? scan = null;
         FilterNode? filter = null;
@@ -41,7 +44,14 @@ internal static class SqlCompiler
         var bag = new ParameterBag();
         var sb = new StringBuilder();
 
-        sb.AppendLine($"SELECT {string.Join(", ", Columns.Split(", ").Select(c => $"{Alias}.{c}"))}");
+        // Build the SELECT column list; replace d.data with a JSONB projection when Select is provided.
+        var dataColumn = select is { Count: > 0 }
+            ? $"{ProjectionSql.Build(select, $"{Alias}.data", bag)} AS data"
+            : $"{Alias}.data";
+
+        var allColumns = Columns.Split(", ")
+            .Select(c => c == "data" ? dataColumn : $"{Alias}.{c}");
+        sb.AppendLine($"SELECT {string.Join(", ", allColumns)}");
         sb.AppendLine($"FROM {WincheTables.Documents} {Alias}");
         sb.AppendLine($"WHERE {Alias}.collection = {bag.Add(scan.Collection)}");
         foreach (var rx in scopeRegexes ?? [])

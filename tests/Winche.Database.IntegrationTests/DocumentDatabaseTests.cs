@@ -17,7 +17,7 @@ public class DocumentDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     private static Dictionary<string, Value> Map(params (string K, Value V)[] e) => e.ToDictionary(x => x.K, x => x.V);
 
     [Fact]
-    public async Task Facade_CrudQueryAggregateBatch()
+    public async Task Facade_CrudQueryBatch()
     {
         var db = Db();
 
@@ -38,11 +38,6 @@ public class DocumentDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
         var q = await db.QueryAsync(new Query("users",
             Where: new FieldFilter(F("age"), FilterOperator.Gte, new IntegerValue(40))));
         Assert.Equal(2, q.Documents.Count);
-
-        var agg = await db.AggregateAsync(new Pipeline([
-            new Match("users", null),
-            new Group([], [new Accumulator("n", AggFunction.Count)])]));
-        Assert.Equal(new IntegerValue(3), Assert.Single(agg.Rows)["n"]);
 
         await db.WriteAsync([new DeleteWrite { Path = "users/u1" }]);
         Assert.Null(await db.GetAsync("users/u1"));

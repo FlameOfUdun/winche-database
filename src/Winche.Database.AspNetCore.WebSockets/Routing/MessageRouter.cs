@@ -5,23 +5,23 @@ using Winche.Database.AspNetCore.WebSockets.Protocol;
 using Winche.Database.Runtime;
 using Winche.Database.Runtime.Listening;
 using Winche.Database.Runtime.Writes;
-using Winche.Database.Wire;
+using Winche.Database.Wire; // ErrorMapper
 
 namespace Winche.Database.AspNetCore.WebSockets.Routing;
 
 /// <summary>
-/// Dispatches one client message to one terminal frame (spec §1). Inbound processing is
+/// Dispatches one client message to one terminal frame. Inbound processing is
 /// serial per connection (the endpoint awaits HandleAsync); listener events flow separately
 /// through the connection's send channel via SubscriptionPump.
 /// </summary>
-public sealed class MessageRouter(DependencyInjection.IWsAuthenticator authenticator)
+public sealed class MessageRouter
 {
     public async Task<ServerMessage> HandleAsync(
         ConnectionScope scope, WsConnection conn, Microsoft.AspNetCore.Http.HttpContext httpContext,
         ClientMessage message, CancellationToken ct)
     {
         var id = message.Id;
-        if (id is null && message is not HelloMessage)
+        if (id is null)
             return new ErrorMessage { Status = "INVALID_ARGUMENT", Message = "'id' is required." };
 
         try
@@ -30,13 +30,11 @@ public sealed class MessageRouter(DependencyInjection.IWsAuthenticator authentic
             return message switch
             {
                 PingMessage => Ok(id!, []),
-                AuthRefreshMessage refresh => await HandleAuthRefresh(scope, httpContext, refresh, ct),
                 DocGetMessage get => Ok(id!, new JsonObject { ["document"] = ToNode(await scope.Db.GetAsync(get.Path, ct)) }),
                 DocGetAllMessage getAll => Ok(id!, new JsonObject { ["documents"] = new JsonArray([.. (await scope.Db.GetAllAsync(getAll.Paths, ct)).Select(ToNode)]) }),
                 QueryMessage query => Ok(id!, ToNode(await scope.Db.QueryAsync(query.Query, ct))!.AsObject()),
                 CountMessage count => Ok(id!, new JsonObject { ["count"] = await scope.Db.CountAsync(count.Query, ct) }),
-                AggregateMessage agg => Ok(id!, ToNode(await scope.Db.AggregateAsync(agg.Pipeline, ct))!.AsObject()),
-                WriteMessage write => Ok(id!, WriteResultsBody(await scope.Db.WriteAsync(WriteWireParser.Parse(write.Writes), ct))),
+                WriteMessage write => Ok(id!, WriteResultsBody(await scope.Db.WriteAsync(write.Writes, ct))),
                 TxBeginMessage => await HandleTxBegin(scope, id!, ct),
                 TxGetMessage txGet => Ok(id!, new JsonObject { ["document"] = ToNode(await scope.Db.GetAsync(RequireTx(scope, txGet.TransactionId), txGet.Path, ct)) }),
                 TxQueryMessage txQuery => Ok(id!, ToNode(await scope.Db.QueryAsync(RequireTx(scope, txQuery.TransactionId), txQuery.Query, ct))!.AsObject()),
@@ -44,7 +42,6 @@ public sealed class MessageRouter(DependencyInjection.IWsAuthenticator authentic
                 TxRollbackMessage txRollback => await HandleTxRollback(scope, id!, txRollback, ct),
                 ListenMessage listen => HandleListen(scope, conn, id!, listen),
                 UnlistenMessage unlisten => await HandleUnlisten(scope, id!, unlisten),
-                HelloMessage => new ErrorMessage { Id = id, Status = "INVALID_ARGUMENT", Message = "Already said hello." },
                 _ => new ErrorMessage { Id = id, Status = "INVALID_ARGUMENT", Message = $"Unknown message: {message.GetType().Name}" },
             };
         }
@@ -52,20 +49,6 @@ public sealed class MessageRouter(DependencyInjection.IWsAuthenticator authentic
         {
             var error = ErrorMapper.Map(ex);
             return new ErrorMessage { Id = id, Status = error.Status, Message = error.Message, Details = error.Details };
-        }
-    }
-
-    private async Task<ServerMessage> HandleAuthRefresh(
-        ConnectionScope scope, Microsoft.AspNetCore.Http.HttpContext httpContext, AuthRefreshMessage refresh, CancellationToken ct)
-    {
-        try
-        {
-            scope.SetClaims(await authenticator.AuthenticateAsync(httpContext, refresh.Token, ct));
-            return Ok(refresh.Id!, new JsonObject());
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            return new ErrorMessage { Id = refresh.Id, Status = "UNAUTHENTICATED", Message = ex.Message };
         }
     }
 
@@ -80,10 +63,9 @@ public sealed class MessageRouter(DependencyInjection.IWsAuthenticator authentic
         ConnectionScope scope, string id, TxCommitMessage msg, CancellationToken ct)
     {
         var txId = RequireTx(scope, msg.TransactionId);
-        var writes = WriteWireParser.Parse(msg.Writes);
         try
         {
-            var results = await scope.Db.CommitTransactionAsync(txId, writes, ct);
+            var results = await scope.Db.CommitTransactionAsync(txId, msg.Writes, ct);
             return Ok(id, WriteResultsBody(results));
         }
         finally

@@ -1,6 +1,8 @@
 using System.Net;
 using System.Text;
 using System.Text.Json.Nodes;
+using Winche.Rules;
+using Winche.Rules.Expressions;
 
 namespace Winche.Database.IntegrationTests.Rest;
 
@@ -8,7 +10,7 @@ namespace Winche.Database.IntegrationTests.Rest;
 public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
 {
     private Task<RestTestHost> Host() => RestTestHost.StartAsync(Fx.ConnectionString,
-        c => c.AddDocumentAccessRule<RestAllowAllRule>());
+        c => c.UseRules(r => r.Match("{document=**}", b => b.Allow(RuleOperations.All, Expr.Const(true)))));
 
     /// <summary>POST a JSON string body; returns (status, parsed body).</summary>
     private static async Task<(HttpStatusCode Status, JsonObject Body)> PostAsync(
@@ -159,9 +161,9 @@ public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
         Assert.NotNull(docs[2]);
     }
 
-    // Case 6: :runQuery with filter and :aggregate count pipeline
+    // Case 6: :runQuery with filter
     [Fact]
-    public async Task RunQuery_Filter_And_Aggregate()
+    public async Task RunQuery_Filter()
     {
         await using var host = await Host();
         var client = host.Client;
@@ -183,21 +185,6 @@ public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
         Assert.Equal(HttpStatusCode.OK, queryStatus);
         var queryDocs = queryBody["documents"]!.AsArray();
         Assert.Equal(2, queryDocs.Count);
-
-        // :aggregate — count all rest6 docs → 3
-        var (aggStatus, aggBody) = await PostAsync(client, "/documents:aggregate",
-            """
-            {"pipeline": {"pipeline": [
-              {"match": {"collection": "rest6"}},
-              {"group": {"keys": [], "accumulators": [{"as": "total", "fn": "count"}]}}
-            ]}}
-            """);
-
-        Assert.Equal(HttpStatusCode.OK, aggStatus);
-        var rows = aggBody["rows"]!.AsArray();
-        Assert.Single(rows);
-        var totalStr = (string?)rows[0]!["total"]!["integerValue"];
-        Assert.Equal(3L, long.Parse(totalStr!));
     }
 
     // Case 7: Old routes gone — POST /documents/query is no longer a registered POST endpoint.

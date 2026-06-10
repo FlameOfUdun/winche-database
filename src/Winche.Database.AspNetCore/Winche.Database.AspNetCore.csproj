@@ -14,10 +14,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Winche.Sentinel.AspNetCore" Version="3.0.0" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\Winche.Database\Winche.Database.csproj" />
   </ItemGroup>
 

@@ -1,57 +1,14 @@
 using System.Text.Json.Nodes;
-using Winche.Database.Abstraction;
-using Winche.Database.Documents;
-using Winche.Sentinel.Models;
+using Winche.Rules;
+using Winche.Rules.Expressions;
 
 namespace Winche.Database.IntegrationTests.Ws;
-
-/// <summary>
-/// Read allowed only when claims uid == the document's "owner" field (or doc has no owner).
-/// Adapted from samples/Winche.Database.Sample/Configurations/OwnerReadRule.cs — uses
-/// GetResourceAsync (the real Sentinel API) rather than a non-existent .Resource property.
-/// </summary>
-internal sealed class OwnerOnlyReadRule : DocumentAccessRule
-{
-    public override string Path => "wsl/{docId}";
-    public override IReadOnlySet<AccessOperation> Operations => new HashSet<AccessOperation> { AccessOperation.Read };
-
-    public override async Task<bool> EvaluateAsync(AccessContext<Document> context, CancellationToken ct)
-    {
-        var uid = context.Claims.TryGetValue("uid", out var v) ? v as string : null;
-        var doc = await context.GetResourceAsync(ct);
-        var owner = doc?.Fields.TryGetValue("owner", out var o) == true
-            ? (o as Winche.Database.Values.StringValue)?.Value : null;
-        return owner is null || owner == uid;
-    }
-}
-
-/// <summary>Allows all operations (write, delete, read, aggregate) — used by plain-host tests that don't test access control.</summary>
-internal sealed class AllowAllWritesRule : DocumentAccessRule
-{
-    public override string Path => "**";
-    public override IReadOnlySet<AccessOperation> Operations =>
-        new HashSet<AccessOperation> { AccessOperation.Write, AccessOperation.Delete, AccessOperation.Read, AccessOperation.Aggregate };
-
-    public override Task<bool> EvaluateAsync(AccessContext<Document> context, CancellationToken ct) =>
-        Task.FromResult(true);
-}
-
-/// <summary>Allows writes and deletes but NOT reads — pair with owner-scoped read rules.</summary>
-internal sealed class AllowWriteDeleteRule : DocumentAccessRule
-{
-    public override string Path => "**";
-    public override IReadOnlySet<AccessOperation> Operations =>
-        new HashSet<AccessOperation> { AccessOperation.Write, AccessOperation.Delete };
-
-    public override Task<bool> EvaluateAsync(AccessContext<Document> context, CancellationToken ct) =>
-        Task.FromResult(true);
-}
 
 [Collection("postgres")]
 public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
 {
     private Task<WsTestHost> PlainHost() => WsTestHost.StartAsync(Fx.ConnectionString,
-        c => c.AddDocumentAccessRule<AllowAllWritesRule>());
+        c => c.UseRules(r => r.Match("{document=**}", b => b.Allow(RuleOperations.All, Expr.Const(true)))));
 
     private static JsonObject Set(string path, params (string K, JsonObject V)[] fields)
     {
@@ -79,7 +36,7 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Listen_InitialSnapshot_ThenDeltas_WithIndicesAndCount()
     {
         await using var host = await PlainHost();
-        await using var ws = await WsTestClient.ConnectV3Async(host.Server);
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
         await ws.RequestAsync(Set("wsd/a", ("n", Int(1))));
 
         var sub = await ws.RequestAsync(Listen("wsd"));
@@ -112,7 +69,7 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Unlisten_StopsEvents()
     {
         await using var host = await PlainHost();
-        await using var ws = await WsTestClient.ConnectV3Async(host.Server);
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
         var sub = await ws.RequestAsync(Listen("wsu"));
         var subId = (string)sub["result"]!["subscriptionId"]!;
         await ws.WaitForAsync(f => (string?)f["type"] == "listen.snapshot");
@@ -126,7 +83,7 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Resume_Current_IsSilent_ThenResetOnNextChange()
     {
         await using var host = await PlainHost();
-        await using var ws = await WsTestClient.ConnectV3Async(host.Server);
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
         await ws.RequestAsync(Set("wsr/a", ("n", Int(1))));
 
         var sub1 = await ws.RequestAsync(Listen("wsr"));
@@ -153,7 +110,7 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         await using var host = await PlainHost();
 
         // First client: subscribe then abruptly disconnect
-        var ws1 = await WsTestClient.ConnectV3Async(host.Server);
+        var ws1 = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
         var sub = await ws1.RequestAsync(Listen("wsdispose"));
         await ws1.WaitForAsync(f => (string?)f["type"] == "listen.snapshot");
         await ws1.DisposeAsync();   // abrupt disconnect
@@ -161,7 +118,7 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         await Task.Delay(500);      // allow server to process disconnect and dispose scope
 
         // Behavioral verification: a second client can still listen and receive data
-        await using var ws2 = await WsTestClient.ConnectV3Async(host.Server);
+        await using var ws2 = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
         var sub2 = await ws2.RequestAsync(Listen("wsdispose"));
         var subId2 = (string)sub2["result"]!["subscriptionId"]!;
         await ws2.WaitForAsync(f => (string?)f["type"] == "listen.snapshot"
@@ -174,37 +131,93 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         Assert.Single(delta["changes"]!.AsArray());
     }
 
+    /// <summary>
+    /// Verifies per-connection query isolation with the Winche.Rules guard.
+    /// Rule: allow write for all; allow read only when resource.data.owner == request.auth.uid.
+    /// Each subscriber issues an owner-constrained query — the constrained query is provably
+    /// safe (satisfies the rule) so the listen is accepted. Each user only receives deltas
+    /// for documents matching THEIR constraint.
+    ///
+    /// NOTE (Phase 4b): the Winche.Rules guard does NOT post-filter results; it requires
+    /// constrained queries that are provably consistent with the ruleset. The former
+    /// Sentinel-guard test used an unconstrained listen and relied on per-document post-filtering
+    /// of live updates. That behavior does not exist in the rules guard — each subscriber must
+    /// issue their own constrained query.
+    /// </summary>
     [Fact]
-    public async Task ClaimsIsolation_TwoConnections_SameQuery_DifferentVisibility()
+    public async Task ClaimsIsolation_TwoConnections_ConstrainedQueries_DifferentVisibility()
     {
         await using var host = await WsTestHost.StartAsync(Fx.ConnectionString, c =>
         {
-            c.AddDocumentAccessRule<AllowWriteDeleteRule>();   // writes/deletes allowed for all
-            c.AddDocumentAccessRule<OwnerOnlyReadRule>();      // reads filtered by owner
+            c.UseRules(r =>
+            {
+                // Allow writes/deletes for any authenticated user on any path
+                r.Match("{document=**}", b => b.Allow(RuleOperations.Write, Expr.Const(true)));
+                // Allow reads only where owner == request.auth.uid (constrained query required)
+                r.Match("wsl/{docId}", b =>
+                    b.Allow(RuleOperations.Read,
+                        Expr.Resource("data", "owner").Eq(Expr.Auth("uid"))));
+            });
         });
-        await using var alice = await WsTestClient.ConnectV3Async(host.Server, "uid:alice");
-        await using var bob = await WsTestClient.ConnectV3Async(host.Server, "uid:bob");
+        await using var alice = await WsTestClient.ConnectAndWelcomeAsync(host.Server, "uid:alice");
+        await using var bob = await WsTestClient.ConnectAndWelcomeAsync(host.Server, "uid:bob");
 
-        var aliceSub = await alice.RequestAsync(Listen("wsl"));
-        var bobSub = await bob.RequestAsync(Listen("wsl"));
-        await alice.WaitForAsync(f => (string?)f["type"] == "listen.snapshot");
-        await bob.WaitForAsync(f => (string?)f["type"] == "listen.snapshot");
+        // Each user subscribes with a constrained query matching only their own documents.
+        // This satisfies the rule (owner == uid) and is therefore accepted by the rules guard.
+        var aliceSub = await alice.RequestAsync(new JsonObject
+        {
+            ["type"] = "listen",
+            ["query"] = new JsonObject
+            {
+                ["collection"] = "wsl",
+                ["where"] = new JsonObject
+                {
+                    ["field"] = "owner", ["op"] = "eq",
+                    ["value"] = new JsonObject { ["stringValue"] = "alice" },
+                },
+            },
+        });
+        var bobSub = await bob.RequestAsync(new JsonObject
+        {
+            ["type"] = "listen",
+            ["query"] = new JsonObject
+            {
+                ["collection"] = "wsl",
+                ["where"] = new JsonObject
+                {
+                    ["field"] = "owner", ["op"] = "eq",
+                    ["value"] = new JsonObject { ["stringValue"] = "bob" },
+                },
+            },
+        });
 
-        // alice writes a doc OWNED BY ALICE — bob must not see it
+        var aliceSubId = (string?)aliceSub["result"]!["subscriptionId"];
+        var bobSubId = (string?)bobSub["result"]!["subscriptionId"];
+        await alice.WaitForAsync(f => (string?)f["type"] == "listen.snapshot"
+                                   && (string?)f["subscriptionId"] == aliceSubId);
+        await bob.WaitForAsync(f => (string?)f["type"] == "listen.snapshot"
+                                 && (string?)f["subscriptionId"] == bobSubId);
+
+        // alice writes a doc owned by alice — only alice's subscription fires
         await alice.RequestAsync(Set("wsl/d1", ("owner", Str("alice")), ("n", Int(1))));
 
         var aliceDelta = await alice.WaitForAsync(f => (string?)f["type"] == "listen.delta"
-            && (string?)f["subscriptionId"] == (string?)aliceSub["result"]!["subscriptionId"]);
+            && (string?)f["subscriptionId"] == aliceSubId);
         Assert.Equal("added", (string?)aliceDelta["changes"]![0]!["kind"]);
 
+        // Bob's constrained subscription (owner == "bob") must NOT receive alice's document
         await bob.AssertSilenceAsync(f => (string?)f["type"] == "listen.delta"
-            && (string?)f["subscriptionId"] == (string?)bobSub["result"]!["subscriptionId"]);
+            && (string?)f["subscriptionId"] == bobSubId);
 
-        // a doc with no owner is visible to both
-        await alice.RequestAsync(Set("wsl/d2", ("n", Int(2))));
-        await alice.WaitForAsync(f => (string?)f["type"] == "listen.delta");
-        var bobDelta = await bob.WaitForAsync(f => (string?)f["type"] == "listen.delta");
-        Assert.Single(bobDelta["changes"]!.AsArray());
-        Assert.Equal(1, (int)bobDelta["count"]!);                          // bob sees ONLY d2
+        // bob writes a doc owned by bob — only bob's subscription fires
+        await bob.RequestAsync(Set("wsl/d2", ("owner", Str("bob")), ("n", Int(2))));
+
+        var bobDelta = await bob.WaitForAsync(f => (string?)f["type"] == "listen.delta"
+            && (string?)f["subscriptionId"] == bobSubId);
+        Assert.Equal("added", (string?)bobDelta["changes"]![0]!["kind"]);
+
+        // Alice's constrained subscription (owner == "alice") must NOT receive bob's document
+        await alice.AssertSilenceAsync(f => (string?)f["type"] == "listen.delta"
+            && (string?)f["subscriptionId"] == aliceSubId);
     }
 }

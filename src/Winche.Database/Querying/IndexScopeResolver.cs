@@ -1,6 +1,5 @@
 using System.Text.RegularExpressions;
 using Winche.Database.Documents;
-using Winche.Sentinel.Interfaces;
 
 namespace Winche.Database.Querying;
 
@@ -12,9 +11,9 @@ namespace Winche.Database.Querying;
 public sealed class IndexScopeResolver
 {
     private readonly (string Pattern, string Regex)[] _patterns;
-    private readonly IPathPatternMatcher<Document> _matcher;
+    private readonly IPathPatternMatcher _matcher;
 
-    public IndexScopeResolver(IEnumerable<IndexDefinition> indexes, IPathPatternMatcher<Document> matcher)
+    public IndexScopeResolver(IEnumerable<IndexDefinition> indexes, IPathPatternMatcher matcher)
     {
         _matcher = matcher;
         _patterns = indexes.Select(i => i.Path)

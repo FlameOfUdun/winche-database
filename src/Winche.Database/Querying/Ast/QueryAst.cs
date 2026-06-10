@@ -26,7 +26,8 @@ public sealed record Query(
     IReadOnlyList<Ordering>? OrderBy = null,
     int? Limit = null,
     Cursor? Start = null,
-    Cursor? End = null)
+    Cursor? End = null,
+    IReadOnlyList<FieldPath>? Select = null)
 {
     public bool Equals(Query? other) =>
         other is not null
@@ -35,7 +36,8 @@ public sealed record Query(
         && (OrderBy is null ? other.OrderBy is null : other.OrderBy is not null && OrderBy.SequenceEqual(other.OrderBy))
         && Limit == other.Limit
         && Equals(Start, other.Start)
-        && Equals(End, other.End);
+        && Equals(End, other.End)
+        && (Select is null ? other.Select is null : other.Select is not null && Select.SequenceEqual(other.Select));
 
     public override int GetHashCode()
     {
@@ -46,6 +48,7 @@ public sealed record Query(
         hash.Add(Limit);
         hash.Add(Start);
         hash.Add(End);
+        if (Select is not null) foreach (var s in Select) hash.Add(s);
         return hash.ToHashCode();
     }
 }

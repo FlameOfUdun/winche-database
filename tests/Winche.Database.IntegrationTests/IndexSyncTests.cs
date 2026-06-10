@@ -1,20 +1,15 @@
 using Winche.Database.Constants;
 using Winche.Database.Documents;
-using Winche.Database.Querying.Ast;
 using Winche.Database.Querying.Sql;
 
 namespace Winche.Database.IntegrationTests;
-
-file sealed class CityIndex : IndexDefinition
-{
-    public override string Path => "c";
-    public override IReadOnlyList<IndexField> Fields => [new("addr.city")];
-}
 
 [Collection("postgres")]
 public class IndexSyncTests(PostgresFixture fx) : QueryTestBase(fx)
 {
     private readonly PostgresFixture _fx = fx;
+
+    private static readonly IndexDefinition CityIndex = new("c", [new("addr.city")]);
 
     [Fact]
     public async Task CreateAndDrop_RoundTrip()
@@ -22,7 +17,7 @@ public class IndexSyncTests(PostgresFixture fx) : QueryTestBase(fx)
         await using var conn = await _fx.DataSource.OpenConnectionAsync();
         await using (var create = conn.CreateCommand())
         {
-            create.CommandText = IndexSql.BuildCreate(new CityIndex());
+            create.CommandText = IndexSql.BuildCreate(CityIndex);
             await create.ExecuteNonQueryAsync();
         }
 

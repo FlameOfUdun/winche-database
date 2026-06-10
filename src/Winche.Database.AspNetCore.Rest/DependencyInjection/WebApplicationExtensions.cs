@@ -12,7 +12,6 @@ using Winche.Database.Querying.Ast.Serialization;
 using Winche.Database.Runtime;
 using Winche.Database.Runtime.Writes;
 using Winche.Database.Values;
-using Winche.Database.Wire;
 
 namespace Winche.Database.AspNetCore.Rest.DependencyInjection;
 
@@ -26,7 +25,7 @@ public static class WebApplicationExtensions
 
     /// <summary>
     /// Maps the REST surface (CRUD + ping under <c>/{prefix}</c>, plus the colon-verb operations
-    /// <c>:commit</c>/<c>:beginTransaction</c>/<c>:rollback</c>/<c>:batchGet</c>/<c>:runQuery</c>/<c>:count</c>/<c>:aggregate</c>)
+    /// <c>:commit</c>/<c>:beginTransaction</c>/<c>:rollback</c>/<c>:batchGet</c>/<c>:runQuery</c>/<c>:count</c>)
     /// and returns a single <see cref="IEndpointConventionBuilder"/> covering ALL of them. Apply
     /// cross-cutting policy on it — e.g. <c>.RequireAuthorization()</c>, rate limiting, CORS — and it
     /// lands on every endpoint including the verbs. The built-in claims/exception filters are always
@@ -96,10 +95,12 @@ public static class WebApplicationExtensions
         {
             var node = (await JsonNode.ParseAsync(request.Body, cancellationToken: ct))?.AsObject()
                 ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "Request body must be a JSON object");
-            var writesArray = node["writes"] as JsonArray
+            var writesNode = node["writes"]
                 ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "'writes' is required");
             var transaction = node["transaction"]?.GetValue<string>();
-            var writes = WriteWireParser.Parse(writesArray);
+            // JsonException from a malformed write shape propagates to ExceptionHandler → 400 INVALID_ARGUMENT
+            var writes = writesNode.Deserialize<IReadOnlyList<Write>>()
+                ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "'writes' must be an array");
             var results = transaction is null
                 ? await db.WriteAsync(writes, ct)
                 : await db.CommitTransactionAsync(transaction, writes, ct);
@@ -184,21 +185,6 @@ public static class WebApplicationExtensions
             if (query is null) throw new RuntimeException(RuntimeStatus.InvalidArgument, "'query' must be a valid query object");
             var count = await db.CountAsync(query, ct);
             return Results.Json(new { count }, statusCode: 200, contentType: "application/json");
-        });
-
-        Verb("aggregate", async (HttpRequest request, IDocumentDatabase db, CancellationToken ct) =>
-        {
-            var node = (await JsonNode.ParseAsync(request.Body, cancellationToken: ct))?.AsObject()
-                ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "Request body must be a JSON object");
-            var pipelineNode = node["pipeline"]
-                ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "'pipeline' is required");
-            var pipeline = pipelineNode.Deserialize<Pipeline>(new System.Text.Json.JsonSerializerOptions
-            {
-                Converters = { new Querying.Ast.Serialization.PipelineAstJsonConverter() }
-            });
-            if (pipeline is null) throw new RuntimeException(RuntimeStatus.InvalidArgument, "'pipeline' must be a valid pipeline object");
-            var result = await db.AggregateAsync(pipeline, ct);
-            return Results.Json(result, statusCode: 200, contentType: "application/json");
         });
 
         return new CompositeEndpointConventionBuilder([group, .. verbs]);

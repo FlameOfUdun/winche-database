@@ -24,14 +24,6 @@ public class WireSmokeTests
         Assert.Equal("c/a", (string)node["documents"]![0]!["path"]!);
     }
 
-    [Fact]
-    public void PipelineResult_DefaultOptions_CamelCaseWire()
-    {
-        var node = JsonNode.Parse(JsonSerializer.Serialize(
-            new PipelineResult([new Dictionary<string, Value> { ["n"] = new IntegerValue(2) }])))!;
-        Assert.Equal("2", (string)node["rows"]![0]!["n"]!["integerValue"]!);
-    }
-
     // ClientMessages_Deserialize was removed: WS project is unloaded from the solution
     // (its refactor is a separate cycle). WireSmokeTests for WS wire format move to the WS project.
 }

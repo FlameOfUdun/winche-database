@@ -15,12 +15,9 @@ public class ProtocolMessageTests
     private static JsonNode Out(ServerMessage msg) => JsonNode.Parse(JsonSerializer.Serialize(msg, msg.GetType()))!;
 
     [Fact]
-    public void Hello_Ping_AuthRefresh_Deserialize()
+    public void Ping_Deserializes()
     {
-        var hello = Assert.IsType<HelloMessage>(In("""{"type":"hello","protocol":3,"token":"t"}"""));
-        Assert.Equal((3, "t"), (hello.Protocol, hello.Token));
         Assert.IsType<PingMessage>(In("""{"type":"ping","id":"1"}"""));
-        Assert.Equal("t2", Assert.IsType<AuthRefreshMessage>(In("""{"type":"auth.refresh","id":"2","token":"t2"}""")).Token);
     }
 
     [Fact]
@@ -29,7 +26,6 @@ public class ProtocolMessageTests
         Assert.Equal("c/a", Assert.IsType<DocGetMessage>(In("""{"type":"doc.get","id":"1","path":"c/a"}""")).Path);
         Assert.Equal(2, Assert.IsType<DocGetAllMessage>(In("""{"type":"doc.getAll","id":"1","paths":["a/b","a/c"]}""")).Paths.Count);
         Assert.Equal("c", Assert.IsType<QueryMessage>(In("""{"type":"query","id":"1","query":{"collection":"c"}}""")).Query.Collection);
-        Assert.NotNull(Assert.IsType<AggregateMessage>(In("""{"type":"aggregate","id":"1","pipeline":{"pipeline":[{"match":{"collection":"c"}}]}}""")).Pipeline);
         Assert.Single(Assert.IsType<WriteMessage>(In("""{"type":"write","id":"1","writes":[{"delete":{"path":"c/a"}}]}""")).Writes);
         Assert.IsType<TxBeginMessage>(In("""{"type":"tx.begin","id":"1"}"""));
         var commit = Assert.IsType<TxCommitMessage>(In("""{"type":"tx.commit","id":"1","transactionId":"t","writes":[]}"""));
@@ -48,7 +44,7 @@ public class ProtocolMessageTests
     {
         var welcome = Out(new WelcomeMessage { ConnectionId = "c1" });
         Assert.Equal("welcome", (string)welcome["type"]!);
-        Assert.Equal(3, (int)welcome["protocol"]!);
+        Assert.Equal("c1", (string)welcome["connectionId"]!);
 
         var response = Out(new ResponseMessage { Id = "1", Result = new JsonObject { ["x"] = 1 } });
         Assert.Equal("response", (string)response["type"]!);

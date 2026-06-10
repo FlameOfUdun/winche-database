@@ -13,7 +13,7 @@ namespace Winche.Database.Runtime;
 /// <summary>
 /// The rule-free core runtime (spec architecture): reads via the engine executors,
 /// every mutation via WriteApplier, transactions via the ledger + read-validations.
-/// Access rules live in GuardedDocumentDatabase; hooks/listeners consume the change feed (Plan 3).
+/// Access rules live in RuleGuardedDocumentDatabase; hooks/listeners consume the change feed (Plan 3).
 /// </summary>
 public sealed class DocumentDatabase : IDocumentDatabase
 {
@@ -68,12 +68,6 @@ public sealed class DocumentDatabase : IDocumentDatabase
     {
         await using var conn = await _source.OpenConnectionAsync(ct);
         return await new QueryExecutor(conn, null, _scopes).CountAsync(query, ct);
-    }
-
-    public async Task<PipelineResult> AggregateAsync(Pipeline pipeline, CancellationToken ct = default)
-    {
-        await using var conn = await _source.OpenConnectionAsync(ct);
-        return await new PipelineExecutor(conn, null, _scopes).ExecuteAsync(pipeline, ct);
     }
 
     // ── Writes ────────────────────────────────────────────────────────────────

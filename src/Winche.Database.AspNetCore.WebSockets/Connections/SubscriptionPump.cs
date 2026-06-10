@@ -7,12 +7,15 @@ using Winche.Database.Wire;
 namespace Winche.Database.AspNetCore.WebSockets.Connections;
 
 /// <summary>
-/// Per-subscription delivery (spec §3): the FIRST frame is always a full listen.snapshot
+/// Per-subscription delivery: the FIRST frame is always a full listen.snapshot
 /// (REPLACES client state — including the reset after resume-with-changes); afterwards each
 /// runtime snapshot is RE-DIFFED against the last list actually SENT, so deltas are exact
 /// relative to client state across runtime coalescing. Empty re-diff ⇒ no frame.
-/// ApplyClaims runs before every MoveNextAsync so guarded evaluation uses the connection's
-/// CURRENT claims (auth.refresh takes effect on the next delivery).
+///
+/// Claims note: claims are constant for the connection lifetime (fixed at the HTTP upgrade).
+/// Under the Winche.Rules guard a listener is authorized once at subscribe time (rules-are-not-filters).
+/// <c>ApplyClaims()</c> is called each iteration only to keep this pump's async-context slot
+/// coherent — it does not change authorization.
 /// </summary>
 public static class SubscriptionPump
 {
@@ -26,7 +29,7 @@ public static class SubscriptionPump
 
             while (true)
             {
-                scope.ApplyClaims();                              // BEFORE MoveNext: evaluation happens inside it
+                scope.ApplyClaims();                              // inert for listener auth (subscribe-time only); kept for context coherence
                 if (!await snapshots.MoveNextAsync()) break;
                 var snapshot = snapshots.Current;
 

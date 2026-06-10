@@ -97,7 +97,7 @@ internal static class Normalizer
     }
 }
 
-/// <summary>Filter validation + null-rewrites shared by Normalizer and PipelineNormalizer.</summary>
+/// <summary>Filter validation + null-rewrites used by Normalizer.</summary>
 internal static class FilterRules
 {
     private static bool IsNameField(FieldPath field) =>

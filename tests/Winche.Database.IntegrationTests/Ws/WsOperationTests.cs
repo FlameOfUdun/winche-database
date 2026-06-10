@@ -1,4 +1,6 @@
 using System.Text.Json.Nodes;
+using Winche.Rules;
+using Winche.Rules.Expressions;
 
 namespace Winche.Database.IntegrationTests.Ws;
 
@@ -6,7 +8,59 @@ namespace Winche.Database.IntegrationTests.Ws;
 public class WsOperationTests(PostgresFixture fx) : QueryTestBase(fx)
 {
     private Task<WsTestHost> Host() => WsTestHost.StartAsync(Fx.ConnectionString,
-        c => c.AddDocumentAccessRule<AllowAllWritesRule>());
+        c => c.UseRules(r => r.Match("{document=**}", b => b.Allow(RuleOperations.All, Expr.Const(true)))));
+
+    // ── Claims from the upgrade token reach the rules guard ─────────────────
+    /// <summary>
+    /// Verifies that the uid claim extracted from the upgrade token is passed to the rules guard.
+    /// Rule: allow read/write only when request.auth.uid == "alice".
+    /// alice's connection succeeds; bob's connection gets PERMISSION_DENIED.
+    /// </summary>
+    [Fact]
+    public async Task UpgradeToken_ClaimsReachRulesGuard_OwnerScopedAccess()
+    {
+        await using var host = await WsTestHost.StartAsync(Fx.ConnectionString, c =>
+        {
+            c.UseRules(r =>
+            {
+                r.Match("wsauth/{doc}", b =>
+                    b.Allow(RuleOperations.All, Expr.Auth("uid").Eq(Expr.Const("alice"))));
+            });
+        });
+
+        await using var alice = await WsTestClient.ConnectAndWelcomeAsync(host.Server, "uid:alice");
+        await using var bob = await WsTestClient.ConnectAndWelcomeAsync(host.Server, "uid:bob");
+
+        // alice writes — allowed
+        var aliceWrite = await alice.RequestAsync(new JsonObject
+        {
+            ["type"] = "write",
+            ["writes"] = new JsonArray(new JsonObject
+            {
+                ["set"] = new JsonObject
+                {
+                    ["path"] = "wsauth/doc1",
+                    ["fields"] = new JsonObject { ["x"] = new JsonObject { ["integerValue"] = "1" } },
+                },
+            }),
+        });
+        Assert.Equal("response", (string?)aliceWrite["type"]);
+
+        // bob writes — denied
+        var bobWrite = await bob.RequestAsync(new JsonObject
+        {
+            ["type"] = "write",
+            ["writes"] = new JsonArray(new JsonObject
+            {
+                ["set"] = new JsonObject
+                {
+                    ["path"] = "wsauth/doc2",
+                    ["fields"] = new JsonObject { ["x"] = new JsonObject { ["integerValue"] = "2" } },
+                },
+            }),
+        });
+        Assert.Equal("PERMISSION_DENIED", (string?)bobWrite["status"]);
+    }
 
     private static JsonObject SetWrite(string path, string field, long value) => new()
     {
@@ -22,10 +76,10 @@ public class WsOperationTests(PostgresFixture fx) : QueryTestBase(fx)
     };
 
     [Fact]
-    public async Task Write_Get_Query_Aggregate_RoundTrip()
+    public async Task Write_Get_Query_RoundTrip()
     {
         await using var host = await Host();
-        await using var ws = await WsTestClient.ConnectV3Async(host.Server);
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
 
         var write = await ws.RequestAsync(SetWrite("wsops/a", "n", 1));
         Assert.Equal("response", (string?)write["type"]);
@@ -55,32 +109,13 @@ public class WsOperationTests(PostgresFixture fx) : QueryTestBase(fx)
             },
         });
         Assert.Single(query["result"]!["documents"]!.AsArray());
-
-        var agg = await ws.RequestAsync(new JsonObject
-        {
-            ["type"] = "aggregate",
-            ["pipeline"] = new JsonObject
-            {
-                ["pipeline"] = new JsonArray(
-                    new JsonObject { ["match"] = new JsonObject { ["collection"] = "wsops" } },
-                    new JsonObject
-                    {
-                        ["group"] = new JsonObject
-                        {
-                            ["keys"] = new JsonArray(),
-                            ["accumulators"] = new JsonArray(new JsonObject { ["as"] = "n", ["fn"] = "count" }),
-                        },
-                    }),
-            },
-        });
-        Assert.Equal("2", (string?)agg["result"]!["rows"]![0]!["n"]!["integerValue"]);
     }
 
     [Fact]
     public async Task ErrorStatuses_OnTheWire()
     {
         await using var host = await Host();
-        await using var ws = await WsTestClient.ConnectV3Async(host.Server);
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
 
         var update = await ws.RequestAsync(new JsonObject
         {
@@ -117,7 +152,7 @@ public class WsOperationTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task SetMerge_NestedSentinel_WS_EndToEnd()
     {
         await using var host = await Host();
-        await using var ws = await WsTestClient.ConnectV3Async(host.Server);
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
 
         // Set initial document with nested map
         await ws.RequestAsync(new JsonObject
