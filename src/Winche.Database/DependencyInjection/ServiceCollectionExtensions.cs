@@ -10,8 +10,10 @@ using Winche.Database.Runtime;
 using Winche.Database.Runtime.ChangeFeed;
 using Winche.Database.Runtime.Hosting;
 using Winche.Database.Runtime.Listening;
+using Winche.Database.Runtime.Writes;
 using Winche.Database.Schema;
 using Winche.Rules;
+using Winche.Rules.DependencyInjection;
 
 namespace Winche.Database.DependencyInjection;
 
@@ -20,10 +22,9 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddWincheDatabase(
         this IServiceCollection services, Action<WincheDatabaseOptions> configure)
     {
-        // Register defaults BEFORE calling configure, so that any UseRules() / MapClaims()
-        // call inside configure adds registrations AFTER these. .NET DI's GetRequiredService<T>()
-        // returns the last-registered singleton, so the user's choices win.
-        services.AddSingleton(RulesetBuilder.Build(_ => { }));          // default deny-all ruleset
+        // Register the claims default BEFORE calling configure, so a user MapClaims() call inside
+        // configure registers AFTER it and wins (.NET DI's GetRequiredService<T>() returns the
+        // last-registered singleton). The default deny-all ruleset is seeded via AddWincheRules below.
         services.AddSingleton<IRuleClaimsAccessor>(NullRuleClaimsAccessor.Instance);  // default null claims
 
         var options = new WincheDatabaseOptions(services);
@@ -65,17 +66,29 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<TransactionSweeper>();
 
         // ── Winche.Rules guard ─────────────────────────────────────────────────
-        // RuleGuardedDocumentDatabase is both the default IDocumentDatabase and resolvable
-        // by concrete type. It always wraps the CORE unguarded DocumentDatabase — no recursion.
-        // All registered Ruleset singletons are merged so that multiple UseRules() calls accumulate
-        // rather than overwrite: OR semantics across blocks means concatenation is semantically correct.
+        // Register the engine via Winche.Rules DI. It merges every RuleSet registered by UseRules()
+        // (plus the default deny-all seed below) and uses the database's engine-faithful comparer.
+        services.AddWincheRules(o => o
+            .WithComparer(WincheRuleValueComparer.Instance)
+            .WithRuleset(_ => { }));                                     // default deny-all seed
+
+        services.AddSingleton<IWriteAuthorizer>(sp => new RulesWriteAuthorizer(
+            sp.GetRequiredService<RuleEngine>(),
+            () => sp.GetRequiredService<IRuleClaimsAccessor>().GetClaims()));
+
+        // Plain DocumentDatabase (above) stays the unguarded bypass core. The read-guard wraps a
+        // separate authorizing core (writes go through IWriteAuthorizer inside the transaction).
         services.AddSingleton<RuleGuardedDocumentDatabase>(sp =>
             new RuleGuardedDocumentDatabase(
-                sp.GetRequiredService<DocumentDatabase>(),       // CORE unguarded db — no recursion
-                Ruleset.Merge(sp.GetServices<Ruleset>()),
+                new DocumentDatabase(
+                    sp.GetRequiredKeyedService<NpgsqlDataSource>(ServiceKeys.DATA_SOURCE_KEY),
+                    sp.GetRequiredService<IOptions<WincheDatabaseOptions>>(),
+                    sp.GetRequiredService<ListenerRegistry>(),
+                    sp.GetRequiredService<Querying.IndexScopeResolver>(),
+                    sp.GetRequiredService<IWriteAuthorizer>()),
+                sp.GetRequiredService<RuleEngine>(),
                 () => sp.GetRequiredService<IRuleClaimsAccessor>().GetClaims()));
 
-        // Default IDocumentDatabase resolves to the Rules guard.
         services.AddSingleton<IDocumentDatabase>(sp =>
             sp.GetRequiredService<RuleGuardedDocumentDatabase>());
 

@@ -61,7 +61,7 @@ public class RequestBuilderTests
     {
         var resource = RuleValue.Map(new Dictionary<string, RuleValue>
         {
-            ["data"] = RuleValue.Map(new Dictionary<string, RuleValue>()),
+            ["ownerId"] = RuleValue.String("u1"),
         });
         var request = RequestBuilder.Build(null, "list", resource);
 

@@ -133,7 +133,7 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
 
     /// <summary>
     /// Verifies per-connection query isolation with the Winche.Rules guard.
-    /// Rule: allow write for all; allow read only when resource.data.owner == request.auth.uid.
+    /// Rule: allow write for all; allow read only when resource.owner == request.auth.uid.
     /// Each subscriber issues an owner-constrained query — the constrained query is provably
     /// safe (satisfies the rule) so the listen is accepted. Each user only receives deltas
     /// for documents matching THEIR constraint.
@@ -156,7 +156,7 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
                 // Allow reads only where owner == request.auth.uid (constrained query required)
                 r.Match("wsl/{docId}", b =>
                     b.Allow(RuleOperations.Read,
-                        Expr.Resource("data", "owner").Eq(Expr.Auth("uid"))));
+                        Expr.Resource("owner").Eq(Expr.Auth("uid"))));
             });
         });
         await using var alice = await WsTestClient.ConnectAndWelcomeAsync(host.Server, "uid:alice");

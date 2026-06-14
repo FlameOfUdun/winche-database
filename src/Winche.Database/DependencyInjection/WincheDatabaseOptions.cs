@@ -59,7 +59,7 @@ public sealed class WincheDatabaseOptions
     }
 
     /// <summary>
-    /// Adds a <see cref="Ruleset"/> to the Winche.Rules guard
+    /// Adds a <see cref="RuleSet"/> to the Winche.Rules guard
     /// (<see cref="Authorization.RuleGuardedDocumentDatabase"/>), which is the default
     /// <see cref="Runtime.IDocumentDatabase"/> since Phase 4b.
     /// The ruleset is registered as a singleton in the DI container and <strong>merged</strong>
@@ -68,14 +68,14 @@ public sealed class WincheDatabaseOptions
     /// automatically). Multiple <c>UseRules</c> calls accumulate: each call's blocks are
     /// OR-combined with all others. With no <c>UseRules</c> call, access is default-deny.
     /// </summary>
-    public WincheDatabaseOptions UseRules(Ruleset ruleset)
+    public WincheDatabaseOptions UseRules(RuleSet ruleset)
     {
         Services.AddSingleton(ruleset);
         return this;
     }
 
     /// <summary>
-    /// Builds a <see cref="Ruleset"/> from a <see cref="RulesetBuilder"/> delegate and adds it
+    /// Builds a <see cref="RuleSet"/> from a <see cref="RulesetBuilder"/> delegate and adds it
     /// to the merged set of active rulesets. Shorthand for <c>UseRules(RulesetBuilder.Build(configure))</c>.
     /// Multiple <c>UseRules</c> calls accumulate — each registered ruleset's blocks are
     /// OR-combined with all others. With no <c>UseRules</c> call, access is default-deny.

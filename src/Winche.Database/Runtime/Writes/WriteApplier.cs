@@ -17,7 +17,7 @@ namespace Winche.Database.Runtime.Writes;
 /// causes affected-rows = 0, which is detected and turned into ABORTED before commit.
 /// For rows held under FOR UPDATE the guard always passes — no behavior change.
 /// </summary>
-public sealed class WriteApplier(NpgsqlDataSource source)
+public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? authorizer = null)
 {
     private sealed class DocState
     {
@@ -64,6 +64,17 @@ public sealed class WriteApplier(NpgsqlDataSource source)
             // ONE combined locking query — global ORDER BY path prevents deadlock.
             var state = await LoadAllLockedAsync(conn, tx, exactPaths, cascadeWritePaths, ct);
 
+            // Pre-write snapshots for authorization (taken before the apply loop mutates state).
+            Dictionary<string, Document?>? before = null;
+            if (authorizer is not null)
+            {
+                before = new Dictionary<string, Document?>(StringComparer.Ordinal);
+                foreach (var w in writes)
+                    before[w.Path] = state.TryGetValue(w.Path, out var s) && s.ExistedBefore
+                        ? ToDocument(w.Path, s.Fields, s.CreatedAt, s.UpdatedAt, s.Version)
+                        : null;
+            }
+
             // Compute cascade victims in C# from already-loaded state.
             var cascadeVictims = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
             foreach (var root in cascadeWritePaths)
@@ -99,6 +110,21 @@ public sealed class WriteApplier(NpgsqlDataSource source)
                     DeleteWrite d => ApplyDelete(write.Path, d, state, cascadeVictims, commitTime),
                     _ => throw new NotSupportedException(write.GetType().Name),
                 });
+            }
+
+            if (authorizer is not null)
+            {
+                var pending = new List<PendingWrite>(writes.Count);
+                foreach (var w in writes)
+                {
+                    var post = state[w.Path];
+                    var after = post.Exists
+                        ? ToDocument(w.Path, post.Fields, post.CreatedAt, post.UpdatedAt, post.Version)
+                        : null;
+                    pending.Add(new PendingWrite(w, before![w.Path], after));
+                }
+                // Throws on denial → tx disposes without commit → rolled back.
+                await authorizer.AuthorizeAsync(pending, new TxDocumentReader(conn, tx), commitTime, ct);
             }
 
             await PersistAsync(conn, tx, state, commitTime, ct);
@@ -381,4 +407,21 @@ public sealed class WriteApplier(NpgsqlDataSource source)
 
     private static DateTimeOffset Truncate(DateTimeOffset t) =>
         new(t.Ticks - t.Ticks % 10, t.Offset);                   // µs (1 tick = 100ns)
+
+    private static Document ToDocument(
+        string path, IReadOnlyDictionary<string, Value> fields,
+        DateTimeOffset createTime, DateTimeOffset updateTime, long version)
+    {
+        var info = DocumentPathParser.ParsePath(path);
+        return new Document
+        {
+            Path = path,
+            Id = info.Id ?? string.Empty,
+            Collection = info.Collection,
+            Fields = fields,
+            CreateTime = createTime,
+            UpdateTime = updateTime,
+            Version = version,
+        };
+    }
 }

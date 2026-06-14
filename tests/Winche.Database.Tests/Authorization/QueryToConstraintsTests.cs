@@ -29,24 +29,24 @@ public class QueryToConstraintsTests
         Assert.Single(result.Constraints);
         var c = result.Constraints[0];
         Assert.Equal(new[] { "age" }, c.Field);
-        Assert.Equal(CompareOp.Eq, c.Op);
+        Assert.Equal(ComparisonOperator.Eq, c.Operator);
         Assert.Equal(18L, c.Value.AsInt);
     }
 
     [Theory]
-    [InlineData(FilterOperator.Ne,  CompareOp.Ne)]
-    [InlineData(FilterOperator.Lt,  CompareOp.Lt)]
-    [InlineData(FilterOperator.Lte, CompareOp.Le)]
-    [InlineData(FilterOperator.Gt,  CompareOp.Gt)]
-    [InlineData(FilterOperator.Gte, CompareOp.Ge)]
-    public void FilterOperator_MapsToCompareOp(FilterOperator filterOp, CompareOp expected)
+    [InlineData(FilterOperator.Ne,  ComparisonOperator.Ne)]
+    [InlineData(FilterOperator.Lt,  ComparisonOperator.Lt)]
+    [InlineData(FilterOperator.Lte, ComparisonOperator.Le)]
+    [InlineData(FilterOperator.Gt,  ComparisonOperator.Gt)]
+    [InlineData(FilterOperator.Gte, ComparisonOperator.Ge)]
+    public void FilterOperator_MapsToCompareOp(FilterOperator filterOp, ComparisonOperator expected)
     {
         var query = new Query("col",
             Where: new FieldFilter(FP("score"), filterOp, new IntegerValue(100)));
         var result = QueryToConstraints.Convert(query);
 
         Assert.Single(result.Constraints);
-        Assert.Equal(expected, result.Constraints[0].Op);
+        Assert.Equal(expected, result.Constraints[0].Operator);
     }
 
     [Theory]

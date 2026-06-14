@@ -91,9 +91,9 @@ public class PostgresDocumentSourceTests
 
         var result = await source.GetAsync("users/u2");
         Assert.Equal(RuleValueKind.Map, result.Kind);
-        Assert.Equal("Bob", result.AsMap["data"].AsMap["name"].AsString);
+        Assert.Equal("Bob", result.AsMap["name"].AsString);
         Assert.Equal("u2", result.AsMap["id"].AsString);
-        Assert.Equal(RuleValueKind.Path, result.AsMap["__name__"].Kind);
+        Assert.Equal(RuleValueKind.Path, result.AsMap["path"].Kind);
     }
 
     [Fact]

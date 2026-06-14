@@ -93,12 +93,9 @@ internal static class RequestBuilder
         string s => RuleValue.String(s),
         byte[] bytes => RuleValue.Bytes(bytes),
         DateTimeOffset dto => RuleValue.Timestamp(dto),
-        IReadOnlyDictionary<string, object?> nested =>
-            RuleValue.Map(nested.ToDictionary(kv => kv.Key, kv => ConvertClaimValue(kv.Value))),
-        IDictionary<string, object?> nested =>
-            RuleValue.Map(nested.ToDictionary(kv => kv.Key, kv => ConvertClaimValue(kv.Value))),
-        IEnumerable<object?> list =>
-            RuleValue.List(list.Select(ConvertClaimValue).ToList()),
+        IReadOnlyDictionary<string, object?> nested => RuleValue.Map(nested.ToDictionary(kv => kv.Key, kv => ConvertClaimValue(kv.Value))),
+        IDictionary<string, object?> nested => RuleValue.Map(nested.ToDictionary(kv => kv.Key, kv => ConvertClaimValue(kv.Value))),
+        IEnumerable<object?> list => RuleValue.List(list.Select(ConvertClaimValue).ToList()),
         _ => RuleValue.String(value.ToString() ?? string.Empty),
     };
 }

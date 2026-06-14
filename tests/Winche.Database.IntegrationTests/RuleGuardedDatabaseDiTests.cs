@@ -54,7 +54,7 @@ public class RuleGuardedDatabaseDiTests(PostgresFixture fx) : IAsyncLifetime
     /// shared <paramref name="accessor"/> registered as <c>IRuleClaimsAccessor</c> so the
     /// test can change claims between calls.
     /// </summary>
-    private ServiceProvider BuildProvider(Ruleset ruleset, out MutableClaimsAccessor accessor)
+    private ServiceProvider BuildProvider(RuleSet ruleset, out MutableClaimsAccessor accessor)
     {
         var mutableAccessor = new MutableClaimsAccessor();
         accessor = mutableAccessor;
@@ -89,7 +89,7 @@ public class RuleGuardedDatabaseDiTests(PostgresFixture fx) : IAsyncLifetime
             r.Match("di/{docId}", b =>
                 b.Allow(
                     RuleOperations.Of(RuleOperation.Get),
-                    Expr.Resource("data", "ownerId").Eq(Expr.Auth("uid")))));
+                    Expr.Resource("ownerId").Eq(Expr.Auth("uid")))));
 
         await using var provider = BuildProvider(ruleset, out var accessor);
 

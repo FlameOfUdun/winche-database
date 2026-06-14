@@ -9,7 +9,7 @@ namespace Winche.Database.Authorization;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Only <see cref="FilterOperator"/> values that map 1:1 onto <see cref="CompareOp"/> are converted.
+/// Only <see cref="FilterOperator"/> values that map 1:1 onto <see cref="ComparisonOperator"/> are converted.
 /// The following operators are skipped (omitting a constraint is always safe — the engine is conservative):
 /// <list type="bullet">
 ///   <item><see cref="FilterOperator.In"/> / <see cref="FilterOperator.NotIn"/></item>
@@ -44,6 +44,8 @@ internal static class QueryToConstraints
 
             case FieldFilter ff:
                 if (TryMapOperator(ff.Op, out var op))
+                    // Fields are exposed at the top of the resource map (see DocumentToResource),
+                    // so a query on field X maps directly to the rule path resource.X.
                     output.Add(new QueryConstraint(ff.Field.Segments, op, ValueToRuleValue.Convert(ff.Operand)));
                 break;
 
@@ -61,19 +63,19 @@ internal static class QueryToConstraints
     }
 
     /// <summary>
-    /// Maps <paramref name="op"/> to <see cref="CompareOp"/>.
+    /// Maps <paramref name="op"/> to <see cref="ComparisonOperator"/>.
     /// Returns <c>false</c> for operators with no sound 1:1 mapping.
     /// </summary>
-    private static bool TryMapOperator(FilterOperator op, out CompareOp result)
+    private static bool TryMapOperator(FilterOperator op, out ComparisonOperator result)
     {
         switch (op)
         {
-            case FilterOperator.Eq:  result = CompareOp.Eq; return true;
-            case FilterOperator.Ne:  result = CompareOp.Ne; return true;
-            case FilterOperator.Lt:  result = CompareOp.Lt; return true;
-            case FilterOperator.Lte: result = CompareOp.Le; return true;
-            case FilterOperator.Gt:  result = CompareOp.Gt; return true;
-            case FilterOperator.Gte: result = CompareOp.Ge; return true;
+            case FilterOperator.Eq:  result = ComparisonOperator.Eq; return true;
+            case FilterOperator.Ne:  result = ComparisonOperator.Ne; return true;
+            case FilterOperator.Lt:  result = ComparisonOperator.Lt; return true;
+            case FilterOperator.Lte: result = ComparisonOperator.Le; return true;
+            case FilterOperator.Gt:  result = ComparisonOperator.Gt; return true;
+            case FilterOperator.Gte: result = ComparisonOperator.Ge; return true;
             default:
                 result = default;
                 return false;

@@ -187,19 +187,24 @@ config.UseRules(r =>
 
 Conditions are `RuleExpr` values built with the `Expr` factory:
 
-| Expression | Firestore equivalent |
+| Expression | Maps to |
 | --- | --- |
 | `Expr.Auth("uid")` | `request.auth.uid` |
 | `Expr.Auth("token", "role")` | `request.auth.token.role` |
 | `Expr.Param("userId")` | path-capture variable `userId` |
-| `Expr.Resource("data", "ownerId")` | `resource.data.ownerId` (existing document) |
-| `Expr.RequestResource("data", "status")` | `request.resource.data.status` (full post-write doc, with field transforms resolved) |
+| `Expr.Resource("ownerId")` | `resource.ownerId` (a field of the existing document) |
+| `Expr.RequestResource("status")` | `request.resource.status` (the post-write document, with field transforms resolved) |
 | `Expr.Time()` | `request.time` |
 | `Expr.Exists(path)` | `exists(path)` — cross-document existence check |
 | `Expr.Get(path)` | `get(path)` — cross-document read |
 | `Expr.Any(a, b)` | `a \|\| b` (OR) |
 | `Expr.All(a, b)` | `a && b` (AND) |
 | `.Eq(...)` / `.Ne(...)` / `.Lt(...)` etc. | comparison operators |
+
+A document's own fields are exposed at the top level of `resource` (so `resource.ownerId`, never a
+`data` wrapper). The storage columns are added as reserved siblings, so rules can condition on document
+metadata: `resource.id`, `resource.path`, `resource.collection`, `resource.createdAt`,
+`resource.updatedAt`, and `resource.version`. A reserved column wins over a field of the same name.
 
 ### Semantics
 

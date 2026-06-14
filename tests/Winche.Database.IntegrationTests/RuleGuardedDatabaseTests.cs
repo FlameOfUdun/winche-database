@@ -15,24 +15,37 @@ using Winche.Rules.Expressions;
 namespace Winche.Database.IntegrationTests;
 
 /// <summary>
-/// Integration tests for <see cref="RuleGuardedDocumentDatabase"/> (Phase 1).
+/// Integration tests for <see cref="RuleGuardedDocumentDatabase"/>.
 /// Constructs the guard directly: core <see cref="DocumentDatabase"/> + a <see cref="Ruleset"/>
 /// from <see cref="RulesetBuilder"/> + a <c>Func&lt;&gt;</c> returning fixed claims.
 /// Seed data is always written via the CORE (unguarded) db; assertions through the guard.
+/// Write authorization now lives inside the write transaction via <see cref="IWriteAuthorizer"/>;
+/// write tests use <see cref="AuthorizingCore"/> so the core carries the same ruleset/claims.
 /// </summary>
 [Collection("postgres")]
 public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
 {
     // ── Setup helpers ─────────────────────────────────────────────────────────
 
+    /// <summary>Unguarded bypass core — for seeding data and read-only guard tests.</summary>
     private DocumentDatabase Core() =>
         new(Fx.DataSource, Options.Create(new WincheDatabaseOptions()));
 
+    /// <summary>
+    /// Core with the write authorizer wired in — for write guard tests.
+    /// Write authorization now lives inside the write transaction (not in the decorator),
+    /// so write tests must point the core at a <see cref="RulesWriteAuthorizer"/> carrying
+    /// the same ruleset and claims as the read guard.
+    /// </summary>
+    private DocumentDatabase AuthorizingCore(RuleSet ruleset, IReadOnlyDictionary<string, object?>? claims) =>
+        new(Fx.DataSource, Options.Create(new WincheDatabaseOptions()),
+            writeAuthorizer: new RulesWriteAuthorizer(new RuleEngine(ruleset, WincheRuleValueComparer.Instance), () => claims));
+
     private static RuleGuardedDocumentDatabase Guard(
         DocumentDatabase core,
-        Ruleset ruleset,
+        RuleSet ruleset,
         IReadOnlyDictionary<string, object?>? claims) =>
-        new(core, ruleset, () => claims);
+        new(core, new RuleEngine(ruleset, WincheRuleValueComparer.Instance), () => claims);
 
     private static Dictionary<string, Value> Fields(params (string K, Value V)[] entries) =>
         entries.ToDictionary(e => e.K, e => e.V);
@@ -40,7 +53,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     // ── 1. Owner-only get ─────────────────────────────────────────────────────
 
     /// <summary>
-    /// Rule: allow get if resource.data.ownerId == request.auth.uid
+    /// Rule: allow get if resource.ownerId == request.auth.uid
     /// Owner → allowed; non-owner → denied; missing doc → denied.
     /// </summary>
     [Fact]
@@ -51,7 +64,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
             r.Match("docs/{docId}", b =>
                 b.Allow(
                     RuleOperations.Of(RuleOperation.Get),
-                    Expr.Resource("data", "ownerId").Eq(Expr.Auth("uid")))));
+                    Expr.Resource("ownerId").Eq(Expr.Auth("uid")))));
 
         // Seed via core
         await core.WriteAsync([new SetWrite
@@ -78,20 +91,21 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     // ── 2. Create requires owner claim in request.resource ────────────────────
 
     /// <summary>
-    /// Rule: allow create if request.resource.data.ownerId == request.auth.uid
+    /// Rule: allow create if request.resource.ownerId == request.auth.uid
     /// Matching create (ownerId == uid) → allowed; mismatched → denied.
     /// </summary>
     [Fact]
     public async Task Write_CreateRule_OwnerMatchAllowed_MismatchDenied()
     {
-        var core = Core();
         var ruleset = RulesetBuilder.Build(r =>
             r.Match("items/{itemId}", b =>
                 b.Allow(
                     RuleOperations.Of(RuleOperation.Create),
-                    Expr.RequestResource("data", "ownerId").Eq(Expr.Auth("uid")))));
+                    Expr.RequestResource("ownerId").Eq(Expr.Auth("uid")))));
 
-        var aliceGuard = Guard(core, ruleset, new Dictionary<string, object?> { ["uid"] = "alice" });
+        var aliceClaims = new Dictionary<string, object?> { ["uid"] = "alice" };
+        var core = AuthorizingCore(ruleset, aliceClaims);
+        var aliceGuard = Guard(core, ruleset, aliceClaims);
 
         // Matching create: ownerId == uid → allowed
         await aliceGuard.WriteAsync([new SetWrite
@@ -113,27 +127,30 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     // ── 3. Owner-immutable update ─────────────────────────────────────────────
 
     /// <summary>
-    /// Rule: allow update if request.resource.data.ownerId == resource.data.ownerId
+    /// Rule: allow update if request.resource.ownerId == resource.ownerId
     /// Allowed when ownerId unchanged; denied when changed.
     /// </summary>
     [Fact]
     public async Task Write_UpdateRule_OwnerImmutable_AllowedWhenUnchanged_DeniedWhenChanged()
     {
-        var core = Core();
         var ruleset = RulesetBuilder.Build(r =>
             r.Match("notes/{noteId}", b =>
                 b.Allow(
                     RuleOperations.Of(RuleOperation.Update),
-                    Expr.RequestResource("data", "ownerId").Eq(Expr.Resource("data", "ownerId")))));
+                    Expr.RequestResource("ownerId").Eq(Expr.Resource("ownerId")))));
 
-        // Seed via core
-        await core.WriteAsync([new SetWrite
+        var aliceClaims = new Dictionary<string, object?> { ["uid"] = "alice" };
+        // Seed via an unguarded core (write auth would deny a seeding write with this ruleset
+        // because seeding doesn't satisfy the update rule for a newly-created path).
+        var seedCore = Core();
+        await seedCore.WriteAsync([new SetWrite
         {
             Path = "notes/n1",
             Fields = Fields(("ownerId", new StringValue("alice")), ("text", new StringValue("hello"))),
         }]);
 
-        var guard = Guard(core, ruleset, new Dictionary<string, object?> { ["uid"] = "alice" });
+        var core = AuthorizingCore(ruleset, aliceClaims);
+        var guard = Guard(core, ruleset, aliceClaims);
 
         // Update with ownerId unchanged → allowed
         await guard.WriteAsync([new SetWrite
@@ -158,34 +175,39 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     // ── 4. Delete by owner ────────────────────────────────────────────────────
 
     /// <summary>
-    /// Rule: allow delete if resource.data.ownerId == request.auth.uid
+    /// Rule: allow delete if resource.ownerId == request.auth.uid
     /// </summary>
     [Fact]
     public async Task Write_DeleteRule_OwnerAllowed_OtherDenied()
     {
-        var core = Core();
         var ruleset = RulesetBuilder.Build(r =>
             r.Match("posts/{postId}", b =>
                 b.Allow(
                     RuleOperations.Of(RuleOperation.Delete),
-                    Expr.Resource("data", "ownerId").Eq(Expr.Auth("uid")))));
+                    Expr.Resource("ownerId").Eq(Expr.Auth("uid")))));
 
-        await core.WriteAsync([new SetWrite
+        // Seed via unguarded core
+        var seedCore = Core();
+        await seedCore.WriteAsync([new SetWrite
         {
             Path = "posts/p1",
             Fields = Fields(("ownerId", new StringValue("alice"))),
         }]);
 
+        var bobClaims = new Dictionary<string, object?> { ["uid"] = "bob" };
+        var bobCore = AuthorizingCore(ruleset, bobClaims);
         // Non-owner delete → denied
-        var bobGuard = Guard(core, ruleset, new Dictionary<string, object?> { ["uid"] = "bob" });
+        var bobGuard = Guard(bobCore, ruleset, bobClaims);
         await Assert.ThrowsAsync<AccessDeniedException>(() =>
             bobGuard.WriteAsync([new DeleteWrite { Path = "posts/p1" }]));
-        Assert.NotNull(await core.GetAsync("posts/p1"));   // still exists
+        Assert.NotNull(await seedCore.GetAsync("posts/p1"));   // still exists
 
+        var aliceClaims = new Dictionary<string, object?> { ["uid"] = "alice" };
+        var aliceCore = AuthorizingCore(ruleset, aliceClaims);
         // Owner delete → allowed
-        var aliceGuard = Guard(core, ruleset, new Dictionary<string, object?> { ["uid"] = "alice" });
+        var aliceGuard = Guard(aliceCore, ruleset, aliceClaims);
         await aliceGuard.WriteAsync([new DeleteWrite { Path = "posts/p1" }]);
-        Assert.Null(await core.GetAsync("posts/p1"));      // deleted
+        Assert.Null(await seedCore.GetAsync("posts/p1"));      // deleted
     }
 
     // ── 5. Default-deny: no matching rule → denied ────────────────────────────
@@ -210,16 +232,18 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     [Fact]
     public async Task Write_DefaultDeny_NoMatchingRule_Denied()
     {
-        var core = Core();
         var emptyRuleset = RulesetBuilder.Build(_ => { });
+        var claims = new Dictionary<string, object?> { ["uid"] = "anyone" };
+        var core = AuthorizingCore(emptyRuleset, claims);
+        var seedCore = Core();
 
-        var guard = Guard(core, emptyRuleset, new Dictionary<string, object?> { ["uid"] = "anyone" });
+        var guard = Guard(core, emptyRuleset, claims);
         await Assert.ThrowsAsync<AccessDeniedException>(() => guard.WriteAsync([new SetWrite
         {
             Path = "private/doc",
             Fields = Fields(("x", new IntegerValue(1))),
         }]));
-        Assert.Null(await core.GetAsync("private/doc"));
+        Assert.Null(await seedCore.GetAsync("private/doc"));
     }
 
     // ── 6. Batch rejection: one denied → nothing written ─────────────────────
@@ -230,14 +254,15 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     [Fact]
     public async Task Write_BatchRejection_OneDenied_NeitherWritten()
     {
-        var core = Core();
         // Rule: only allow create on "allowed" collection
         var ruleset = RulesetBuilder.Build(r =>
             r.Match("allowed/{docId}", b =>
                 b.Allow(RuleOperations.Of(RuleOperation.Create), Expr.Const(true))));
         // "blocked" collection has no rule → default-deny
 
-        var guard = Guard(core, ruleset, null);   // unauthenticated
+        var core = AuthorizingCore(ruleset, null);   // unauthenticated
+        var seedCore = Core();
+        var guard = Guard(core, ruleset, null);
 
         // Batch: first write is to "allowed" (would pass), second to "blocked" (denied)
         await Assert.ThrowsAsync<AccessDeniedException>(() => guard.WriteAsync(
@@ -247,8 +272,8 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
         ]));
 
         // Neither document was written
-        Assert.Null(await core.GetAsync("allowed/doc1"));
-        Assert.Null(await core.GetAsync("blocked/doc2"));
+        Assert.Null(await seedCore.GetAsync("allowed/doc1"));
+        Assert.Null(await seedCore.GetAsync("blocked/doc2"));
     }
 
     // ── 7. Create vs update determination ────────────────────────────────────
@@ -261,12 +286,12 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     [Fact]
     public async Task Write_CreateVsUpdate_CorrectlyDetermined()
     {
-        var core = Core();
         // Only allow Create, not Update
         var ruleset = RulesetBuilder.Build(r =>
             r.Match("once/{docId}", b =>
                 b.Allow(RuleOperations.Of(RuleOperation.Create), Expr.Const(true))));
 
+        var core = AuthorizingCore(ruleset, null);
         var guard = Guard(core, ruleset, null);
 
         // First write to non-existent path → Create → allowed
@@ -292,21 +317,22 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
 
     /// <summary>
     /// A SetWrite with a ServerTimestamp transform on field "ts".
-    /// Rule: allow create if request.resource.data.ts == request.time
+    /// Rule: allow create if request.resource.ts == request.time
     /// Because both are resolved to the same captured 'now', the condition must hold → allowed.
     /// </summary>
     [Fact]
     public async Task Write_ServerTimestampTransform_RequestResourceEqualsRequestTime()
     {
-        var core = Core();
         // Rule checks the transform-resolved field equals request.time
         var ruleset = RulesetBuilder.Build(r =>
             r.Match("ts/{docId}", b =>
                 b.Allow(
                     RuleOperations.Of(RuleOperation.Create),
-                    Expr.RequestResource("data", "ts").Eq(Expr.Time()))));
+                    Expr.RequestResource("ts").Eq(Expr.Time()))));
 
-        var guard = Guard(core, ruleset, new Dictionary<string, object?> { ["uid"] = "u1" });
+        var claims = new Dictionary<string, object?> { ["uid"] = "u1" };
+        var core = AuthorizingCore(ruleset, claims);
+        var guard = Guard(core, ruleset, claims);
 
         // A SetWrite with a ServerTimestamp transform on "ts"
         await guard.WriteAsync([new SetWrite
@@ -335,14 +361,15 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     [Fact]
     public async Task Write_NoTransform_ServerTimestampRuleDenied()
     {
-        var core = Core();
         var ruleset = RulesetBuilder.Build(r =>
             r.Match("ts2/{docId}", b =>
                 b.Allow(
                     RuleOperations.Of(RuleOperation.Create),
-                    Expr.RequestResource("data", "ts").Eq(Expr.Time()))));
+                    Expr.RequestResource("ts").Eq(Expr.Time()))));
 
-        var guard = Guard(core, ruleset, new Dictionary<string, object?> { ["uid"] = "u1" });
+        var claims = new Dictionary<string, object?> { ["uid"] = "u1" };
+        var core = AuthorizingCore(ruleset, claims);
+        var guard = Guard(core, ruleset, claims);
 
         // SetWrite without a transform: "ts" is absent → rule evaluates false → denied
         await Assert.ThrowsAsync<AccessDeniedException>(() => guard.WriteAsync([new SetWrite
@@ -357,16 +384,16 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
 
     /// <summary>
     /// Seeds a document with count=10, then issues an UpdateWrite with Increment(5).
-    /// Rule: allow update if request.resource.data.count == 15  → allowed.
+    /// Rule: allow update if request.resource.count == 15  → allowed.
     /// Then verify a wrong expectation (count == 10) → denied.
     /// </summary>
     [Fact]
     public async Task Write_IncrementTransform_RequestResourceReflectsNewValue()
     {
-        var core = Core();
+        var seedCore = Core();
 
-        // Seed via core: count = 10
-        await core.WriteAsync([new SetWrite
+        // Seed via unguarded core: count = 10
+        await seedCore.WriteAsync([new SetWrite
         {
             Path = "counters/c1",
             Fields = Fields(("count", new IntegerValue(10L))),
@@ -377,9 +404,10 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
             r.Match("counters/{docId}", b =>
                 b.Allow(
                     RuleOperations.Of(RuleOperation.Update),
-                    Expr.RequestResource("data", "count").Eq(15L))));
+                    Expr.RequestResource("count").Eq(15L))));
 
-        var guard = Guard(core, rulesetAllow, null);
+        var coreAllow = AuthorizingCore(rulesetAllow, null);
+        var guard = Guard(coreAllow, rulesetAllow, null);
 
         // Increment by 5 → count becomes 15 → rule passes → allowed
         await guard.WriteAsync([new UpdateWrite
@@ -394,7 +422,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
                     new IntegerValue(5L)),
             ],
         }]);
-        var after = await core.GetAsync("counters/c1");
+        var after = await seedCore.GetAsync("counters/c1");
         Assert.Equal(new IntegerValue(15L), after!.Fields["count"]);
 
         // Rule that requires count == 10 (the pre-write value): should be denied
@@ -402,9 +430,10 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
             r.Match("counters/{docId}", b =>
                 b.Allow(
                     RuleOperations.Of(RuleOperation.Update),
-                    Expr.RequestResource("data", "count").Eq(10L))));
+                    Expr.RequestResource("count").Eq(10L))));
 
-        var guardDeny = Guard(core, rulesetDeny, null);
+        var coreDeny = AuthorizingCore(rulesetDeny, null);
+        var guardDeny = Guard(coreDeny, rulesetDeny, null);
 
         // Increment by 5 again → count would become 20, but rule checks for 10 → denied
         await Assert.ThrowsAsync<AccessDeniedException>(() => guardDeny.WriteAsync([new UpdateWrite
@@ -420,7 +449,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
             ],
         }]));
         // count is still 15 (denied write did not go through)
-        var stable = await core.GetAsync("counters/c1");
+        var stable = await seedCore.GetAsync("counters/c1");
         Assert.Equal(new IntegerValue(15L), stable!.Fields["count"]);
     }
 
@@ -428,16 +457,16 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
 
     /// <summary>
     /// Seeds a document with tags=["a"], then issues an UpdateWrite with ArrayUnion(["b"]).
-    /// Rule: allow update if "b" in request.resource.data.tags → allowed.
+    /// Rule: allow update if "b" in request.resource.tags → allowed.
     /// Then verify ArrayRemove is reflected: after removing "b", rule "b" in tags → denied.
     /// </summary>
     [Fact]
     public async Task Write_ArrayUnionTransform_RequestResourceReflectsUnionedArray()
     {
-        var core = Core();
+        var seedCore = Core();
 
         // Seed: tags = ["a"]
-        await core.WriteAsync([new SetWrite
+        await seedCore.WriteAsync([new SetWrite
         {
             Path = "arrays/a1",
             Fields = Fields(("tags", new ArrayValue([new StringValue("a")]))),
@@ -448,8 +477,9 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
             r.Match("arrays/{docId}", b =>
                 b.Allow(
                     RuleOperations.Of(RuleOperation.Update),
-                    Expr.Const("b").In(Expr.RequestResource("data", "tags")))));
+                    Expr.Const("b").In(Expr.RequestResource("tags")))));
 
+        var core = AuthorizingCore(ruleset, null);
         var guard = Guard(core, ruleset, null);
 
         // ArrayUnion with "b" → tags becomes ["a","b"] → "b" in tags → allowed
@@ -465,7 +495,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
                     new ArrayValue([new StringValue("b")])),
             ],
         }]);
-        var after = await core.GetAsync("arrays/a1");
+        var after = await seedCore.GetAsync("arrays/a1");
         var tags = (ArrayValue)after!.Fields["tags"];
         Assert.Contains(new StringValue("b"), tags.Values);
 
@@ -483,7 +513,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
             ],
         }]));
         // tags still ["a","b"] — denied write did not go through
-        var stable = await core.GetAsync("arrays/a1");
+        var stable = await seedCore.GetAsync("arrays/a1");
         var stableTags = (ArrayValue)stable!.Fields["tags"];
         Assert.Contains(new StringValue("b"), stableTags.Values);
     }
@@ -491,7 +521,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     // ── Phase 2: list / query / count authorization ───────────────────────────
 
     /// <summary>
-    /// Rule: allow read if resource.data.ownerId == request.auth.uid
+    /// Rule: allow read if resource.ownerId == request.auth.uid
     ///   - Query with WHERE ownerId == uid → allowed (provably safe), returns owned docs only.
     ///   - Query WITHOUT that constraint → rejected (not provably safe), throws AccessDeniedException.
     /// Confirms "rules are not filters": the unconstrained query is rejected, NOT silently filtered.
@@ -504,7 +534,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
             r.Match("owners/{docId}", b =>
                 b.Allow(
                     RuleOperations.Read,
-                    Expr.Resource("data", "ownerId").Eq(Expr.Auth("uid")))));
+                    Expr.Resource("ownerId").Eq(Expr.Auth("uid")))));
 
         // Seed via core: two documents, different owners
         await core.WriteAsync([new SetWrite
@@ -534,7 +564,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     }
 
     /// <summary>
-    /// Rule: allow read if resource.data.isPublic == true
+    /// Rule: allow read if resource.isPublic == true
     ///   - Query WHERE isPublic == true → allowed.
     ///   - Query without constraint → rejected.
     /// </summary>
@@ -546,7 +576,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
             r.Match("articles/{docId}", b =>
                 b.Allow(
                     RuleOperations.Read,
-                    Expr.Resource("data", "isPublic").Eq(true))));
+                    Expr.Resource("isPublic").Eq(true))));
 
         await core.WriteAsync([new SetWrite
         {
@@ -586,7 +616,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
             r.Match("items/{docId}", b =>
                 b.Allow(
                     RuleOperations.Read,
-                    Expr.Resource("data", "ownerId").Eq(Expr.Auth("uid")))));
+                    Expr.Resource("ownerId").Eq(Expr.Auth("uid")))));
 
         await core.WriteAsync([new SetWrite
         {
@@ -675,7 +705,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
 
     /// <summary>
     /// Phase 3 — reject at subscribe time.
-    /// Rule: allow read if resource.data.ownerId == request.auth.uid.
+    /// Rule: allow read if resource.ownerId == request.auth.uid.
     /// An unconstrained query is not provably safe → Listen throws AccessDeniedException
     /// immediately, before any snapshot is produced.
     /// </summary>
@@ -687,7 +717,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
             r.Match("listeners/{docId}", b =>
                 b.Allow(
                     RuleOperations.Read,
-                    Expr.Resource("data", "ownerId").Eq(Expr.Auth("uid")))));
+                    Expr.Resource("ownerId").Eq(Expr.Auth("uid")))));
 
         var guard = Guard(rig.Db, ruleset, new Dictionary<string, object?> { ["uid"] = "alice" });
 
@@ -710,7 +740,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
             r.Match("listeners2/{docId}", b =>
                 b.Allow(
                     RuleOperations.Read,
-                    Expr.Resource("data", "ownerId").Eq(Expr.Auth("uid")))));
+                    Expr.Resource("ownerId").Eq(Expr.Auth("uid")))));
 
         var guard = Guard(rig.Db, ruleset, new Dictionary<string, object?> { ["uid"] = "alice" });
 
@@ -769,7 +799,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
             r.Match("docs/{docId}", b =>
                 b.Allow(
                     RuleOperations.Read,
-                    Expr.Resource("data", "ownerId").Eq(Expr.Auth("uid")))));
+                    Expr.Resource("ownerId").Eq(Expr.Auth("uid")))));
 
         await core.WriteAsync([new SetWrite
         {

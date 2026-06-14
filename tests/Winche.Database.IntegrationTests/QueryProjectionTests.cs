@@ -218,7 +218,7 @@ public class QueryProjectionTests(PostgresFixture fx) : QueryTestBase(fx)
             r.Match("owners/{docId}", b =>
                 b.Allow(
                     RuleOperations.Read,
-                    Expr.Resource("data", "ownerId").Eq(Expr.Auth("uid")))));
+                    Expr.Resource("ownerId").Eq(Expr.Auth("uid")))));
 
         // Seed via core
         await core.WriteAsync([new SetWrite
@@ -243,7 +243,7 @@ public class QueryProjectionTests(PostgresFixture fx) : QueryTestBase(fx)
         }]);
 
         var aliceGuard = new RuleGuardedDocumentDatabase(
-            core, ruleset,
+            core, new RuleEngine(ruleset, WincheRuleValueComparer.Instance),
             () => new Dictionary<string, object?> { ["uid"] = "alice" });
 
         // Query with WHERE ownerId == "alice" AND Select: ["name"]
@@ -278,7 +278,7 @@ public class QueryProjectionTests(PostgresFixture fx) : QueryTestBase(fx)
             r.Match("private/{docId}", b =>
                 b.Allow(
                     RuleOperations.Read,
-                    Expr.Resource("data", "ownerId").Eq(Expr.Auth("uid")))));
+                    Expr.Resource("ownerId").Eq(Expr.Auth("uid")))));
 
         await core.WriteAsync([new SetWrite
         {
@@ -287,7 +287,7 @@ public class QueryProjectionTests(PostgresFixture fx) : QueryTestBase(fx)
         }]);
 
         var aliceGuard = new RuleGuardedDocumentDatabase(
-            core, ruleset,
+            core, new RuleEngine(ruleset, WincheRuleValueComparer.Instance),
             () => new Dictionary<string, object?> { ["uid"] = "alice" });
 
         // Unconstrained query + Select: ["ownerId"] → still denied (rules are not filters)
