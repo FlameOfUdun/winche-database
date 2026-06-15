@@ -18,11 +18,6 @@ builder.Services
 
         opts.AddHook<DocumentUpdateHook>();
         opts.MapClaims(_ => new Dictionary<string, object?> { ["uid"] = "user-123" });
-
-        // Each caller may perform ANY operation within their own userData/{userId} subtree
-        // (the document itself and everything beneath it), and nothing outside it. The {userId}
-        // segment is bound from the path and compared to the caller's uid; a list/query is allowed
-        // only under the caller's own subtree (you cannot list across users).
         opts.UseRules(r =>
             r.Match("userData/{userId}/{document=**}", owned =>
                 owned.Allow(RuleOperations.All, Expr.Auth("uid").Eq(Expr.Param("userId")))));
@@ -45,5 +40,5 @@ app.UseWebSockets();
 app.MapWincheDatabaseWsApi();
 app.MapWincheDatabaseRestApi();
 
- app.Start();
- app.WaitForShutdown();
+app.Start();
+app.WaitForShutdown();
