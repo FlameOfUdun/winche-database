@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Winche.Database.Abstraction;
 using Winche.Database.Documents;
 using Winche.Rules;
@@ -52,9 +53,16 @@ public sealed class WincheDatabaseOptions
         return this;
     }
 
-    public WincheDatabaseOptions AddHook<THook>() where THook : DocumentStoreHook
+    /// <summary>
+    /// Registers document lifecycle hooks via a fluent builder, binding each hook to a Firestore-style
+    /// path pattern at registration time (mirroring <see cref="UseIndexes(Action{IndexBuilder})"/>).
+    /// Multiple calls accumulate — each binding is registered as a singleton so that
+    /// <c>GetServices&lt;HookRegistration&gt;()</c> returns them all at startup.
+    /// </summary>
+    public WincheDatabaseOptions UseHooks(Action<HookBuilder> configure)
     {
-        Services.AddSingleton<DocumentStoreHook, THook>();
+        var builder = new HookBuilder(Services);
+        configure(builder);
         return this;
     }
 
@@ -123,11 +131,37 @@ public sealed class IndexBuilder(IServiceCollection services)
 
     /// <summary>
     /// Convenience overload: creates and registers an <see cref="IndexDefinition"/> from
-    /// <paramref name="path"/> and one or more <paramref name="fields"/>.
+    /// <paramref name="collectionId"/> and one or more <paramref name="fields"/>.
     /// </summary>
-    public IndexBuilder Add(string path, params IndexField[] fields)
+    public IndexBuilder Add(string collectionId, params IndexField[] fields)
     {
-        services.AddSingleton(new IndexDefinition(path, fields));
+        services.AddSingleton(new IndexDefinition(collectionId, fields));
+        return this;
+    }
+}
+
+/// <summary>
+/// Fluent builder used inside <see cref="WincheDatabaseOptions.UseHooks(Action{HookBuilder})"/>.
+/// Each <see cref="Add{THook}(string)"/> call registers one <see cref="HookRegistration"/> as a
+/// singleton so that <c>GetServices&lt;HookRegistration&gt;()</c> returns them all at startup.
+/// </summary>
+public sealed class HookBuilder(IServiceCollection services)
+{
+    /// <summary>
+    /// Registers a hook <typeparamref name="THook"/> (constructed via DI, so constructor injection
+    /// works) bound to <paramref name="path"/>. The same hook type may be bound to multiple paths.
+    /// </summary>
+    public HookBuilder Add<THook>(string path) where THook : DocumentStoreHook
+    {
+        services.TryAddSingleton<THook>();
+        services.AddSingleton(sp => new HookRegistration(path, sp.GetRequiredService<THook>()));
+        return this;
+    }
+
+    /// <summary>Registers a pre-constructed <paramref name="hook"/> instance bound to <paramref name="path"/>.</summary>
+    public HookBuilder Add(string path, DocumentStoreHook hook)
+    {
+        services.AddSingleton(new HookRegistration(path, hook));
         return this;
     }
 }

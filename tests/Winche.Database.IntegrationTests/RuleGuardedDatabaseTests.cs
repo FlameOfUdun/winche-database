@@ -39,13 +39,13 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     /// </summary>
     private DocumentDatabase AuthorizingCore(RuleSet ruleset, IReadOnlyDictionary<string, object?>? claims) =>
         new(Fx.DataSource, Options.Create(new WincheDatabaseOptions()),
-            writeAuthorizer: new RulesWriteAuthorizer(new RuleEngine(ruleset, WincheRuleValueComparer.Instance), () => claims));
+            writeAuthorizer: new RulesWriteAuthorizer(new RuleEngine(ruleset, WincheRuleValueComparer.Instance), new StaticClaimsAccessor(claims)));
 
     private static RuleGuardedDocumentDatabase Guard(
         DocumentDatabase core,
         RuleSet ruleset,
         IReadOnlyDictionary<string, object?>? claims) =>
-        new(core, new RuleEngine(ruleset, WincheRuleValueComparer.Instance), () => claims);
+        new(core, new RuleEngine(ruleset, WincheRuleValueComparer.Instance), new StaticClaimsAccessor(claims));
 
     private static Dictionary<string, Value> Fields(params (string K, Value V)[] entries) =>
         entries.ToDictionary(e => e.K, e => e.V);

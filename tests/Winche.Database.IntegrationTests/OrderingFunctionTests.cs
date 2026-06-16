@@ -14,7 +14,7 @@ public class OrderingFunctionTests(PostgresFixture fx) : IAsyncLifetime
     {
         await using var conn = await fx.DataSource.OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"INSERT INTO {WincheTables.Documents} (path, id, collection, data) VALUES ($1, $2, 'c', $3::jsonb)";
+        cmd.CommandText = $"INSERT INTO {WincheTables.Documents} (document_path, document_id, collection_path, collection_id, data) VALUES ($1, $2, 'c', 'c', $3::jsonb)";
         cmd.Parameters.AddWithValue($"c/{id}");
         cmd.Parameters.AddWithValue(id);
         cmd.Parameters.AddWithValue(StorageCodec.Encode(new Dictionary<string, Value> { ["f"] = value }));
@@ -26,7 +26,7 @@ public class OrderingFunctionTests(PostgresFixture fx) : IAsyncLifetime
         await using var conn = await fx.DataSource.OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
-            SELECT id FROM {WincheTables.Documents}
+            SELECT document_id FROM {WincheTables.Documents}
             ORDER BY winche_rank(data->'f'),
                      winche_num(data->'f')  NULLS FIRST,
                      winche_num2(data->'f') NULLS FIRST,

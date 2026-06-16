@@ -19,12 +19,6 @@ public class IndexSqlTests
     private static readonly IndexDefinition EmptyFieldsIndex =
         new("col", []);
 
-    private static readonly IndexDefinition SessionHistoryPatternIndex =
-        new("userData/*/sessionHistory", [new("startedAt", SortDirection.Desc)]);
-
-    private static readonly IndexDefinition BadCharsetIndex =
-        new("user.Data/*/sessionHistory", [new("name")]); // '.' not allowed in literal segment
-
     [Fact]
     public void BuildCreate_EmitsExpressionFamilyAndPartialClause()
     {
@@ -35,8 +29,23 @@ public class IndexSqlTests
         Assert.Contains("data->'age'", sql);
         Assert.Contains("->'mapValue'->'fields'->'city'", sql);
         Assert.Contains("DESC", sql);
-        Assert.Contains("WHERE collection = 'users'", sql);
+        Assert.Contains("WHERE collection_id = 'users'", sql);
         Assert.Contains("COLLATE \"C\"", sql);
+    }
+
+    [Fact]
+    public void BuildCreate_EmitsCollectionIdPartialIndex()
+    {
+        var sql = IndexSql.BuildCreate(new IndexDefinition("sessionHistory", [new IndexField("startedAt")]));
+        Assert.Contains("ON \"winche_documents\" (collection_path,", sql);
+        Assert.Contains("WHERE collection_id = 'sessionHistory'", sql);
+    }
+
+    [Fact]
+    public void BuildCreate_RejectsNonSegmentCollectionId()
+    {
+        Assert.Throws<InvalidPathPatternException>(() =>
+            IndexSql.BuildCreate(new IndexDefinition("a/b", [new IndexField("x")])));
     }
 
     [Theory]
@@ -73,28 +82,29 @@ public class IndexSqlTests
         Assert.Throws<ArgumentException>(() => IndexSql.BuildCreate(EmptyFieldsIndex));
 
     [Fact]
-    public void BuildCreate_Pattern_EmitsCollectionLeadingKeyAndRegexPredicate()
+    public void BuildCreate_AlwaysLeadsWithCollectionPath()
     {
-        var sql = IndexSql.BuildCreate(SessionHistoryPatternIndex);
+        var sql = IndexSql.BuildCreate(AgeIndex);
         var open = sql.IndexOf('(', sql.IndexOf(" ON ", StringComparison.Ordinal));
-        Assert.StartsWith("collection,", sql[(open + 1)..].TrimStart());
-        Assert.Contains("winche_rank(data->'startedAt')", sql);
-        Assert.Contains(@"WHERE collection ~ '^userData/[^/]+/sessionHistory$'", sql);
+        Assert.StartsWith("collection_path,", sql[(open + 1)..].TrimStart());
     }
 
     [Fact]
-    public void BuildCreate_Exact_StillUsesCollectionEquality()
+    public void BuildCreate_UsesCollectionIdEqualityPredicate()
     {
-        var sql = IndexSql.BuildCreate(AgeIndex); // Path => "users"
-        Assert.Contains("WHERE collection = 'users'", sql);
-        Assert.DoesNotContain("collection ~", sql);
+        var sql = IndexSql.BuildCreate(AgeIndex); // CollectionId => "users"
+        Assert.Contains("WHERE collection_id = 'users'", sql);
+        Assert.DoesNotContain("collection_path ~", sql);
+        Assert.DoesNotContain("collection_path = 'users'", sql);
     }
 
     [Fact]
-    public void BuildCreate_InvalidPath_ThrowsInvalidPathPatternException()
+    public void BuildCreate_InvalidCollectionId_ThrowsInvalidPathPatternException()
     {
-        var ex = Assert.Throws<InvalidPathPatternException>(() => IndexSql.BuildCreate(BadCharsetIndex));
-        Assert.Equal("user.Data/*/sessionHistory", ex.Path);
+        // '.' not allowed in collection ID
+        var ex = Assert.Throws<InvalidPathPatternException>(() =>
+            IndexSql.BuildCreate(new IndexDefinition("user.Data", [new IndexField("name")])));
+        Assert.Equal("user.Data", ex.Path);
         Assert.False(string.IsNullOrEmpty(ex.Reason));
     }
 }

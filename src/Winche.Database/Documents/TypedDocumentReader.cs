@@ -17,9 +17,9 @@ internal static class TypedDocumentReader
 
     private static Document FromReader(NpgsqlDataReader reader) => new()
     {
-        Path = reader.GetString(reader.GetOrdinal("path")),
-        Id = reader.GetString(reader.GetOrdinal("id")),
-        Collection = reader.GetString(reader.GetOrdinal("collection")),
+        Path = reader.GetString(reader.GetOrdinal("document_path")),
+        Id = reader.GetString(reader.GetOrdinal("document_id")),
+        Collection = reader.GetString(reader.GetOrdinal("collection_path")),
         Fields = StorageCodec.Decode(reader.GetString(reader.GetOrdinal("data"))),
         CreateTime = reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("created_at")),
         UpdateTime = reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("updated_at")),

@@ -25,7 +25,7 @@ namespace Winche.Database.Authorization;
 public sealed class RuleGuardedDocumentDatabase(
     IDocumentDatabase inner,
     RuleEngine engine,
-    Func<IReadOnlyDictionary<string, object?>?> claimsProvider)
+    IRuleClaimsAccessor claimsAccessor)
     : IDocumentDatabase
 {
     // ── Reads ─────────────────────────────────────────────────────────────────
@@ -137,7 +137,7 @@ public sealed class RuleGuardedDocumentDatabase(
         var request = new RuleRequest
         {
             Resource = resource,
-            Request = RequestBuilder.Build(claimsProvider(), "get", RuleValue.Null),
+            Request = RequestBuilder.Build(claimsAccessor.GetClaims(), "get", RuleValue.Null),
             Provider = new PostgresDocumentSource(inner),
         };
         if (!await engine.AllowsAsync(RuleOperation.Get, path, request, ct))
@@ -154,7 +154,7 @@ public sealed class RuleGuardedDocumentDatabase(
         var constraints = QueryToConstraints.Convert(query);
         var request = new RuleRequest
         {
-            Request = RequestBuilder.Build(claimsProvider(), "list", RuleValue.Null),
+            Request = RequestBuilder.Build(claimsAccessor.GetClaims(), "list", RuleValue.Null),
             Provider = new PostgresDocumentSource(inner),
         };
         if (!engine.Allows(constraints, request))

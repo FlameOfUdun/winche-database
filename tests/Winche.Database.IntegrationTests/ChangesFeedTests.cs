@@ -9,17 +9,17 @@ public class ChangesFeedTests(PostgresFixture fx) : QueryTestBase(fx)
     [Fact]
     public async Task ChangesTable_ExistsAndNotifies()
     {
-        // direct insert → row readable + pg_notify('winche_changes', seq) fires
+        // direct insert → row readable + pg_notify('winche_documents_changes', seq) fires
         await using var listenConn = await Fx.DataSource.OpenConnectionAsync();
         var received = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         listenConn.Notification += (_, e) => received.TrySetResult(e.Payload);
-        await using (var listen = new NpgsqlCommand("LISTEN winche_changes", listenConn))
+        await using (var listen = new NpgsqlCommand($"LISTEN {WincheTables.ChangesNotifyChannel}", listenConn))
             await listen.ExecuteNonQueryAsync();
 
         await using (var conn = await Fx.DataSource.OpenConnectionAsync())
         await using (var cmd = conn.CreateCommand())
         {
-            cmd.CommandText = $"INSERT INTO {WincheTables.Changes} (type, path, collection, version, commit_time) VALUES ('added', 'c/x', 'c', 1, now())";
+            cmd.CommandText = $"INSERT INTO {WincheTables.Changes} (type, document_path, collection_path, version, commit_time) VALUES ('added', 'c/x', 'c', 1, now())";
             await cmd.ExecuteNonQueryAsync();
         }
 

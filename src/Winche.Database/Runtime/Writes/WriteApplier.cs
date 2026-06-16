@@ -317,11 +317,12 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
 
     private static DocState ReadDocState(NpgsqlDataReader reader) => new()
     {
-        Fields = StorageCodec.Decode(reader.GetString(3)),
-        CreatedAt = reader.GetFieldValue<DateTimeOffset>(4),
-        UpdatedAt = reader.GetFieldValue<DateTimeOffset>(5),
-        Version = reader.GetInt64(6),
-        VersionBefore = reader.GetInt64(6),
+        // Columns: document_path(0), document_id(1), collection_path(2), collection_id(3), data(4), created_at(5), updated_at(6), version(7)
+        Fields = StorageCodec.Decode(reader.GetString(4)),
+        CreatedAt = reader.GetFieldValue<DateTimeOffset>(5),
+        UpdatedAt = reader.GetFieldValue<DateTimeOffset>(6),
+        Version = reader.GetInt64(7),
+        VersionBefore = reader.GetInt64(7),
         ExistedBefore = true,
         Exists = true,
     };
@@ -352,7 +353,7 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
             {
                 await using var cmd = conn.CreateCommand();
                 cmd.Transaction = tx;
-                WriteSql.Upsert(path, info.Id!, info.Collection,
+                WriteSql.Upsert(path, info.Id!, info.Collection, info.CollectionId,
                     StorageCodec.Encode(doc.Fields), doc.CreatedAt, doc.UpdatedAt, doc.Version,
                     doc.VersionBefore).Apply(cmd);
                 var affected = await cmd.ExecuteNonQueryAsync(ct);

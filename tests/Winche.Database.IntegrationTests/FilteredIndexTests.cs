@@ -90,7 +90,7 @@ public class FilteredIndexTests(PostgresFixture fx) : QueryTestBase(fx)
         var sql = IndexPredicateSql.Emit(predicate);
         await using var conn = await Fx.DataSource.OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT path FROM {WincheTables.Documents} WHERE collection = 'fagree' AND ({sql}) ORDER BY path";
+        cmd.CommandText = $"SELECT document_path FROM {WincheTables.Documents} WHERE collection_path = 'fagree' AND ({sql}) ORDER BY document_path";
         var actual = new List<string>();
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync()) actual.Add(reader.GetString(0));

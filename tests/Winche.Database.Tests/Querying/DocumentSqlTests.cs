@@ -8,7 +8,7 @@ public class DocumentSqlTests
     public void Get_ParameterizesPath()
     {
         var result = DocumentSql.Get("users/u1");
-        Assert.Contains("WHERE path = $1", result.Sql);
+        Assert.Contains("WHERE document_path = $1", result.Sql);
         Assert.Single(result.Parameters);
         Assert.Equal("users/u1", result.Parameters[0].Value);
     }
@@ -16,11 +16,11 @@ public class DocumentSqlTests
     [Fact]
     public void Upsert_ParameterizesEverything_NoValueInterpolation()
     {
-        var result = DocumentSql.Upsert("users/u1", "u1", "users", """{"a":{"integerValue":"1"}}""");
-        Assert.Equal(4, result.Parameters.Length);
+        var result = DocumentSql.Upsert("users/u1", "u1", "users", "users", """{"a":{"integerValue":"1"}}""");
+        Assert.Equal(5, result.Parameters.Length);
         Assert.DoesNotContain("u1", result.Sql);          // values never appear in SQL text
         Assert.DoesNotContain("integerValue", result.Sql);
-        Assert.Contains("ON CONFLICT (path)", result.Sql);
+        Assert.Contains("ON CONFLICT (document_path)", result.Sql);
         Assert.Contains("version + 1", result.Sql);
         Assert.Contains("RETURNING", result.Sql);
     }
@@ -32,7 +32,7 @@ public class DocumentSqlTests
         Assert.Equal(2, result.Parameters.Length);
         Assert.Equal("users/100%_x", result.Parameters[0].Value);          // exact match: raw
         Assert.Equal(@"users/100\%\_x/%", result.Parameters[1].Value);     // prefix match: escaped
-        Assert.Contains("RETURNING path", result.Sql);
+        Assert.Contains("RETURNING document_path", result.Sql);
     }
 
     [Fact]

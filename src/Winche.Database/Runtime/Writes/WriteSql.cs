@@ -6,10 +6,10 @@ namespace Winche.Database.Runtime.Writes;
 /// <summary>SQL for the single mutation path. Identifiers from config only; every value is a parameter.</summary>
 internal static class WriteSql
 {
-    private const string Columns = "path, id, collection, data, created_at, updated_at, version";
+    private const string Columns = "document_path, document_id, collection_path, collection_id, data, created_at, updated_at, version";
 
     /// <summary>
-    /// Locks exact paths and cascade-subtree paths in a SINGLE statement with a global ORDER BY path,
+    /// Locks exact paths and cascade-subtree paths in a SINGLE statement with a global ORDER BY document_path,
     /// preventing deadlocks across concurrent batches that share overlapping lock sets.
     /// </summary>
     internal static CompiledSql LockAll(IReadOnlyList<string> exactPaths, IReadOnlyList<string> cascadeRoots)
@@ -17,10 +17,10 @@ internal static class WriteSql
         var bag = new ParameterBag();
         var clauses = new List<string>();
         if (exactPaths.Count > 0)
-            clauses.Add($"path = ANY({bag.Add(exactPaths.ToArray())})");
+            clauses.Add($"document_path = ANY({bag.Add(exactPaths.ToArray())})");
         foreach (var root in cascadeRoots)
-            clauses.Add($"path = {bag.Add(root)} OR path LIKE {bag.Add(LikePatternEscaper.Escape(root) + "/%")} ESCAPE '\\'");
-        var sql = $"SELECT {Columns} FROM {WincheTables.Documents} WHERE {string.Join(" OR ", clauses)} ORDER BY path FOR UPDATE";
+            clauses.Add($"document_path = {bag.Add(root)} OR document_path LIKE {bag.Add(LikePatternEscaper.Escape(root) + "/%")} ESCAPE '\\'");
+        var sql = $"SELECT {Columns} FROM {WincheTables.Documents} WHERE {string.Join(" OR ", clauses)} ORDER BY document_path FOR UPDATE";
         return new CompiledSql(sql, bag.ToArray());
     }
 
@@ -30,15 +30,15 @@ internal static class WriteSql
     /// return 0 (the WHERE is false), allowing the caller to detect and abort the transaction.
     /// For existing rows held under FOR UPDATE the guard always passes (no behavior change).
     /// </summary>
-    internal static CompiledSql Upsert(string path, string id, string collection,
+    internal static CompiledSql Upsert(string path, string id, string collection, string collectionId,
         string dataJson, DateTimeOffset createdAt, DateTimeOffset updatedAt, long version, long versionBefore)
     {
         var bag = new ParameterBag();
         var sql = $"""
-            INSERT INTO {WincheTables.Documents} (path, id, collection, data, created_at, updated_at, version)
-            VALUES ({bag.Add(path)}, {bag.Add(id)}, {bag.Add(collection)}, {bag.AddJsonb(dataJson)},
+            INSERT INTO {WincheTables.Documents} (document_path, document_id, collection_path, collection_id, data, created_at, updated_at, version)
+            VALUES ({bag.Add(path)}, {bag.Add(id)}, {bag.Add(collection)}, {bag.Add(collectionId)}, {bag.AddJsonb(dataJson)},
                     {bag.Add(createdAt)}, {bag.Add(updatedAt)}, {bag.Add(version)})
-            ON CONFLICT (path) DO UPDATE
+            ON CONFLICT (document_path) DO UPDATE
             SET data = EXCLUDED.data, updated_at = EXCLUDED.updated_at, version = EXCLUDED.version
             WHERE {WincheTables.Documents}.version = {bag.Add(versionBefore)}
             """;
@@ -48,7 +48,7 @@ internal static class WriteSql
     internal static CompiledSql DeletePaths(IReadOnlyList<string> paths)
     {
         var bag = new ParameterBag();
-        return new CompiledSql($"DELETE FROM {WincheTables.Documents} WHERE path = ANY({bag.Add(paths.ToArray())})", bag.ToArray());
+        return new CompiledSql($"DELETE FROM {WincheTables.Documents} WHERE document_path = ANY({bag.Add(paths.ToArray())})", bag.ToArray());
     }
 
     internal static CompiledSql InsertChanges(
@@ -57,7 +57,7 @@ internal static class WriteSql
     {
         var bag = new ParameterBag();
         var sql = $"""
-            INSERT INTO {WincheTables.Changes} (type, path, collection, version, commit_time)
+            INSERT INTO {WincheTables.Changes} (type, document_path, collection_path, version, commit_time)
             SELECT t, p, c, v, {bag.Add(commitTime)}
             FROM unnest({bag.Add(types.ToArray())}::text[], {bag.Add(paths.ToArray())}::text[],
                         {bag.Add(collections.ToArray())}::text[], {bag.Add(versions.ToArray())}::bigint[]) AS u(t, p, c, v)

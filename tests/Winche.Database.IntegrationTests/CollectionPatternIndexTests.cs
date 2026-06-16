@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.RegularExpressions;
 using Npgsql;
 using Winche.Database.Documents;
 using Winche.Database.Querying;
@@ -14,32 +13,10 @@ namespace Winche.Database.IntegrationTests;
 public class CollectionPatternIndexTests(PostgresFixture fx) : QueryTestBase(fx)
 {
     private static readonly IndexDefinition SessionHistoryIndex =
-        new("userData/*/sessionHistory", [new("startedAt", SortDirection.Desc)]);
-
-    private static IPathPatternMatcher Matcher() => PathPatternMatcher.Instance;
-
-    [Theory]
-    [InlineData("userData/*/sessionHistory", "userData/u1/sessionHistory", true)]
-    [InlineData("userData/*/sessionHistory", "adminData/a1/sessionHistory", false)]
-    [InlineData("userData/*/sessionHistory", "userData/u1/sessionHistory/x", false)]
-    [InlineData("orgs/acme/teams/*/members", "orgs/acme/teams/t1/members", true)]
-    [InlineData("orgs/acme/teams/*/members", "orgs/globex/teams/t1/members", false)]
-    public async Task Parity_Matcher_CsRegex_PgRegex_Agree(string pattern, string path, bool expected)
-    {
-        var rx = DocumentPathParser.CollectionPatternRegex(pattern);
-        Assert.Equal(expected, Matcher().Match(pattern, path).IsMatch);
-        Assert.Equal(expected, Regex.IsMatch(path, rx));
-
-        await using var conn = await Fx.DataSource.OpenConnectionAsync();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT @p ~ @r";
-        cmd.Parameters.AddWithValue("p", path);
-        cmd.Parameters.AddWithValue("r", rx);
-        Assert.Equal(expected, (bool)(await cmd.ExecuteScalarAsync())!);
-    }
+        new("sessionHistory", [new("startedAt", SortDirection.Desc)]);
 
     [Fact]
-    public async Task PatternIndex_UsedByQuery_AndIsolatesParents()
+    public async Task CollectionIdIndex_UsedByQuery_AndIsolatesParents()
     {
         await using var conn = await Fx.DataSource.OpenConnectionAsync();
         await using (var create = conn.CreateCommand())
@@ -60,12 +37,22 @@ public class CollectionPatternIndexTests(PostgresFixture fx) : QueryTestBase(fx)
             new[] { "userData/alice/sessionHistory/s2", "userData/alice/sessionHistory/s1" },
             result.Documents.Select(d => d.Path).ToArray());
 
-        var resolver = new IndexScopeResolver([SessionHistoryIndex], Matcher());
-        var scope = resolver.ScopeRegexes("userData/alice/sessionHistory");
-        Assert.NotEmpty(scope);
+        // bob's collection returns only bob's doc
+        var bobResult = await Run(new Query("userData/bob/sessionHistory",
+            OrderBy: [new Ordering(FieldPath.Parse("startedAt"), SortDirection.Desc)]));
+        Assert.Equal(
+            new[] { "userData/bob/sessionHistory/s3" },
+            bobResult.Documents.Select(d => d.Path).ToArray());
 
-        // The pattern index is usable for the real compiled SQL on the query path. (Natural selection at
-        // scale is proven separately; here enable_seqscan=off isolates index *usability* on a tiny corpus.)
+        var resolver = new CollectionIndexResolver([SessionHistoryIndex]);
+        var aliceScope = resolver.ScopeFor("userData/alice/sessionHistory");
+        Assert.Equal("sessionHistory", aliceScope);
+        var bobScope = resolver.ScopeFor("userData/bob/sessionHistory");
+        Assert.Equal("sessionHistory", bobScope);
+
+        // The collection-ID partial index is usable for the real compiled SQL on the query path.
+        // (Natural selection at scale is proven separately; here enable_seqscan=off isolates
+        // index *usability* on a tiny corpus.)
         await using (var seqoff = conn.CreateCommand())
         {
             seqoff.CommandText = "SET enable_seqscan = off";
@@ -75,8 +62,24 @@ public class CollectionPatternIndexTests(PostgresFixture fx) : QueryTestBase(fx)
         // QUERY path uses the index
         var q = new Query("userData/alice/sessionHistory",
             OrderBy: [new Ordering(FieldPath.Parse("startedAt"), SortDirection.Desc)]);
-        var qPlan = await ExplainAsync(conn, SqlCompiler.Compile(Normalizer.Normalize(q), scope));
-        Assert.Contains("idx_winche_documents_userData", qPlan);
+        var qPlan = await ExplainAsync(conn, SqlCompiler.Compile(Normalizer.Normalize(q), aliceScope));
+        Assert.Contains("idx_winche_documents_sessionHistory", qPlan);
+    }
+
+    [Fact]
+    public async Task CollectionIdIndex_BothParentsQueryCorrectly()
+    {
+        await SeedDoc("s1", new() { ["startedAt"] = new IntegerValue(10) }, "userData/alice/sessionHistory");
+        await SeedDoc("s3", new() { ["startedAt"] = new IntegerValue(30) }, "userData/bob/sessionHistory");
+
+        // Each parent collection returns only its own docs
+        var aliceResult = await Run(new Query("userData/alice/sessionHistory"));
+        Assert.Single(aliceResult.Documents);
+        Assert.Equal("userData/alice/sessionHistory/s1", aliceResult.Documents[0].Path);
+
+        var bobResult = await Run(new Query("userData/bob/sessionHistory"));
+        Assert.Single(bobResult.Documents);
+        Assert.Equal("userData/bob/sessionHistory/s3", bobResult.Documents[0].Path);
     }
 
     private static async Task<string> ExplainAsync(NpgsqlConnection conn, CompiledSql compiled)

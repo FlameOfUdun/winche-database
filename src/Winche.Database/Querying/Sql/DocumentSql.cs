@@ -5,28 +5,29 @@ namespace Winche.Database.Querying.Sql;
 /// <summary>Single-document SQL — simple enough to need no IR (spec §6).</summary>
 public static class DocumentSql
 {
-    private const string Columns = "path, id, collection, data, created_at, updated_at, version";
+    private const string Columns = "document_path, document_id, collection_path, collection_id, data, created_at, updated_at, version";
 
     public static CompiledSql Get(string path, bool forUpdate = false)
     {
         var bag = new ParameterBag();
         var p = bag.Add(path);
         var suffix = forUpdate ? " FOR UPDATE" : "";
-        return new CompiledSql($"SELECT {Columns} FROM {WincheTables.Documents} WHERE path = {p}{suffix}", bag.ToArray());
+        return new CompiledSql($"SELECT {Columns} FROM {WincheTables.Documents} WHERE document_path = {p}{suffix}", bag.ToArray());
     }
 
-    public static CompiledSql Upsert(string path, string id, string collection, string dataJson)
+    public static CompiledSql Upsert(string path, string id, string collection, string collectionId, string dataJson)
     {
         var bag = new ParameterBag();
         var pPath = bag.Add(path);
         var pId = bag.Add(id);
         var pCol = bag.Add(collection);
+        var pColId = bag.Add(collectionId);
         var pData = bag.AddJsonb(dataJson);
 
         var sql = $"""
-            INSERT INTO {WincheTables.Documents} (path, id, collection, data, created_at, updated_at, version)
-            VALUES ({pPath}, {pId}, {pCol}, {pData}, NOW(), NOW(), 1)
-            ON CONFLICT (path) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW(), version = {WincheTables.Documents}.version + 1
+            INSERT INTO {WincheTables.Documents} (document_path, document_id, collection_path, collection_id, data, created_at, updated_at, version)
+            VALUES ({pPath}, {pId}, {pCol}, {pColId}, {pData}, NOW(), NOW(), 1)
+            ON CONFLICT (document_path) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW(), version = {WincheTables.Documents}.version + 1
             RETURNING {Columns}
             """;
         return new CompiledSql(sql, bag.ToArray());
@@ -41,7 +42,7 @@ public static class DocumentSql
         var sql = $"""
             UPDATE {WincheTables.Documents}
             SET data = {pData}, updated_at = NOW(), version = version + 1
-            WHERE path = {pPath}
+            WHERE document_path = {pPath}
             RETURNING {Columns}
             """;
         return new CompiledSql(sql, bag.ToArray());
@@ -53,8 +54,8 @@ public static class DocumentSql
         var pPath = bag.Add(path);
         var pPrefix = bag.Add(LikePatternEscaper.Escape(path) + "/%");
         var sql = $"""
-            SELECT path FROM {WincheTables.Documents}
-            WHERE path = {pPath} OR path LIKE {pPrefix} ESCAPE '\'
+            SELECT document_path FROM {WincheTables.Documents}
+            WHERE document_path = {pPath} OR document_path LIKE {pPrefix} ESCAPE '\'
             FOR UPDATE
             """;
         return new CompiledSql(sql, bag.ToArray());
@@ -63,7 +64,7 @@ public static class DocumentSql
     public static CompiledSql GetMany(IReadOnlyList<string> paths)
     {
         var bag = new ParameterBag();
-        return new CompiledSql($"SELECT {Columns} FROM {WincheTables.Documents} WHERE path = ANY({bag.AddTextArray(paths.ToArray())})", bag.ToArray());
+        return new CompiledSql($"SELECT {Columns} FROM {WincheTables.Documents} WHERE document_path = ANY({bag.AddTextArray(paths.ToArray())})", bag.ToArray());
     }
 
     public static CompiledSql DeleteSubtree(string path)
@@ -74,8 +75,8 @@ public static class DocumentSql
 
         var sql = $"""
             DELETE FROM {WincheTables.Documents}
-            WHERE path = {pPath} OR path LIKE {pPrefix} ESCAPE '\'
-            RETURNING path
+            WHERE document_path = {pPath} OR document_path LIKE {pPrefix} ESCAPE '\'
+            RETURNING document_path
             """;
         return new CompiledSql(sql, bag.ToArray());
     }

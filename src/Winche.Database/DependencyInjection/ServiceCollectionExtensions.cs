@@ -4,7 +4,6 @@ using Npgsql;
 using Winche.Database.Abstraction;
 using Winche.Database.Authorization;
 using Winche.Database.Constants;
-using Winche.Database.DependencyInjection;
 using Winche.Database.Querying;
 using Winche.Database.Runtime;
 using Winche.Database.Runtime.ChangeFeed;
@@ -35,31 +34,28 @@ public static class ServiceCollectionExtensions
             : throw new InvalidOperationException(
                 $"{nameof(WincheDatabaseOptions)}.{nameof(WincheDatabaseOptions.ConnectionString)} is required.");
 
-        services.AddSingleton<IOptions<WincheDatabaseOptions>>(Options.Create(options));
+        services.AddSingleton(Options.Create(options));
 
         services.AddNpgsqlDataSource(connectionString, serviceKey: ServiceKeys.DATA_SOURCE_KEY);
 
-        // Core runtime (spec architecture): rule-free core + guard as the public surface
-        services.AddSingleton<Querying.IndexScopeResolver>();
-        services.AddSingleton<ListenerRegistry>(sp => new ListenerRegistry(
+        services.AddSingleton<CollectionIndexResolver>();
+        services.AddSingleton(sp => new ListenerRegistry(
             sp.GetRequiredKeyedService<NpgsqlDataSource>(ServiceKeys.DATA_SOURCE_KEY),
-            sp.GetRequiredService<Querying.IndexScopeResolver>()));
-        services.AddSingleton<DocumentDatabase>(sp => new DocumentDatabase(
+            sp.GetRequiredService<CollectionIndexResolver>())
+        );
+        services.AddSingleton(sp => new DocumentDatabase(
             sp.GetRequiredKeyedService<NpgsqlDataSource>(ServiceKeys.DATA_SOURCE_KEY),
             sp.GetRequiredService<IOptions<WincheDatabaseOptions>>(),
             sp.GetRequiredService<ListenerRegistry>(),
-            sp.GetRequiredService<Querying.IndexScopeResolver>()));
+            sp.GetRequiredService<CollectionIndexResolver>()
+        ));
 
         services.AddSingleton<ISchemaManager, SchemaManager>();
-
-        // Native path-pattern matcher (used by IndexScopeResolver and HookFeedConsumer)
-        services.AddSingleton<IPathPatternMatcher>(PathPatternMatcher.Instance);
 
         // Change feed consumers
         services.AddSingleton<IChangeFeedConsumer>(sp => sp.GetRequiredService<ListenerRegistry>());
         services.AddSingleton<IChangeFeedConsumer>(sp => new HookFeedConsumer(
-            sp.GetRequiredService<IEnumerable<DocumentStoreHook>>(),
-            sp.GetRequiredService<IPathPatternMatcher>()));
+            sp.GetRequiredService<IEnumerable<HookRegistration>>()));
 
         services.AddHostedService<ChangeFeedHostedService>();
         services.AddHostedService<RetentionPruner>();
@@ -70,27 +66,32 @@ public static class ServiceCollectionExtensions
         // (plus the default deny-all seed below) and uses the database's engine-faithful comparer.
         services.AddWincheRules(o => o
             .WithComparer(WincheRuleValueComparer.Instance)
-            .WithRuleset(_ => { }));                                     // default deny-all seed
+            .WithRuleset(_ => { })
+        );                                     // default deny-all seed
 
         services.AddSingleton<IWriteAuthorizer>(sp => new RulesWriteAuthorizer(
             sp.GetRequiredService<RuleEngine>(),
-            () => sp.GetRequiredService<IRuleClaimsAccessor>().GetClaims()));
+            sp.GetRequiredService<IRuleClaimsAccessor>())
+        );
 
         // Plain DocumentDatabase (above) stays the unguarded bypass core. The read-guard wraps a
         // separate authorizing core (writes go through IWriteAuthorizer inside the transaction).
-        services.AddSingleton<RuleGuardedDocumentDatabase>(sp =>
+        services.AddSingleton(sp =>
             new RuleGuardedDocumentDatabase(
                 new DocumentDatabase(
                     sp.GetRequiredKeyedService<NpgsqlDataSource>(ServiceKeys.DATA_SOURCE_KEY),
                     sp.GetRequiredService<IOptions<WincheDatabaseOptions>>(),
                     sp.GetRequiredService<ListenerRegistry>(),
-                    sp.GetRequiredService<Querying.IndexScopeResolver>(),
-                    sp.GetRequiredService<IWriteAuthorizer>()),
+                    sp.GetRequiredService<CollectionIndexResolver>(),
+                    sp.GetRequiredService<IWriteAuthorizer>()
+                ),
                 sp.GetRequiredService<RuleEngine>(),
-                () => sp.GetRequiredService<IRuleClaimsAccessor>().GetClaims()));
+                sp.GetRequiredService<IRuleClaimsAccessor>())
+            );
 
         services.AddSingleton<IDocumentDatabase>(sp =>
-            sp.GetRequiredService<RuleGuardedDocumentDatabase>());
+            sp.GetRequiredService<RuleGuardedDocumentDatabase>()
+        );
 
         return services;
     }

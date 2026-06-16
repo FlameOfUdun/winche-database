@@ -11,7 +11,7 @@ namespace Winche.Database.Authorization;
 /// </summary>
 public sealed class RulesWriteAuthorizer(
     RuleEngine engine,
-    Func<IReadOnlyDictionary<string, object?>?> claimsProvider) : IWriteAuthorizer
+    IRuleClaimsAccessor claimsAccessor) : IWriteAuthorizer
 {
     public async Task AuthorizeAsync(
         IReadOnlyList<PendingWrite> writes,
@@ -19,7 +19,7 @@ public sealed class RulesWriteAuthorizer(
         DateTimeOffset commitTime,
         CancellationToken ct)
     {
-        var claims = claimsProvider();
+        var claims = claimsAccessor.GetClaims();
         var documents = new TransactionalRuleDocumentSource(reader);
 
         foreach (var pw in writes)

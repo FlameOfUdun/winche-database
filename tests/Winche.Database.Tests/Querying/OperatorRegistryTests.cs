@@ -129,7 +129,7 @@ public class OperatorRegistryTests
     public void NameField_ComparesPathColumnWithCollateC()
     {
         var (sql, _) = Emit(new FieldFilter(F("__name__"), FilterOperator.Gt, new StringValue("users/u1")));
-        Assert.Contains("d.path", sql);
+        Assert.Contains("d.document_path", sql);
         Assert.Contains("COLLATE \"C\"", sql);
         Assert.DoesNotContain("winche_rank", sql);
     }

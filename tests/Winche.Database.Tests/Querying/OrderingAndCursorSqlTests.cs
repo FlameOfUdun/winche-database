@@ -35,7 +35,7 @@ public class OrderingAndCursorSqlTests
     {
         var bag = new ParameterBag();
         var sql = OrderingSql.Build([new SortKey(F("__name__"), SortDirection.Asc)], bag, "d");
-        Assert.Equal("d.path COLLATE \"C\" ASC", sql);
+        Assert.Equal("d.document_path COLLATE \"C\" ASC", sql);
     }
 
     [Fact]
@@ -80,7 +80,7 @@ public class OrderingAndCursorSqlTests
         var sql = CursorSql.Build(
             new CursorRangeNode(new SortBoundary([new IntegerValue(30), new StringValue("c/x")], Inclusive: false), null),
             keys, bag, "d");
-        Assert.Contains("d.path", sql);        // second key is __name__
+        Assert.Contains("d.document_path", sql);        // second key is __name__
         Assert.Contains(" OR ", sql);          // level expansion
     }
 

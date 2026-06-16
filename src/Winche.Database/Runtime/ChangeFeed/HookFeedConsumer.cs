@@ -1,5 +1,4 @@
 using Winche.Database.Abstraction;
-using Winche.Database.Querying;
 
 namespace Winche.Database.Runtime.ChangeFeed;
 
@@ -12,11 +11,10 @@ namespace Winche.Database.Runtime.ChangeFeed;
 /// other consumers or listeners.
 /// </summary>
 public sealed class HookFeedConsumer(
-    IEnumerable<DocumentStoreHook> hooks,
-    IPathPatternMatcher matcher
+    IEnumerable<HookRegistration> hooks
 ) : IChangeFeedConsumer
 {
-    private readonly IReadOnlyList<DocumentStoreHook> _hooks = hooks.ToList();
+    private readonly IReadOnlyList<HookRegistration> _hooks = hooks.ToList();
 
     public string? DurableName => "hooks";
 
@@ -25,11 +23,11 @@ public sealed class HookFeedConsumer(
         foreach (var record in batch.Records)
         {
             var path = record.Path;
-            foreach (var hook in _hooks)
+            foreach (var registration in _hooks)
             {
-                var result = matcher.Match(hook.Path, path);
-                if (!result.IsMatch) continue;
+                if (!Winche.Rules.Matching.PathMatcher.IsMatch(registration.Path, path)) continue;
 
+                var hook = registration.Hook;
                 switch (record.Type)
                 {
                     // When TryGetValue guards fail (doc absent from batch.Documents), the document was

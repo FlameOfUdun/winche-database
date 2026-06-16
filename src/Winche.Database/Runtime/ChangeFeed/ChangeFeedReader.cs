@@ -22,7 +22,7 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT seq, type, path, collection, version, commit_time FROM {WincheTables.Changes} WHERE seq > $1 ORDER BY seq LIMIT $2";
+        cmd.CommandText = $"SELECT seq, type, document_path, collection_path, version, commit_time FROM {WincheTables.Changes} WHERE seq > $1 ORDER BY seq LIMIT $2";
         cmd.Parameters.AddWithValue(afterSeq);
         cmd.Parameters.AddWithValue(limit);
 
@@ -60,7 +60,7 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT EXISTS(SELECT 1 FROM {WincheTables.Changes} WHERE seq > $1 AND collection = $2)";
+        cmd.CommandText = $"SELECT EXISTS(SELECT 1 FROM {WincheTables.Changes} WHERE seq > $1 AND collection_path = $2)";
         cmd.Parameters.AddWithValue(afterSeq);
         cmd.Parameters.AddWithValue(collection);
         return (bool)(await cmd.ExecuteScalarAsync(ct))!;

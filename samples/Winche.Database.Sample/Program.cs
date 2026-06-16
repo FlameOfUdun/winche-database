@@ -16,7 +16,7 @@ builder.Services
             builder.Configuration.GetConnectionString("DefaultConnection") ??
             throw new InvalidOperationException("No connection string found for WincheDatabase.");
 
-        opts.AddHook<DocumentUpdateHook>();
+        opts.UseHooks(h => h.Add<DocumentUpdateHook>("{document=**}"));
         opts.MapClaims(_ => new Dictionary<string, object?> { ["uid"] = "user-123" });
         opts.UseRules(r =>
             r.Match("userData/{userId}/{document=**}", owned =>

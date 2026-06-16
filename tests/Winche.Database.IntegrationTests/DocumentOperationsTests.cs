@@ -1,5 +1,6 @@
 using Npgsql;
 using Winche.Database.Documents;
+using Winche.Database.Runtime.Writes;
 using Winche.Database.Values;
 
 namespace Winche.Database.IntegrationTests;
@@ -140,5 +141,23 @@ public class DocumentOperationsTests(PostgresFixture fx) : IAsyncLifetime
     public async Task Set_TrailingSlashPath_ThrowsArgumentException()
     {
         await Assert.ThrowsAsync<ArgumentException>(() => WithOps(ops => ops.SetAsync("users/", Empty, CancellationToken.None)));
+    }
+
+    [Fact]
+    public async Task Write_PopulatesCollectionIdAndDocumentId()
+    {
+        var applier = new WriteApplier(fx.DataSource);
+        await applier.ApplyAsync([new SetWrite {
+            Path = "userData/alice/sessionHistory/s1",
+            Fields = new Dictionary<string, Value> { ["v"] = new IntegerValue(1) } }]);
+
+        await using var conn = await fx.DataSource.OpenConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT collection_id, document_id FROM winche_documents WHERE document_path = $1";
+        cmd.Parameters.AddWithValue("userData/alice/sessionHistory/s1");
+        await using var r = await cmd.ExecuteReaderAsync();
+        Assert.True(await r.ReadAsync());
+        Assert.Equal("sessionHistory", r.GetString(0));
+        Assert.Equal("s1", r.GetString(1));
     }
 }

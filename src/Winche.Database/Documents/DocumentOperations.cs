@@ -39,7 +39,7 @@ public sealed class DocumentOperations(NpgsqlConnection conn, NpgsqlTransaction?
         if (string.IsNullOrEmpty(info.Id))
             throw new ArgumentException($"Path '{path}' does not contain a document id.");
 
-        await using var cmd = CreateCommand(DocumentSql.Upsert(path, info.Id, info.Collection, StorageCodec.Encode(fields)));
+        await using var cmd = CreateCommand(DocumentSql.Upsert(path, info.Id, info.Collection, info.CollectionId, StorageCodec.Encode(fields)));
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         return await TypedDocumentReader.ReadSingleAsync(reader, ct)
             ?? throw new InvalidOperationException($"Upsert returned no row for '{path}'.");

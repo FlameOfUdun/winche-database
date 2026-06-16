@@ -18,7 +18,7 @@ public class CountSqlTests
         var sql = Compile(new Query("c"));
 
         Assert.Contains("SELECT COUNT(*)", sql);
-        Assert.Contains("d.collection =", sql);
+        Assert.Contains("d.collection_path =", sql);
         Assert.DoesNotContain("SELECT 1 FROM", sql);   // no LIMIT subquery wrap
         Assert.DoesNotContain("ORDER BY", sql);         // count never orders
         Assert.DoesNotContain(" AND ", sql);            // no filter/scope/cursor appended

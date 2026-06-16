@@ -24,7 +24,7 @@ public class SchemaResolverTests
     {
         var bag = new ParameterBag();
         var r = new SchemaResolver(DocumentSchema.Plain, "d").Resolve(F("__name__"), bag);
-        Assert.Equal("d.path", Assert.IsType<PathRef>(r).Sql);
+        Assert.Equal("d.document_path", Assert.IsType<PathRef>(r).Sql);
     }
 
     [Fact]

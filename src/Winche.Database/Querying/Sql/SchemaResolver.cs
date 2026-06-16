@@ -32,7 +32,7 @@ internal sealed class SchemaResolver(DocumentSchema schema, string alias)
     public FieldRef Resolve(FieldPath path, ParameterBag bag)
     {
         if (FieldAccessSql.IsName(path))
-            return new PathRef($"{alias}.path");
+            return new PathRef($"{alias}.document_path");
         if (schema.Extra.ContainsKey(path.Segments[0]))
             return new TaggedRef(NestedFromColumn(path, bag));
         return new TaggedRef(FieldAccessSql.Tagged(path, bag, alias));

@@ -16,7 +16,7 @@ internal static class CountSql
 {
     private const string Alias = "d";
 
-    public static CompiledSql Compile(LogicalPlan plan, int? limit, IReadOnlyList<string>? scopeRegexes = null)
+    public static CompiledSql Compile(LogicalPlan plan, int? limit, string? collectionIdScope = null)
     {
         CollectionScan? scan = null;
         FilterNode? filter = null;
@@ -40,9 +40,9 @@ internal static class CountSql
             throw new InvalidOperationException("Plan must contain Scan and Sort nodes (Normalizer guarantees this).");
 
         var bag = new ParameterBag();
-        var where = new StringBuilder($"{Alias}.collection = {bag.Add(scan.Collection)}");
-        foreach (var rx in scopeRegexes ?? [])
-            where.Append($" AND {Alias}.collection ~ '{rx.Replace("'", "''")}'");
+        var where = new StringBuilder($"{Alias}.collection_path = {bag.Add(scan.Collection)}");
+        if (collectionIdScope is not null)
+            where.Append($" AND {Alias}.collection_id = {bag.Add(collectionIdScope)}");
         if (filter is not null)
             where.Append($" AND ({OperatorRegistry.Emit(filter.Predicate, bag, Alias)})");
         if (range is not null && CursorSql.Build(range, sort.Keys, bag, Alias) is { } cursor)

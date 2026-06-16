@@ -19,20 +19,21 @@ public static class SchemaSql
     /// </summary>
     public static string TableDdl() => $$"""
         CREATE TABLE IF NOT EXISTS {{WincheTables.Documents}} (
-            path        TEXT        PRIMARY KEY,
-            id          TEXT        NOT NULL,
-            collection  TEXT        NOT NULL,
-            data        JSONB       NOT NULL DEFAULT '{}',
-            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            version     BIGINT      NOT NULL DEFAULT 1
+            document_path   TEXT        PRIMARY KEY,
+            document_id     TEXT        NOT NULL,
+            collection_path TEXT        NOT NULL,
+            collection_id   TEXT        NOT NULL,
+            data            JSONB       NOT NULL DEFAULT '{}',
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            version         BIGINT      NOT NULL DEFAULT 1
         );
 
-        CREATE INDEX IF NOT EXISTS idx_{{WincheTables.Documents}}_id
-            ON {{WincheTables.Documents}}(id);
+        CREATE INDEX IF NOT EXISTS idx_{{WincheTables.Documents}}_document_id
+            ON {{WincheTables.Documents}}(document_id);
 
-        CREATE INDEX IF NOT EXISTS idx_{{WincheTables.Documents}}_collection_id
-            ON {{WincheTables.Documents}}(collection, id ASC);
+        CREATE INDEX IF NOT EXISTS idx_{{WincheTables.Documents}}_collection_docid
+            ON {{WincheTables.Documents}}(collection_path, document_id ASC);
 
         CREATE INDEX IF NOT EXISTS idx_{{WincheTables.Documents}}_data
             ON {{WincheTables.Documents}} USING GIN(data);
@@ -42,18 +43,80 @@ public static class SchemaSql
         """;
 
     /// <summary>
+    /// Idempotent in-place upgrade from the legacy schema (pre-collection-ID release) to the current
+    /// shape: renames the document/feed columns and tables and backfills <c>collection_id</c>. Runs
+    /// FIRST in <see cref="Schema.ISchemaManager.EnsureCreatedAsync"/>, before the CREATE-IF-NOT-EXISTS
+    /// DDL, so an existing database is migrated before the additive DDL would create new-named objects.
+    /// Every step is guarded on current-schema existence checks, so it is a no-op on a fresh database
+    /// and safe to run on every startup (idempotent). Uses literal historical object names on purpose
+    /// (not <c>WincheTables</c>, which now holds the new names).
+    /// </summary>
+    public static string MigrationDdl() => """
+        DO $migrate$
+        BEGIN
+            -- winche_documents: legacy column renames + collection_id backfill
+            IF to_regclass('winche_documents') IS NOT NULL THEN
+                IF EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_schema = current_schema() AND table_name = 'winche_documents' AND column_name = 'path') THEN
+                    ALTER TABLE winche_documents RENAME COLUMN path TO document_path;
+                END IF;
+                IF EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_schema = current_schema() AND table_name = 'winche_documents' AND column_name = 'id') THEN
+                    ALTER TABLE winche_documents RENAME COLUMN id TO document_id;
+                END IF;
+                IF EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_schema = current_schema() AND table_name = 'winche_documents' AND column_name = 'collection') THEN
+                    ALTER TABLE winche_documents RENAME COLUMN collection TO collection_path;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                               WHERE table_schema = current_schema() AND table_name = 'winche_documents' AND column_name = 'collection_id') THEN
+                    ALTER TABLE winche_documents ADD COLUMN collection_id TEXT;
+                    UPDATE winche_documents SET collection_id = (regexp_match(collection_path, '[^/]+$'))[1];
+                    ALTER TABLE winche_documents ALTER COLUMN collection_id SET NOT NULL;
+                END IF;
+            END IF;
+
+            ALTER INDEX IF EXISTS idx_winche_documents_id RENAME TO idx_winche_documents_document_id;
+            ALTER INDEX IF EXISTS idx_winche_documents_collection_id RENAME TO idx_winche_documents_collection_docid;
+
+            -- change-feed tables: rename under the winche_documents_ prefix
+            IF to_regclass('winche_changes') IS NOT NULL THEN
+                ALTER TABLE winche_changes RENAME TO winche_documents_changes;
+            END IF;
+            IF to_regclass('winche_feed_cursors') IS NOT NULL THEN
+                ALTER TABLE winche_feed_cursors RENAME TO winche_documents_feed_cursors;
+            END IF;
+
+            -- change-feed columns + drop the legacy trigger (ChangesDdl recreates the new trigger/function)
+            IF to_regclass('winche_documents_changes') IS NOT NULL THEN
+                IF EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_schema = current_schema() AND table_name = 'winche_documents_changes' AND column_name = 'path') THEN
+                    ALTER TABLE winche_documents_changes RENAME COLUMN path TO document_path;
+                END IF;
+                IF EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_schema = current_schema() AND table_name = 'winche_documents_changes' AND column_name = 'collection') THEN
+                    ALTER TABLE winche_documents_changes RENAME COLUMN collection TO collection_path;
+                END IF;
+                DROP TRIGGER IF EXISTS winche_changes_trigger ON winche_documents_changes;
+            END IF;
+            ALTER INDEX IF EXISTS idx_winche_changes_commit_time RENAME TO idx_winche_documents_changes_commit_time;
+        END
+        $migrate$;
+        """;
+
+    /// <summary>
     /// The durable change feed: one row per affected document, appended in the SAME
     /// transaction as the write (WriteApplier). The trigger emits pg_notify as a
     /// wake-up only — the rows are the durable truth (spec §2/§4).
     /// </summary>
     public static string ChangesDdl() => $$"""
         CREATE TABLE IF NOT EXISTS {{WincheTables.Changes}} (
-            seq         BIGSERIAL PRIMARY KEY,
-            type        TEXT NOT NULL,
-            path        TEXT NOT NULL,
-            collection  TEXT NOT NULL,
-            version     BIGINT NOT NULL,
-            commit_time TIMESTAMPTZ NOT NULL
+            seq             BIGSERIAL PRIMARY KEY,
+            type            TEXT NOT NULL,
+            document_path   TEXT NOT NULL,
+            collection_path TEXT NOT NULL,
+            version         BIGINT NOT NULL,
+            commit_time     TIMESTAMPTZ NOT NULL
         );
 
         CREATE INDEX IF NOT EXISTS idx_{{WincheTables.Changes}}_commit_time
@@ -67,13 +130,13 @@ public static class SchemaSql
 
         CREATE OR REPLACE FUNCTION winche_notify_change() RETURNS TRIGGER AS $t$
         BEGIN
-            PERFORM pg_notify('winche_changes', NEW.seq::text);
+            PERFORM pg_notify('{{WincheTables.ChangesNotifyChannel}}', NEW.seq::text);
             RETURN NEW;
         END;
         $t$ LANGUAGE plpgsql;
 
-        DROP TRIGGER IF EXISTS winche_changes_trigger ON {{WincheTables.Changes}};
-        CREATE TRIGGER winche_changes_trigger
+        DROP TRIGGER IF EXISTS winche_documents_changes_trigger ON {{WincheTables.Changes}};
+        CREATE TRIGGER winche_documents_changes_trigger
         AFTER INSERT ON {{WincheTables.Changes}}
         FOR EACH ROW EXECUTE FUNCTION winche_notify_change();
         """;

@@ -4,6 +4,7 @@ namespace Winche.Database.Constants;
 public static class WincheTables
 {
     public const string Documents = "winche_documents";
-    public const string Changes = "winche_changes";
-    public const string FeedCursors = "winche_feed_cursors";
+    public const string Changes = "winche_documents_changes";
+    public const string FeedCursors = "winche_documents_feed_cursors";
+    public const string ChangesNotifyChannel = "winche_documents_changes";
 }

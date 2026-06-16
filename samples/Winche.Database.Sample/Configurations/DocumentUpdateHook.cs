@@ -5,8 +5,6 @@ namespace Winche.Database.Sample.Configurations;
 
 public class DocumentUpdateHook : DocumentStoreHook
 {
-    public override string Path => "**";
-
     public override Task OnDocumentSetAsync(string path, Document document, CancellationToken ct)
     {
         Console.WriteLine($"Document set: {path}");

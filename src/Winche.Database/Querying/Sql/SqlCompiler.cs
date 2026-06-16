@@ -12,11 +12,11 @@ namespace Winche.Database.Querying.Sql;
 internal static class SqlCompiler
 {
     private const string Alias = "d";
-    private const string Columns = "path, id, collection, data, created_at, updated_at, version";
+    private const string Columns = "document_path, document_id, collection_path, collection_id, data, created_at, updated_at, version";
 
     public static CompiledSql Compile(
         LogicalPlan plan,
-        IReadOnlyList<string>? scopeRegexes = null,
+        string? collectionIdScope = null,
         IReadOnlyList<FieldPath>? select = null)
     {
         CollectionScan? scan = null;
@@ -53,9 +53,9 @@ internal static class SqlCompiler
             .Select(c => c == "data" ? dataColumn : $"{Alias}.{c}");
         sb.AppendLine($"SELECT {string.Join(", ", allColumns)}");
         sb.AppendLine($"FROM {WincheTables.Documents} {Alias}");
-        sb.AppendLine($"WHERE {Alias}.collection = {bag.Add(scan.Collection)}");
-        foreach (var rx in scopeRegexes ?? [])
-            sb.AppendLine($"  AND {Alias}.collection ~ '{rx.Replace("'", "''")}'");
+        sb.AppendLine($"WHERE {Alias}.collection_path = {bag.Add(scan.Collection)}");
+        if (collectionIdScope is not null)
+            sb.AppendLine($"  AND {Alias}.collection_id = {bag.Add(collectionIdScope)}");
 
         if (filter is not null)
             sb.AppendLine($"  AND ({OperatorRegistry.Emit(filter.Predicate, bag, Alias)})");

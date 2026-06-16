@@ -4,28 +4,15 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Winche.Database.Abstraction;
 using Winche.Database.DependencyInjection;
 using Winche.Database.Documents;
-using Winche.Database.Querying;
 using Winche.Database.Runtime.ChangeFeed;
 using Winche.Database.Runtime.Writes;
 using Winche.Database.Values;
 
 namespace Winche.Database.IntegrationTests;
 
-/// <summary>
-/// Always-match stub for <see cref="IPathPatternMatcher"/>: every path matches every pattern,
-/// used when we want the hook to fire for all paths.
-/// </summary>
-internal sealed class AlwaysMatchPathMatcher : IPathPatternMatcher
-{
-    public static readonly AlwaysMatchPathMatcher Instance = new();
-    public PathMatchResult Match(string pattern, string path) =>
-        new PathMatchResult(true, new Dictionary<string, string>());
-}
-
 /// <summary>Recording hook that captures set/update/delete callback arguments.</summary>
-internal sealed class RecordingHook(string path) : DocumentStoreHook
+internal sealed class RecordingHook : DocumentStoreHook
 {
-    public override string Path => path;
 
     private readonly List<(string Event, string HookPath, Document? Doc)> _events = [];
     private readonly SemaphoreSlim _signal = new(0);
@@ -100,7 +87,6 @@ internal sealed class HookEventRecorder
 /// </summary>
 internal sealed class DiTestHook(HookEventRecorder recorder) : DocumentStoreHook
 {
-    public override string Path => "di-hook/**";
 
     public override Task OnDocumentSetAsync(string path, Document document, CancellationToken ct)
     {
@@ -125,9 +111,8 @@ internal sealed class DiTestHook(HookEventRecorder recorder) : DocumentStoreHook
 /// Hook that throws on the first N invocations, then succeeds. Used to exercise the
 /// DurableConsumerRunner's at-least-once retry path.
 /// </summary>
-internal sealed class FlakyHook(string path, int failCount) : DocumentStoreHook
+internal sealed class FlakyHook(int failCount) : DocumentStoreHook
 {
-    public override string Path => path;
 
     private int _invocations;
     private readonly List<(string Event, string HookPath, Document? Doc)> _events = [];
@@ -185,8 +170,8 @@ public class HookFeedTests(PostgresFixture fx) : QueryTestBase(fx)
     [Fact]
     public async Task HookFeed_SetUpdateDelete_CallbacksArrive()
     {
-        var hook = new RecordingHook("**");
-        var consumer = new HookFeedConsumer([hook], AlwaysMatchPathMatcher.Instance);
+        var hook = new RecordingHook();
+        var consumer = new HookFeedConsumer([new HookRegistration("{document=**}", hook)]);
 
         var pump = new ChangeFeedPump(Fx.DataSource, [consumer],
             new ChangeFeedConfig { PollInterval = TimeSpan.FromMilliseconds(200) },
@@ -233,8 +218,8 @@ public class HookFeedTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task HookFeed_FlakyHook_RetriesAndEventuallySucceeds()
     {
         // FlakyHook fails on the first invocation, succeeds from the second onwards.
-        var hook = new FlakyHook("**", failCount: 1);
-        var consumer = new HookFeedConsumer([hook], AlwaysMatchPathMatcher.Instance);
+        var hook = new FlakyHook(failCount: 1);
+        var consumer = new HookFeedConsumer([new HookRegistration("{document=**}", hook)]);
 
         // Fast backoff so the test doesn't wait 1+ second for the real default.
         var config = new ChangeFeedConfig
@@ -276,9 +261,10 @@ public class HookFeedTests(PostgresFixture fx) : QueryTestBase(fx)
     }
 
     /// <summary>
-    /// Test 1 — hook path scoping uses the REAL matcher.
+    /// Test 1 — hook path scoping uses Winche.Rules PathMatcher directly.
     /// A <see cref="RecordingHook"/> with a scoped path pattern (<c>scoped/{id}</c>) is wired
-    /// with <see cref="PathPatternMatcher.Instance"/> (NOT <see cref="AlwaysMatchPathMatcher"/>).
+    /// via <see cref="HookFeedConsumer"/>; matching is delegated to
+    /// <c>Winche.Rules.Matching.PathMatcher.IsMatch</c>.
     /// A non-matching document (<c>other/o1</c>) is written first; the matching document
     /// (<c>scoped/s1</c>) is written second.  After waiting for exactly one event, the test
     /// asserts that:
@@ -294,8 +280,8 @@ public class HookFeedTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task HookFeed_RealPathMatcher_ScopedHookIgnoresNonMatchingPaths()
     {
         // Path pattern "scoped/{id}" matches exactly two-segment paths starting with "scoped/".
-        var hook = new RecordingHook("scoped/{id}");
-        var consumer = new HookFeedConsumer([hook], PathPatternMatcher.Instance);
+        var hook = new RecordingHook();
+        var consumer = new HookFeedConsumer([new HookRegistration("scoped/{id}", hook)]);
 
         var pump = new ChangeFeedPump(Fx.DataSource, [consumer],
             new ChangeFeedConfig { PollInterval = TimeSpan.FromMilliseconds(200) },
@@ -357,7 +343,7 @@ public class HookFeedTests(PostgresFixture fx) : QueryTestBase(fx)
         {
             opts.ConnectionString = Fx.ConnectionString;
             opts.ChangeFeed = new ChangeFeedConfig { PollInterval = TimeSpan.FromMilliseconds(200) };
-            opts.AddHook<DiTestHook>();
+            opts.UseHooks(h => h.Add<DiTestHook>("di-hook/{document=**}"));
         });
 
         await using var provider = services.BuildServiceProvider();

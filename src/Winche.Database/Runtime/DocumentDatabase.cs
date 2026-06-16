@@ -21,10 +21,10 @@ public sealed class DocumentDatabase : IDocumentDatabase
     private readonly WriteApplier _applier;
     private readonly TransactionLedger _ledger;
     private readonly ListenerRegistry? _listeners;
-    private readonly IndexScopeResolver? _scopes;
+    private readonly CollectionIndexResolver? _scopes;
 
     public DocumentDatabase(NpgsqlDataSource source, IOptions<WincheDatabaseOptions> options,
-        ListenerRegistry? listeners = null, IndexScopeResolver? scopes = null,
+        ListenerRegistry? listeners = null, CollectionIndexResolver? scopes = null,
         IWriteAuthorizer? writeAuthorizer = null)
     {
         _source = source;

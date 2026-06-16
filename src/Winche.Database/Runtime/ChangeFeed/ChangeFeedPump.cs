@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using Winche.Database.Constants;
 using Winche.Database.Documents;
 using Winche.Database.DependencyInjection;
 
@@ -85,7 +86,7 @@ public sealed class ChangeFeedPump(
 
         await using (var listen = conn.CreateCommand())
         {
-            listen.CommandText = "LISTEN winche_changes";
+            listen.CommandText = $"LISTEN {WincheTables.ChangesNotifyChannel}";
             await listen.ExecuteNonQueryAsync(ct);
         }
 

@@ -17,6 +17,15 @@ public sealed class SchemaManager(
     {
         await using var conn = await source.OpenConnectionAsync(ct);
 
+        // Run the idempotent legacy→current migration FIRST, before the additive CREATE-IF-NOT-EXISTS
+        // DDL — otherwise the additive DDL would create new-named objects alongside the legacy ones.
+        // No-op on a fresh or already-migrated database.
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = SchemaSql.MigrationDdl();
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
         await using (var cmd = conn.CreateCommand())
         {
             cmd.CommandText = SchemaSql.TableDdl();

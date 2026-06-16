@@ -74,10 +74,10 @@ builder.Services
             }));
 
         // Document lifecycle hooks (at-least-once, feed-driven, must be idempotent)
-        config.AddHook<MyHook>();
+        config.UseHooks(h => h.Add<MyHook>("{document=**}"));
 
-        // Secondary indexes
-        config.UseIndexes(i => i.Add("userData/*/sessionHistory", new IndexField("startedAt", SortDirection.Desc)));
+        // Secondary indexes (declared by collection ID — the last path segment)
+        config.UseIndexes(i => i.Add("sessionHistory", new IndexField("startedAt", SortDirection.Desc)));
 
         // Claims — maps the request principal to caller claims (DI available via http.RequestServices)
         config.MapClaims(http => new Dictionary<string, object?> { ["uid"] = http.User.FindFirst("sub")?.Value });
@@ -121,35 +121,34 @@ The built-in claims/exception filters are always applied internally and run oute
 - **Batch writes** — Atomic commit of up to 500 `set`/`update`/`delete` operations with field transforms, preconditions, and a single commit timestamp; use `new WriteBatch(db)` for a fluent builder
 - **Field transforms** — `serverTimestamp`, `increment` (saturating int, promotes to double on mixed), `maximum`, `minimum`, `arrayUnion`, `arrayRemove`
 - **Durable hooks** — Feed-driven, true at-least-once end-to-end; hooks execute inline+sequentially per batch; failed batches retried with capped backoff; hooks fire for writes from any node; cursor persisted across restarts; idempotency required
-- **Secondary indexes** — composite expression indexes per collection; `IndexDefinition.Where` for filtered/partial indexes (agreement tested against engine); **wildcard `Path` patterns** back a whole family of sibling subcollections from one definition (see below)
+- **Secondary indexes** — composite expression indexes declared by **collection ID** (the last path segment), covering every collection with that id under any parent; `IndexDefinition.Where` for filtered/partial indexes (agreement tested against engine) (see below)
 - **Access control** — Firestore-style in-memory rules engine (Winche.Rules); OR semantics with default-deny; for `list`/query operations the query must provably satisfy a read rule or it is rejected with PERMISSION_DENIED (rules are not post-filters)
 - **PostgreSQL backend** — All data stored as typed JSONB; queries compiled to native PostgreSQL SQL with `winche_rank`/`winche_num`/`winche_text` helper functions; `IMMUTABLE` functions back expression indexes
 
 ## Secondary Indexes
 
-An `IndexDefinition` declares a composite expression index over the `winche_*` ordering family for a
-collection. `IndexDefinition.Path` is **either** an exact collection path **or** a wildcard pattern
-with `*` at document-id positions, letting one definition back a whole family of sibling
-subcollections:
+An `IndexDefinition` declares a composite expression index over the `winche_*` ordering family,
+scoped by **collection ID** — the last segment of a collection path. One definition covers every
+collection sharing that id, regardless of parent (Firestore's collection-ID model):
 
 ```csharp
-// record — one definition backs every user's per-entity subcollection
+// one definition backs every user's sessionHistory subcollection, under any parent
 config.UseIndexes(i =>
-    i.Add("userData/*/sessionHistory", new IndexField("startedAt", SortDirection.Desc)));
+    i.Add("sessionHistory", new IndexField("startedAt", SortDirection.Desc)));
 ```
 
-You may pin some ancestor ids and wildcard others (`orgs/acme/teams/*/members`). Per-entity queries
-(`collection = "userData/alice/sessionHistory"`) use the matching pattern index automatically —
-**no change to query code**.
+Per-collection queries (`collection = "userData/alice/sessionHistory"`) use the matching
+collection-ID index automatically — **no change to query code**. Physically, the index is a partial
+index keyed on `collection_id` with `collection_path` as the leading key, so a single concrete
+collection stays seekable within the shared index.
 
-Pattern grammar (violations throw `InvalidPathPatternException` at schema-sync):
+Collection ID grammar (violations throw `InvalidPathPatternException` at schema-sync):
 
-- A collection path has an **odd** number of non-empty segments.
-- `*` is allowed **only at document-id positions** and must be a **whole** segment (no `a*`, `**`).
-- Literal segments match `[A-Za-z0-9_-]+`.
+- A collection ID is a **single segment** matching `[A-Za-z0-9_-]+` (no `/`, no `*`).
 
-Cross-collection ("collection group") queries — querying a field across *all* members of a family at
-once — are not yet supported.
+Because indexes are keyed by collection id, an index on `sessionHistory` covers **all** collections
+named `sessionHistory` (e.g. one per user). Cross-collection ("collection group") queries — querying
+a field across *all* members at once — are not yet supported.
 
 ## Access Rules
 
@@ -244,17 +243,17 @@ WebSocket transports. DI services are available inside the delegate via `http.Re
 
 ## Document Store Hooks
 
-Hooks let you react to document mutations. Implement `DocumentStoreHook` and register with `AddHook<T>()`. Hooks execute **inline and sequentially** inside `HookFeedConsumer`, which is driven by a durable feed runner. Delivery is **true at-least-once end-to-end** — the cursor advances only after all hooks in a batch succeed, and failed batches are retried with capped backoff (1 s → 30 s). Implementations **must be idempotent** (use the document `version` as an idempotency key).
+Hooks let you react to document mutations. Implement `DocumentStoreHook` (behavior only) and register it against a path with `UseHooks(h => h.Add<MyHook>(path))` — mirroring how `UseIndexes` binds a collection id. Hooks execute **inline and sequentially** inside `HookFeedConsumer`, which is driven by a durable feed runner. Delivery is **true at-least-once end-to-end** — the cursor advances only after all hooks in a batch succeed, and failed batches are retried with capped backoff (1 s → 30 s). Implementations **must be idempotent** (use the document `version` as an idempotency key).
+
+The path supplied at registration is a **Firestore-style trigger pattern** (the same grammar as the rules engine): literal segments, `{id}` single-segment captures, and a trailing `{document=**}` recursive wildcard. Use `"{document=**}"` to match every document. Bare `*`/`**` are not valid. Because the path lives in the registration (not the class), the same hook type can be bound to multiple paths.
 
 ```csharp
 using Winche.Database.Abstraction;
 using Winche.Database.Documents;
 
+// Behavior only — no Path; the pattern is supplied when you register the hook.
 public class AuditHook : DocumentStoreHook
 {
-    // Limit this hook to a specific subtree; use "**" to match everything
-    public override string Path => "orders/**";
-
     public override Task OnDocumentSetAsync(string path, Document document, CancellationToken ct)
     {
         // called after a document is created or replaced
@@ -273,6 +272,14 @@ public class AuditHook : DocumentStoreHook
         return Task.CompletedTask;
     }
 }
+```
+
+Register it against one or more paths (hook types are constructed via DI, so constructor injection works):
+
+```csharp
+config.UseHooks(h => h
+    .Add<AuditHook>("orders/{document=**}")     // every document under any orders collection
+    .Add<AuditHook>("invoices/{invoiceId}"));   // same hook type, bound to a second path
 ```
 
 ## `IDocumentDatabase`
@@ -475,6 +482,29 @@ Connect at `/documents/ws?access_token=<jwt>`. The connection authenticates at t
 | `listen.delta` | S→C | Incremental change (MUTATES client list by index) |
 
 See [PROTOCOL](docs/PROTOCOL.md#8-websocket-protocol) for full message shapes, close codes, and listener protocol details.
+
+## Upgrading to 8.0.0
+
+8.0.0 is a breaking release. **Schema changes apply automatically on startup**
+(`InitializeWincheDatabaseAsync` runs an idempotent migration) — no manual SQL is required for
+existing databases. The code/API changes you must make:
+
+- **Secondary indexes are declared by collection ID**, not a full path / `*` wildcard. Replace
+  `i.Add("userData/*/sessionHistory", …)` with `i.Add("sessionHistory", …)`. An index now covers
+  every collection with that id under any parent (see [Secondary Indexes](#secondary-indexes)).
+- **Hooks register with `UseHooks`, and the path moves to registration.** `AddHook<T>()` is removed
+  and `DocumentStoreHook.Path` no longer exists. Replace `config.AddHook<MyHook>()` (plus a `Path`
+  override on the class) with `config.UseHooks(h => h.Add<MyHook>("{document=**}"))`
+  (see [Document Store Hooks](#document-store-hooks)).
+- **Caller claims are injected as `IRuleClaimsAccessor`** (no longer a `Func<…>`). If you register
+  claims via `MapClaims`, nothing changes; only direct construction of
+  `RuleGuardedDocumentDatabase`/`RulesWriteAuthorizer` is affected.
+- **Storage columns and tables were renamed** (`document_path`/`document_id`/`collection_path`/
+  `collection_id`; `winche_changes`→`winche_documents_changes`,
+  `winche_feed_cursors`→`winche_documents_feed_cursors`). This matters only to external SQL/tooling
+  that reads the schema directly — the auto-migration upgrades existing databases in place. A
+  standalone script is also available at `docs/migrations/2026-06-16-collection-id-rename.sql` for
+  manual/out-of-band migration.
 
 ## Requirements
 
