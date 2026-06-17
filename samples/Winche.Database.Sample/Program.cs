@@ -16,13 +16,27 @@ builder.Services
             builder.Configuration.GetConnectionString("DefaultConnection") ??
             throw new InvalidOperationException("No connection string found for WincheDatabase.");
 
-        opts.UseHooks(h => h.Add<DocumentUpdateHook>("{document=**}"));
+        opts.UseHooks(h =>
+        {
+            h.Add<DocumentUpdateHook>("{document=**}");
+        });
+
         opts.MapClaims(_ => new Dictionary<string, object?> { ["uid"] = "user-123" });
+        
         opts.UseRules(r =>
+        {
             r.Match("userData/{userId}/{document=**}", owned =>
-                owned.Allow(RuleOperations.All, Expr.Auth("uid").Eq(Expr.Param("userId")))));
-    });
-builder.Services.AddWincheDatabaseWsApi();
+            {
+                owned.Allow(RuleOperations.All, Expr.Auth("uid").Eq(Expr.Param("userId")));
+            });
+        });
+
+        opts.UseIndexes(ib =>
+        {
+           ib.Add("some_collection_id", [new ("uid")]); 
+        });
+    })
+    .AddWincheDatabaseWsApi();
 
 builder.Services.AddOpenApi();
 
@@ -35,6 +49,7 @@ else
 {
     app.UseHttpsRedirection();
 }
+
 await app.InitializeWincheDatabaseAsync();
 app.UseWebSockets();
 app.MapWincheDatabaseWsApi();

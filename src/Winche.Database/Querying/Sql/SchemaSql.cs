@@ -216,7 +216,15 @@ public static class SchemaSql
 
         -- Recursive order-preserving key for ANY tagged value. bytea comparison of keys
         -- equals Firestore value ordering (numbers approximated via float8 beyond 2^53).
-        CREATE OR REPLACE FUNCTION winche_key(v jsonb) RETURNS bytea AS $f$
+        -- SET search_path FROM CURRENT is REQUIRED: this is the only helper that calls sibling
+        -- winche_* functions by unqualified name, and CREATE INDEX evaluates it on existing rows
+        -- under a hardened maintenance-time search_path that excludes the install schema
+        -- (CVE-2018-1058). Pinning the function's own search_path (to whatever schema the store is
+        -- installed into) lets winche_rank/winche_num/winche_key resolve during the index build.
+        -- Any future helper that calls another winche_* function needs the same clause.
+        CREATE OR REPLACE FUNCTION winche_key(v jsonb) RETURNS bytea
+        SET search_path FROM CURRENT
+        AS $f$
         DECLARE
             r int := winche_rank(v);
             res bytea;
