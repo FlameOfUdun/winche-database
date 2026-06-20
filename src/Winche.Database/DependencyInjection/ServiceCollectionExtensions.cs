@@ -12,7 +12,6 @@ using Winche.Database.Runtime.Listening;
 using Winche.Database.Runtime.Writes;
 using Winche.Database.Schema;
 using Winche.Rules;
-using Winche.Rules.DependencyInjection;
 
 namespace Winche.Database.DependencyInjection;
 
@@ -23,7 +22,7 @@ public static class ServiceCollectionExtensions
     {
         // Register the claims default BEFORE calling configure, so a user MapClaims() call inside
         // configure registers AFTER it and wins (.NET DI's GetRequiredService<T>() returns the
-        // last-registered singleton). The default deny-all ruleset is seeded via AddWincheRules below.
+        // last-registered singleton). The keyed rules engine is built from options.Rulesets below.
         services.AddSingleton<IRuleClaimsAccessor>(NullRuleClaimsAccessor.Instance);  // default null claims
 
         var options = new WincheDatabaseOptions(services);
@@ -61,16 +60,15 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<RetentionPruner>();
         services.AddHostedService<TransactionSweeper>();
 
-        // ── Winche.Rules guard ─────────────────────────────────────────────────
-        // Register the engine via Winche.Rules DI. It merges every RuleSet registered by UseRules()
-        // (plus the default deny-all seed below) and uses the database's engine-faithful comparer.
-        services.AddWincheRules(o => o
-            .WithComparer(WincheRuleValueComparer.Instance)
-            .WithRuleset(_ => { })
-        );                                     // default deny-all seed
+        // ── Rules guard ─────────────────────────────────────────────────────────
+        // This package owns an isolated rules engine, registered under a package-specific key so the
+        // Database engine and the Storage engine never merge. Built from this package's own UseRules
+        // rulesets (empty => deny-all), using the engine-faithful comparer.
+        var ruleEngine = new RuleEngine(RuleSet.Merge(options.Rulesets), WincheRuleValueComparer.Instance);
+        services.AddKeyedSingleton(ServiceKeys.RULE_ENGINE_KEY, ruleEngine);
 
         services.AddSingleton<IWriteAuthorizer>(sp => new RulesWriteAuthorizer(
-            sp.GetRequiredService<RuleEngine>(),
+            sp.GetRequiredKeyedService<RuleEngine>(ServiceKeys.RULE_ENGINE_KEY),
             sp.GetRequiredService<IRuleClaimsAccessor>())
         );
 
@@ -85,7 +83,7 @@ public static class ServiceCollectionExtensions
                     sp.GetRequiredService<CollectionIndexResolver>(),
                     sp.GetRequiredService<IWriteAuthorizer>()
                 ),
-                sp.GetRequiredService<RuleEngine>(),
+                sp.GetRequiredKeyedService<RuleEngine>(ServiceKeys.RULE_ENGINE_KEY),
                 sp.GetRequiredService<IRuleClaimsAccessor>())
             );
 

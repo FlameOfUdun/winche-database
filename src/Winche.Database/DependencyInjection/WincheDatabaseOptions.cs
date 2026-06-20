@@ -30,6 +30,12 @@ public sealed class WincheDatabaseOptions
     /// </summary>
     public string? ConnectionString { get; set; }
 
+    /// <summary>
+    /// Rulesets registered via <see cref="UseRules(RuleSet)"/>. Collected here (not in the DI
+    /// container) so <c>AddWincheDatabase</c> can build an engine from this package's rules only.
+    /// </summary>
+    internal List<RuleSet> Rulesets { get; } = [];
+
     public TransactionConfig TransactionConfig { get; set; } = new();
     public ChangeFeedConfig ChangeFeed { get; set; } = new();
 
@@ -78,7 +84,7 @@ public sealed class WincheDatabaseOptions
     /// </summary>
     public WincheDatabaseOptions UseRules(RuleSet ruleset)
     {
-        Services.AddSingleton(ruleset);
+        Rulesets.Add(ruleset);
         return this;
     }
 
@@ -90,8 +96,7 @@ public sealed class WincheDatabaseOptions
     /// </summary>
     public WincheDatabaseOptions UseRules(Action<RulesetBuilder> configure)
     {
-        var ruleset = RulesetBuilder.Build(configure);
-        Services.AddSingleton(ruleset);
+        Rulesets.Add(RulesetBuilder.Build(configure));
         return this;
     }
 }
