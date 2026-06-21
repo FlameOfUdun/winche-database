@@ -71,6 +71,40 @@ public sealed class DocumentDatabase : IDocumentDatabase
         return await new QueryExecutor(conn, null, _scopes).CountAsync(query, ct);
     }
 
+    /// <summary>
+    /// Lists the ids of subcollections directly under <paramref name="parentDocumentPath"/>
+    /// (or the top-level collections when null/empty). Privileged/internal: this is exposed
+    /// only on the rule-free <see cref="DocumentDatabase"/>, never through IDocumentDatabase —
+    /// mirroring Firestore, where listCollectionIds is an Admin-SDK-only operation that
+    /// security rules never evaluate. Ids are distinct and ordered by UTF-8 byte order.
+    /// </summary>
+    public async Task<ListCollectionIdsResult> ListCollectionIdsAsync(
+        string? parentDocumentPath, int? pageSize = null, string? pageToken = null, CancellationToken ct = default)
+    {
+        if (!string.IsNullOrEmpty(parentDocumentPath)
+            && !DocumentPathParser.IsValidDocumentPath(parentDocumentPath, out var error))
+            throw new ArgumentException(error);
+
+        var size = NormalizePageSize(pageSize);
+        var after = pageToken is null ? null : CollectionPageToken.Decode(pageToken);
+
+        await using var conn = await _source.OpenConnectionAsync(ct);
+        // Fetch one extra row to detect whether another page exists.
+        var ids = await new CollectionLister(conn, null).ListAsync(parentDocumentPath, after, size + 1, ct);
+
+        if (ids.Count <= size)
+            return new ListCollectionIdsResult(ids, null);
+
+        var page = ids.Take(size).ToList();
+        return new ListCollectionIdsResult(page, CollectionPageToken.Encode(page[^1]));
+    }
+
+    private const int DefaultPageSize = 100;
+    private const int MaxPageSize = 300;
+
+    private static int NormalizePageSize(int? pageSize) =>
+        pageSize is null or <= 0 ? DefaultPageSize : Math.Min(pageSize.Value, MaxPageSize);
+
     // ── Writes ────────────────────────────────────────────────────────────────
 
     public Task<IReadOnlyList<WriteResult>> WriteAsync(IReadOnlyList<Write> writes, CancellationToken ct = default) =>
