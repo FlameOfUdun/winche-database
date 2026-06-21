@@ -123,7 +123,7 @@ The built-in claims/exception filters are always applied internally and run oute
 - **Durable hooks** — Feed-driven, true at-least-once end-to-end; hooks execute inline+sequentially per batch; failed batches retried with capped backoff; hooks fire for writes from any node; cursor persisted across restarts; idempotency required
 - **Secondary indexes** — composite expression indexes declared by **collection ID** (the last path segment), covering every collection with that id under any parent; `IndexDefinition.Where` for filtered/partial indexes (agreement tested against engine) (see below)
 - **Access control** — Firestore-style in-memory rules engine (Winche.Rules); OR semantics with default-deny; for `list`/query operations the query must provably satisfy a read rule or it is rejected with PERMISSION_DENIED (rules are not post-filters)
-- **PostgreSQL backend** — All data stored as typed JSONB; queries compiled to native PostgreSQL SQL with `winche_rank`/`winche_num`/`winche_text` helper functions; `IMMUTABLE` functions back expression indexes
+- **PostgreSQL backend** — All data stored as typed JSONB; queries compiled to native PostgreSQL SQL backed by a family of `winche_*` ordering helper functions (`winche_rank`, `winche_num`, `winche_text`, `winche_key`, …); `IMMUTABLE` functions back expression indexes
 
 ## Secondary Indexes
 
@@ -212,6 +212,11 @@ rule whose path pattern and operations set match returns `true` (OR). A matching
 `false` does not veto — it simply doesn't grant. If no rule grants, access is denied (default-deny).
 Multiple `UseRules` calls accumulate — each registered ruleset's blocks are OR-combined with all
 others. Registration order does not affect the decision.
+
+> **Per-package isolation (8.2.0+):** each Winche package that uses Winche.Rules builds its own rules
+> engine, registered under a package-specific DI key. Rulesets from different Winche libraries sharing
+> one container (e.g. `Winche.Database` and `Winche.Storage`) therefore never merge into each other.
+> This is automatic — no consumer action is required.
 
 Because a grant cannot be revoked by another rule, **grant narrowly**: don't write a broad `**`
 read grant and expect a more specific rule to restrict it — instead grant read only where it should
@@ -321,6 +326,29 @@ await new WriteBatch(db)
     .Set("counters/c1", new Dictionary<string, Value> { ["n"] = new IntegerValue(0) })
     .CommitAsync();
 ```
+
+### Collection listing (privileged)
+
+The concrete `DocumentDatabase` exposes one capability that `IDocumentDatabase` does **not**: enumerating the
+subcollection ids directly under a document (or the top-level collections at the database root). This mirrors
+Firestore's `listCollectionIds`, which is an Admin-SDK-only operation — so it lives on the **rule-free core**,
+is intentionally absent from `IDocumentDatabase`, and is **not** exposed over the REST/WebSocket transports.
+Inject the concrete `DocumentDatabase` (trusted server-side code only) to use it.
+
+```csharp
+var sub   = await db.ListCollectionIdsAsync("users/u1");   // subcollections under a document
+var roots = await db.ListCollectionIdsAsync(null);         // top-level collections (null/empty = root)
+
+// pageSize (default 100, max 300) + opaque pageToken for keyset pagination
+var first = await db.ListCollectionIdsAsync(null, pageSize: 50);
+var next  = await db.ListCollectionIdsAsync(null, pageSize: 50, pageToken: first.NextPageToken);
+// .CollectionIds : IReadOnlyList<string>  — distinct, UTF-8 byte-ordered
+// .NextPageToken : string?                — null when there are no more pages
+```
+
+A subcollection is listed if **any** document exists beneath it, even when the intermediate parent document is
+"missing" (matching Firestore). Because it bypasses the rules engine, treat it like the rest of the concrete
+`DocumentDatabase` surface — trusted server-side use only.
 
 ## Query API
 
@@ -454,7 +482,7 @@ Mapped under `/documents` by default (configurable via `MapWincheDatabaseRestApi
 
 Access rules are enforced on all routes. The claims accessor runs as an endpoint filter before every request.
 
-See [PROTOCOL](docs/PROTOCOL.md#7-rest-api) for full request/response examples.
+See [PROTOCOL](docs/PROTOCOL.md#6-rest-api) for full request/response examples.
 
 ## WebSocket API
 
@@ -481,7 +509,7 @@ Connect at `/documents/ws?access_token=<jwt>`. The connection authenticates at t
 | `listen.snapshot` | S→C | Full query state (REPLACES client list) |
 | `listen.delta` | S→C | Incremental change (MUTATES client list by index) |
 
-See [PROTOCOL](docs/PROTOCOL.md#8-websocket-protocol) for full message shapes, close codes, and listener protocol details.
+See [PROTOCOL](docs/PROTOCOL.md#7-websocket-protocol) for full message shapes, close codes, and listener protocol details.
 
 ## Upgrading to 8.0.0
 

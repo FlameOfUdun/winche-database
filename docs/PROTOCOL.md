@@ -1,6 +1,6 @@
 # Winche.Database — Wire Protocol Reference
 
-**Last updated:** 2026-06-07
+**Last updated:** 2026-06-21
 
 > This document is the authoritative reference for all wire formats: typed values, documents, write operations, queries, error codes, the REST API, and the WebSocket protocol. Every JSON example is a shape verified against the parser source and integration tests.
 
@@ -161,7 +161,7 @@ Every mutation goes through a `writes[]` array. REST uses `:commit`; WS uses `wr
 | `path` | string | Required. Document path (even segments). |
 | `fields` | object | Required. Map of literal key → tagged value. |
 | `merge` | boolean | Default `false`. When `true`: deep-merge into existing document instead of replacing it. |
-| `transforms` | array | Optional. See [§3.4 Transforms](#37-transforms). |
+| `transforms` | array | Optional. See [§3.7 Transforms](#37-transforms). |
 | `precondition` | object | Optional. See [§3.5 Preconditions](#35-preconditions). |
 
 **Merge semantics:** When `merge: true` the write recurses through `MapValue` fields and merges them. Top-level keys in `fields` that are `mapValue`s are merged recursively. Non-map existing fields at the same key are replaced. The `deleteField` sentinel is legal as a map value at any depth inside a merge-set (see [§3.6 deleteField](#36-deletefield-sentinel)).
@@ -508,7 +508,7 @@ Document paths in URL segments are **Base64-encoded** (standard, UTF-8 bytes) to
 
 ### 6.2 Colon-verb endpoints
 
-These endpoints use literal-colon URL segments. They receive the built-in claims and error filters but live outside the `/{prefix}` group — `configure` customizations apply only to the `/{prefix}` group. Use the `configureVerbs` parameter to apply customizations to the colon-verb routes.
+These endpoints use literal-colon URL segments and are mapped **outside** the `/{prefix}` route group (ASP.NET Core route groups cannot contain a `:` segment). They still receive the same built-in claims and error filters, which are applied to each verb route individually. `MapWincheDatabaseRestApi` returns a single composite `IEndpointConventionBuilder` spanning the CRUD/ping group **and** every colon-verb, so any convention you apply to the return value (e.g. `.RequireAuthorization()`, rate limiting) lands on all endpoints at once.
 
 | Endpoint | Request body | Response | Description |
 | - | - | - | - |
