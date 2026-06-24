@@ -5,7 +5,7 @@ using Winche.Database.Values;
 namespace Winche.Database.Querying.Planning;
 
 /// <summary>
-/// Query → LogicalPlan. This is where Firestore's query rules live:
+/// Query → LogicalPlan. This is where the document-model query rules live:
 /// __name__ tiebreaker, implicit Exists for orderBy fields, null-filter rewrites,
 /// cursor inclusivity mapping, limit+1, and all validation.
 /// </summary>
@@ -21,11 +21,11 @@ internal static class Normalizer
         if (!DocumentPathParser.IsValidCollectionPath(q.Collection, out var pathError))
             throw new PlanValidationException("BAD_COLLECTION_PATH", pathError!);
 
-        var limit = q.Limit ?? DefaultLimit;
-        if (limit < 1)
-            throw new PlanValidationException("BAD_LIMIT", $"'limit' must be >= 1, got {limit}.");
+        var (limit, skip, reverse) = ResolvePaging(q);
 
         var sortKeys = BuildSortKeys(q.OrderBy);
+        if (reverse)
+            sortKeys = sortKeys.Select(k => new SortKey(k.Field, Flip(k.Direction))).ToList();
         var predicate = BuildPredicate(q.Where, q.OrderBy);
         var range = BuildCursorRange(q.Start, q.End, sortKeys);
 
@@ -33,10 +33,41 @@ internal static class Normalizer
         if (predicate is not null) nodes.Add(new FilterNode(predicate));
         nodes.Add(new SortNode(sortKeys));
         if (range is not null) nodes.Add(range);
-        nodes.Add(new PageNode(limit, Skip: 0, FetchExtraRow: true));
+        nodes.Add(new PageNode(limit, Skip: skip, FetchExtraRow: true, ReverseResult: reverse));
 
         return new LogicalPlan(nodes);
     }
+
+    // ── Paging resolution (limit / limitToLast / offset) ──────────────────────
+
+    private static (int Limit, int Skip, bool Reverse) ResolvePaging(Query q)
+    {
+        if (q.LimitToLast is { } ltl)
+        {
+            if (q.Limit is not null)
+                throw new PlanValidationException("LIMIT_CONFLICT", "'limit' and 'limitToLast' are mutually exclusive.");
+            if (q.Offset is not null)
+                throw new PlanValidationException("OFFSET_LIMIT_TO_LAST", "'offset' cannot be combined with 'limitToLast'.");
+            if (q.OrderBy is null || q.OrderBy.Count == 0)
+                throw new PlanValidationException("LIMIT_TO_LAST_NO_ORDER", "'limitToLast' requires at least one 'orderBy'.");
+            if (ltl < 1)
+                throw new PlanValidationException("BAD_LIMIT_TO_LAST", $"'limitToLast' must be >= 1, got {ltl}.");
+            return (ltl, 0, true);
+        }
+
+        var limit = q.Limit ?? DefaultLimit;
+        if (limit < 1)
+            throw new PlanValidationException("BAD_LIMIT", $"'limit' must be >= 1, got {limit}.");
+
+        var offset = q.Offset ?? 0;
+        if (offset < 0)
+            throw new PlanValidationException("BAD_OFFSET", $"'offset' must be >= 0, got {offset}.");
+
+        return (limit, offset, false);
+    }
+
+    private static SortDirection Flip(SortDirection d) =>
+        d == SortDirection.Asc ? SortDirection.Desc : SortDirection.Asc;
 
     // ── Sort keys: append __name__ tiebreaker with the last key's direction ──
 

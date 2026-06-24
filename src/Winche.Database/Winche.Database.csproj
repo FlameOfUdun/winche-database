@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>Winche.Database</PackageId>
-    <Description>A document-oriented database library backed by PostgreSQL. Provides schema management, querying with field selection, Firestore-style access rules, optimistic transactions, real-time delta subscriptions, durable hooks, and secondary indexes.</Description>
+    <Description>A document-oriented database library backed by PostgreSQL. Provides schema management, querying with field selection, expression-based access rules, optimistic transactions, real-time delta subscriptions, durable hooks, and secondary indexes.</Description>
     <PackageTags>winche database document-store postgresql nosql realtime</PackageTags>
   </PropertyGroup>
 

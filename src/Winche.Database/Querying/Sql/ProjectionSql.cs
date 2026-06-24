@@ -109,7 +109,7 @@ internal static class ProjectionSql
         $"{accessor}->{nameParam}";
 
     /// <summary>
-    /// An interior node: we need to descend through the Firestore map envelope
+    /// An interior node: we need to descend through the map envelope
     /// (<c>mapValue → fields</c>) and recurse.  We emit a CASE expression so that
     /// when the key is absent OR the value is not a map the whole entry becomes NULL
     /// and is stripped by <c>jsonb_strip_nulls</c> at the root.

@@ -5,6 +5,7 @@ using Winche.Database.Runtime;
 using Winche.Database.Runtime.Listening;
 using Winche.Database.Runtime.Transactions;
 using Winche.Database.Runtime.Writes;
+using Winche.Database.Values;
 using Winche.Rules;
 using Winche.Rules.Evaluation;
 
@@ -62,11 +63,20 @@ public sealed class RuleGuardedDocumentDatabase(
         return await inner.CountAsync(query, ct);
     }
 
+    public async Task<AggregationResult> AggregateAsync(Query query, IReadOnlyList<Aggregation> aggregations, CancellationToken ct = default)
+    {
+        AuthorizeListQuery(query);
+        return await inner.AggregateAsync(query, aggregations, ct);
+    }
+
     // ── Writes ────────────────────────────────────────────────────────────────
 
     public Task<IReadOnlyList<WriteResult>> WriteAsync(
         IReadOnlyList<Write> writes, CancellationToken ct = default) =>
         inner.WriteAsync(writes, ct);   // authorized inside the write transaction by IWriteAuthorizer
+
+    public Task<Document> AddAsync(string collectionPath, IReadOnlyDictionary<string, Value> fields, CancellationToken ct = default) =>
+        inner.AddAsync(collectionPath, fields, ct);   // create authorized inside the write transaction by IWriteAuthorizer
 
     // ── Transactions ──────────────────────────────────────────────────────────
 
@@ -109,8 +119,8 @@ public sealed class RuleGuardedDocumentDatabase(
     /// return already satisfies the read rule (the query's own constraints
     /// guarantee it), so no per-document filtering is applied to snapshots.
     /// If the query is not provably safe the subscription is rejected outright
-    /// with <see cref="AccessDeniedException"/> — Firestore's "rules are not
-    /// filters" contract applied to listeners.
+    /// with <see cref="AccessDeniedException"/> — the "rules are not filters"
+    /// principle applied to listeners.
     /// <para>
     /// <b>Limitation:</b> authorization is evaluated once against the
     /// subscribe-time claims. If the caller's auth token is refreshed or
@@ -146,7 +156,7 @@ public sealed class RuleGuardedDocumentDatabase(
 
     /// <summary>
     /// Authorizes a list/query operation using <see cref="RuleEngine.Allows(Querying.QueryConstraints,RuleRequest)"/>.
-    /// Implements Firestore's "rules are not filters": the query is either provably safe and
+    /// Implements the "rules are not filters" principle: the query is either provably safe and
     /// allowed in full, or rejected outright — results are never post-filtered.
     /// </summary>
     private void AuthorizeListQuery(Query query)

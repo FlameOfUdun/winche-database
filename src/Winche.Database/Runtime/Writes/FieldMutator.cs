@@ -4,7 +4,7 @@ using Winche.Database.Values;
 namespace Winche.Database.Runtime.Writes;
 
 /// <summary>
-/// Immutable dotted-path mutations over typed field maps (Firestore update semantics):
+/// Immutable dotted-path mutations over typed field maps (dotted-path update semantics):
 /// Set creates intermediate maps and REPLACES non-map intermediates; Delete of a missing
 /// path is a no-op. Inputs are never mutated.
 /// </summary>
@@ -25,6 +25,32 @@ public static class FieldMutator
     public static Dictionary<string, Value> Delete(
         IReadOnlyDictionary<string, Value> fields, IReadOnlyList<string> segments) =>
         DeleteSegments(fields, segments, 0);
+
+    /// <summary>
+    /// Reads the value at a dotted path, descending nested maps per <see cref="FieldPath.Segments"/>.
+    /// Returns false if any segment is absent or a non-map is encountered mid-path. Read-side
+    /// analogue of <see cref="Set"/>.
+    /// </summary>
+    public static bool TryGet(IReadOnlyDictionary<string, Value> fields, FieldPath path, out Value value)
+    {
+        var segments = path.Segments;
+        IReadOnlyDictionary<string, Value> current = fields;
+        for (var i = 0; i < segments.Count; i++)        // iterative: a pure read needs no allocation
+        {
+            if (!current.TryGetValue(segments[i], out var v))
+                break;
+            if (i == segments.Count - 1)
+            {
+                value = v;
+                return true;
+            }
+            if (v is not MapValue m)
+                break;
+            current = m.Fields;
+        }
+        value = null!; // not read by callers unless the method returned true
+        return false;
+    }
 
     private static Dictionary<string, Value> SetSegments(
         IReadOnlyDictionary<string, Value> fields, IReadOnlyList<string> segments, int i, Value value)

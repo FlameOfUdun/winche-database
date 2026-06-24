@@ -5,6 +5,7 @@ using Winche.Database.Runtime;
 using Winche.Database.Runtime.Listening;
 using Winche.Database.Runtime.Transactions;
 using Winche.Database.Runtime.Writes;
+using Winche.Database.Values;
 
 namespace Winche.Database.Tests.Runtime;
 
@@ -15,7 +16,9 @@ public abstract class DatabaseTestDouble : IDocumentDatabase
     public virtual Task<IReadOnlyList<Document?>> GetAllAsync(IReadOnlyList<string> paths, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<long> CountAsync(Query query, CancellationToken ct = default) => throw new NotImplementedException();
+    public virtual Task<AggregationResult> AggregateAsync(Query query, IReadOnlyList<Aggregation> aggregations, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<IReadOnlyList<WriteResult>> WriteAsync(IReadOnlyList<Write> writes, CancellationToken ct = default) => throw new NotImplementedException();
+    public virtual Task<Document> AddAsync(string collectionPath, IReadOnlyDictionary<string, Value> fields, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<TransactionHandle> BeginTransactionAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<Document?> GetAsync(string transactionId, string path, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<QueryResult> QueryAsync(string transactionId, Query query, CancellationToken ct = default) => throw new NotImplementedException();

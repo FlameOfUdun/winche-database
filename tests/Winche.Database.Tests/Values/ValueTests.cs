@@ -5,7 +5,7 @@ namespace Winche.Database.Tests.Values;
 public class ValueTests
 {
     [Fact]
-    public void TypeRank_FollowsFirestoreTotalOrder()
+    public void TypeRank_FollowsCrossTypeTotalOrder()
     {
         // null < bool < NaN < number < timestamp < string < bytes < reference < geopoint < array < map
         short[] ranks =

@@ -8,7 +8,7 @@ namespace Winche.Database.Runtime.Transactions;
 
 /// <summary>
 /// The RunTransactionAsync body context: reads delegate to the database's transactional
-/// reads (recording versions); Set/Update/Delete BUFFER writes for the commit. Firestore's
+/// reads (recording versions); Set/Update/Delete BUFFER writes for the commit.
 /// reads-before-writes rule: any read after the first buffered write → INVALID_ARGUMENT.
 /// </summary>
 public sealed class TransactionContext

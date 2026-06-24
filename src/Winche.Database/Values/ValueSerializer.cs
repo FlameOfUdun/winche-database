@@ -4,7 +4,7 @@ using System.Text.Json.Nodes;
 namespace Winche.Database.Values;
 
 /// <summary>
-/// Value ↔ Firestore-style wire JSON ({"integerValue":"42"}, {"mapValue":{"fields":{…}}}, …).
+/// Value ↔ tagged wire JSON ({"integerValue":"42"}, {"mapValue":{"fields":{…}}}, …).
 /// The same encoding is used for storage (see Documents/StorageCodec).
 /// </summary>
 public static class ValueSerializer
@@ -139,7 +139,7 @@ public static class ValueSerializer
     private static ArrayValue ReadArray(JsonNode? n)
     {
         if (n is not JsonObject o) throw new WireFormatException("arrayValue must be an object");
-        if (o["values"] is null) return new ArrayValue([]);          // Firestore omits empty values
+        if (o["values"] is null) return new ArrayValue([]);          // the wire format omits empty values
         if (o["values"] is not JsonArray arr) throw new WireFormatException("arrayValue.values must be an array");
         return new ArrayValue([.. arr.Select(e => Read(e ?? throw new WireFormatException("array element is null")))]);
     }
@@ -147,7 +147,7 @@ public static class ValueSerializer
     private static MapValue ReadMap(JsonNode? n)
     {
         if (n is not JsonObject o) throw new WireFormatException("mapValue must be an object");
-        if (o[WireTags.Fields] is null) return new MapValue(new Dictionary<string, Value>()); // Firestore omits empty fields
+        if (o[WireTags.Fields] is null) return new MapValue(new Dictionary<string, Value>()); // the wire format omits empty fields
         if (o[WireTags.Fields] is not JsonObject fields) throw new WireFormatException("mapValue.fields must be an object");
         return new MapValue(ReadFields(fields));
     }

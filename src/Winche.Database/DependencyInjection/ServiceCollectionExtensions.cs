@@ -59,6 +59,7 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<ChangeFeedHostedService>();
         services.AddHostedService<RetentionPruner>();
         services.AddHostedService<TransactionSweeper>();
+        services.AddHostedService<TtlSweeper>();
 
         // ── Rules guard ─────────────────────────────────────────────────────────
         // This package owns an isolated rules engine, registered under a package-specific key so the

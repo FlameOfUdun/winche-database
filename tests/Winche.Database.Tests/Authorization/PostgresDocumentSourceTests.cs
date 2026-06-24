@@ -33,7 +33,9 @@ public class PostgresDocumentSourceTests
         public Task<IReadOnlyList<Document?>> GetAllAsync(IReadOnlyList<string> paths, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<long> CountAsync(Query query, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<AggregationResult> AggregateAsync(Query query, IReadOnlyList<Aggregation> aggregations, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<IReadOnlyList<WriteResult>> WriteAsync(IReadOnlyList<Write> writes, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<Document> AddAsync(string collectionPath, IReadOnlyDictionary<string, Value> fields, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<TransactionHandle> BeginTransactionAsync(CancellationToken ct = default) => throw new NotImplementedException();
         public Task<Document?> GetAsync(string transactionId, string path, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<QueryResult> QueryAsync(string transactionId, Query query, CancellationToken ct = default) => throw new NotImplementedException();

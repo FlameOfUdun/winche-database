@@ -16,6 +16,7 @@ public sealed record SetWrite : Write
 {
     public required IReadOnlyDictionary<string, Value> Fields { get; init; }
     public bool Merge { get; init; }
+    public IReadOnlyList<FieldPath>? MergeFields { get; init; }
     public IReadOnlyList<FieldTransform>? Transforms { get; init; }
 }
 

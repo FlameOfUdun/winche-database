@@ -73,7 +73,7 @@ The engine uses a total order across all types. The numeric rank values are:
 | Timestamp | 40 | |
 | String | 50 | Unicode code-point order (`COLLATE "C"` in Postgres) |
 | Bytes | 60 | Lexicographic byte order |
-| Reference | 70 | Whole-path Unicode code-point (byte) comparison — **not** per-segment; deliberately diverges from Firestore for ids containing chars < `'/'` (U+002F) |
+| Reference | 70 | Whole-path Unicode code-point (byte) comparison — **not** per-segment; this differs from per-segment ordering for ids containing chars < `'/'` (U+002F) |
 | GeoPoint | 80 | Latitude first, then longitude |
 | Array | 90 | Element-wise; shorter prefix array sorts first |
 | Map | 100 | Keys sorted by code-point order; compared **interleaved** (key₁, value₁, key₂, value₂, …); shorter map wins on a prefix tie. Example: `{"a":{"integerValue":"1"},"b":{"integerValue":"0"}}` < `{"a":{"integerValue":"2"}}` — key `"a"` ties, value `1 < 2` decides |
@@ -117,7 +117,15 @@ The engine uses a total order across all types. The numeric rank values are:
 - A **collection path** has an **odd** number of segments (used internally; cascade delete accepts an odd-segment path).
 - Segments must be non-empty. Leading/trailing slashes are not accepted.
 
-### 2.3 Field paths
+### 2.3 Auto-generated document ids
+
+`Winche.Database.Documents.DocumentId.NewId()` generates a 20-character base62 id using a cryptographically random source. This is used internally by `AddAsync` / the `:add` REST verb / the `add` WS message, and is also available directly for pre-generating ids on the client side.
+
+```csharp
+string id = DocumentId.NewId();  // e.g. "aB3dEfGhIjKlMnOpQrSt"
+```
+
+### 2.4 Field paths
 
 A `FieldPath` is a dot-separated sequence of one or more non-empty segments, e.g. `address.city`.
 
@@ -150,6 +158,7 @@ Every mutation goes through a `writes[]` array. REST uses `:commit`; WS uses `wr
     "path":        "users/u1",
     "fields":      {"name": {"stringValue": "Alice"}},
     "merge":       false,
+    "mergeFields": ["displayName", "address.city"],
     "transforms":  [],
     "precondition": {"exists": false}
   }
@@ -160,11 +169,14 @@ Every mutation goes through a `writes[]` array. REST uses `:commit`; WS uses `wr
 | - | - | - |
 | `path` | string | Required. Document path (even segments). |
 | `fields` | object | Required. Map of literal key → tagged value. |
-| `merge` | boolean | Default `false`. When `true`: deep-merge into existing document instead of replacing it. |
+| `merge` | boolean | Default `false`. When `true`: deep-merge into existing document instead of replacing it. Mutually exclusive with `mergeFields`. |
+| `mergeFields` | array of strings | Optional. Dotted field-path strings (e.g. `["a", "b.c"]`). When set, only the listed paths are written; all other existing paths are left untouched. Mutually exclusive with `merge: true`. Must be non-empty. |
 | `transforms` | array | Optional. See [§3.7 Transforms](#37-transforms). |
 | `precondition` | object | Optional. See [§3.5 Preconditions](#35-preconditions). |
 
-**Merge semantics:** When `merge: true` the write recurses through `MapValue` fields and merges them. Top-level keys in `fields` that are `mapValue`s are merged recursively. Non-map existing fields at the same key are replaced. The `deleteField` sentinel is legal as a map value at any depth inside a merge-set (see [§3.6 deleteField](#36-deletefield-sentinel)).
+**Merge semantics (`merge: true`):** When `merge: true` the write recurses through `MapValue` fields and merges them. Top-level keys in `fields` that are `mapValue`s are merged recursively. Non-map existing fields at the same key are replaced. The `deleteField` sentinel is legal as a map value at any depth inside a merge-set (see [§3.6 deleteField](#36-deletefield-sentinel)).
+
+**Merge-mask semantics (`mergeFields`):** Only the paths listed in `mergeFields` are written. For each masked path: if the path is present in `fields`, that value is set; if the path is absent from `fields` (or is a `deleteField` sentinel), that path is deleted from the document. Paths not in the mask are left completely untouched. A masked intermediate path (e.g. `"m"`) replaces the entire subtree at that key with the data's value. `mergeFields` and `merge: true` are mutually exclusive (→ `INVALID_ARGUMENT`). An empty `mergeFields` array is `INVALID_ARGUMENT`.
 
 ### 3.3 Update write
 
@@ -236,6 +248,7 @@ Precondition failures abort the **entire** batch — nothing is applied.
 | - | - |
 | `UpdateWrite.Fields` values (any depth via dotted path keys) | Yes |
 | `SetWrite(merge: true).Fields` values — top-level or inside `mapValue` at any depth | Yes |
+| `SetWrite(mergeFields: [...]).Fields` values — for a masked path, signals deletion of that path | Yes |
 | `SetWrite(merge: false).Fields` values | No — `INVALID_ARGUMENT` |
 | Inside any `ArrayValue` (at any depth) | No — `INVALID_ARGUMENT` |
 | In transform operands | No — `INVALID_ARGUMENT` |
@@ -291,6 +304,20 @@ A transform is applied to a single field **after** the write data has been appli
 
 Transform results are returned in `WriteResult.transformResults` keyed by field path.
 
+**C# API — `FieldValue` factory.** `Winche.Database.Runtime.Writes.FieldValue` builds `FieldTransform` objects and the `DeleteFieldValue` sentinel without constructing wire objects by hand:
+
+| Method | Placement | Notes |
+| - | - | - |
+| `FieldValue.ServerTimestamp(field)` | `Transforms` list | Sets the field to the batch commit time |
+| `FieldValue.Increment(field, long\|double)` | `Transforms` list | Saturating int add; promotes to double on mixed |
+| `FieldValue.Maximum(field, long\|double)` | `Transforms` list | Keeps the larger value; NaN is the smallest |
+| `FieldValue.Minimum(field, long\|double)` | `Transforms` list | Keeps the smaller value |
+| `FieldValue.ArrayUnion(field, params Value[])` | `Transforms` list | Appends elements not already present |
+| `FieldValue.ArrayRemove(field, params Value[])` | `Transforms` list | Removes typed-equal elements |
+| `FieldValue.Delete()` | `Fields` map | Removes the field; only valid in `UpdateWrite` or `SetWrite(merge: true)` |
+
+`Delete()` returns a `DeleteFieldValue` sentinel that is embedded directly in the `Fields` map (equivalent to the `{"deleteField": true}` wire form — see §3.6). All other methods return a `FieldTransform` that goes in the `Transforms` list (out-of-band, applied after the write data). Transforms and the delete sentinel are therefore deliberately heterogeneous.
+
 ### 3.8 Write results
 
 Each write produces one `WriteResult` in the response:
@@ -319,6 +346,8 @@ All writes in a batch share the same `updateTime` (single commit timestamp). `tr
   "where": { ... },
   "orderBy": [ ... ],
   "limit": 25,
+  "offset": 50,
+  "limitToLast": 10,
   "select": ["displayName", "address.city"],
   "start": {"values": [...], "before": true},
   "end":   {"values": [...], "before": false}
@@ -330,10 +359,16 @@ All writes in a batch share the same `updateTime` (single commit timestamp). `tr
 | `collection` | string | Yes | Non-empty collection name. |
 | `where` | object | No | Filter — see §4.2. |
 | `orderBy` | array | No | Sort keys — see §4.3. |
-| `limit` | integer | No | Maximum documents to return. Default **100** when omitted. |
+| `limit` | integer | No | Maximum documents to return. Default **100** when omitted. Mutually exclusive with `limitToLast`. |
+| `offset` | integer | No | Skip the first N matching results (`>= 0`). Composes with `limit`. Mutually exclusive with `limitToLast`. |
+| `limitToLast` | integer | No | Return the **last** N results of the ordered query, in ascending order (`>= 1`). Requires at least one `orderBy`. Mutually exclusive with `limit` and `offset`. |
 | `select` | array | No | Field-projection list — see below. |
 | `start` | cursor | No | Lower bound cursor — see §4.4. |
 | `end` | cursor | No | Upper bound cursor. |
+
+**`offset` — skip N results.** When present, the first `offset` matching documents are discarded before `limit` is applied. Must be `>= 0` (negative → `BAD_OFFSET`). Cannot be combined with `limitToLast` (`OFFSET_LIMIT_TO_LAST`). `offset` is ignored by the `:count` / `CountAsync` path — the count always reflects the full filter/cursor match (`count` has no offset concept).
+
+**`limitToLast` — last N results.** Returns the last N documents in the ordered result set, delivered in ascending order (the query runs as if the sort directions were reversed, then the results are flipped back). Must be `>= 1` (→ `BAD_LIMIT_TO_LAST`). Requires at least one `orderBy` (→ `LIMIT_TO_LAST_NO_ORDER`). Cannot be combined with `limit` (`LIMIT_CONFLICT`) or `offset` (`OFFSET_LIMIT_TO_LAST`). **`hasMore` semantics:** for a `limitToLast` query, `hasMore: true` means rows exist *before* the returned window (earlier in the original sort order) — not after it.
 
 **`select` — field projection.** When present, `select` is a JSON array of dotted field-path strings (e.g. `["displayName", "address.city"]`). The response documents contain **only** those fields; top-level and nested paths are both supported. Document id, path, and metadata (`createTime`, `updateTime`, `version`) are always preserved. Projection is applied server-side — the full document is never materialized. `select` is orthogonal to authorization: rules are evaluated against the full document as normal.
 
@@ -436,6 +471,15 @@ The engine automatically appends `__name__` (the document path) as a tiebreaker 
 
 `values` must be tagged values corresponding positionally to `orderBy` fields (including the implicit `__name__` tiebreaker if it is needed). Cursor arity may be any **prefix** of the sort keys (1 to N values); the remaining sort keys are unconstrained.
 
+**C# convenience — `Cursor.FromDocument`.** `Cursor.FromDocument(Document doc, IReadOnlyList<Ordering>? orderBy, bool before)` derives cursor values from a document snapshot: for each `orderBy` field it reads that field's value from `doc`, then appends the implicit `__name__` tiebreaker as `{"referenceValue": "<doc.Path>"}`. A null or empty `orderBy` produces a `__name__`-only cursor. Throws `ArgumentException` if a required field is absent from the document. The resulting `Cursor` is identical on the wire to one constructed by hand — `Cursor.FromDocument` is a client-side convenience only.
+
+| `Query` property | `before` | Equivalent |
+| - | - | - |
+| `Start` | `true` | `startAt(snapshot)` |
+| `Start` | `false` | `startAfter(snapshot)` |
+| `End` | `false` | `endAt(snapshot)` |
+| `End` | `true` | `endBefore(snapshot)` |
+
 ---
 
 ## 5. Errors
@@ -472,7 +516,7 @@ All errors — WS `error` frames and REST error bodies — use this status vocab
 For `INVALID_QUERY` plan-validation failures it contains `code`:
 
 ```json
-{"status": "INVALID_QUERY", "message": "orderBy field missing from where clause", "details": {"code": "ORDERBY_FIELD_NOT_FILTERED"}}
+{"status": "INVALID_QUERY", "message": "'limit' and 'limitToLast' are mutually exclusive.", "details": {"code": "LIMIT_CONFLICT"}}
 ```
 
 ### 5.3 REST status → HTTP code mapping
@@ -487,6 +531,28 @@ For `INVALID_QUERY` plan-validation failures it contains `code`:
 | `DEADLINE_EXCEEDED` | 504 |
 | `INTERNAL` | 500 |
 | `INVALID_ARGUMENT`, `INVALID_QUERY`, body binding errors | 400 |
+
+### 5.4 Plan-validation error codes
+
+These codes appear in `details.code` for `INVALID_QUERY` plan-validation failures (`PlanValidationException`):
+
+| Code | Meaning |
+| - | - |
+| `EMPTY_COLLECTION` | `collection` is empty |
+| `BAD_COLLECTION_PATH` | `collection` is not a valid collection path |
+| `BAD_LIMIT` | `limit` is less than 1 |
+| `BAD_OFFSET` | `offset` is negative |
+| `BAD_LIMIT_TO_LAST` | `limitToLast` is less than 1 |
+| `LIMIT_CONFLICT` | Both `limit` and `limitToLast` are set |
+| `OFFSET_LIMIT_TO_LAST` | Both `offset` and `limitToLast` are set |
+| `LIMIT_TO_LAST_NO_ORDER` | `limitToLast` is set but no `orderBy` is present |
+| `CURSOR_ARITY` | A cursor has the wrong number of values (1..number of sort keys) |
+| `CURSOR_TYPE` | A `__name__` cursor value is not a string or reference |
+| `EMPTY_COMPOSITE` | An `and`/`or`/`not` composite has no children |
+| `NOT_ARITY` | A `not` composite does not have exactly one child |
+| `NAME_OPERATOR` | `__name__` used with an unsupported operator (only `eq`/`ne`/`gt`/`gte`/`lt`/`lte`) |
+| `COMPARE_OP` | `compare` used with an unsupported operator (only `eq`/`ne`/`gt`/`gte`/`lt`/`lte`) |
+| `OPERAND_TYPE` | An operator's operand has the wrong type (e.g. `in` needs a non-empty array; `startsWith` needs a string) |
 
 ---
 
@@ -512,14 +578,49 @@ These endpoints use literal-colon URL segments and are mapped **outside** the `/
 
 | Endpoint | Request body | Response | Description |
 | - | - | - | - |
+| `POST /documents:add` | `{"collection": "<collectionPath>", "fields": {…}}` | `{"document": <Document>}` | Create a document with a generated 20-char base62 id. Evaluated as a **create** by the rules engine. |
 | `POST /documents:commit` | `{"writes": [...], "transaction"?: "id"}` | `{"writeResults": [...]}` | Atomic write batch. With `transaction`: commits the transaction. |
 | `POST /documents:beginTransaction` | `{}` | `{"transaction": "id"}` | Begin an optimistic transaction. |
 | `POST /documents:rollback` | `{"transaction": "id"}` | `{}` | Roll back (idempotent; unknown id is a no-op). |
 | `POST /documents:batchGet` | `{"documents": ["path1","path2",...], "transaction"?: "id"}` | `{"documents": [Document\|null, ...]}` | Bulk read preserving input order; missing docs are `null`. |
 | `POST /documents:runQuery` | `{"query": <Query>, "transaction"?: "id"}` | `{"documents": [...], "hasMore": false}` | Execute a query. Default `limit` = 100 when omitted. |
 | `POST /documents:count` | `{"query": <Query>}` | `{"count": N}` | Count documents matching the query. An explicit `limit` caps the count; omitted = full match (the 100 default does **not** apply). Authorized as a `list` operation — the query must provably satisfy a read rule or the request is rejected with `PERMISSION_DENIED`. |
+| `POST /documents:aggregate` | `{"query": <Query>, "aggregations": [...]}` | `{"result": {<alias>: <tagged value>, …}}` | Run one or more aggregations (count / sum / average) over a query. An explicit `limit` caps all aggregations. Authorized as a `list` operation. |
 
 ### 6.3 Request/response examples
+
+**:add**
+
+```json
+POST /documents:add
+{
+  "collection": "users",
+  "fields": {
+    "name":  {"stringValue": "Alice"},
+    "score": {"integerValue": "0"}
+  }
+}
+
+200 OK
+{
+  "document": {
+    "path":       "users/aB3dEfGhIjKlMnOpQrSt",
+    "id":         "aB3dEfGhIjKlMnOpQrSt",
+    "collection": "users",
+    "fields": {
+      "name":  {"stringValue": "Alice"},
+      "score": {"integerValue": "0"}
+    },
+    "createTime": "2026-06-22T10:00:00+00:00",
+    "updateTime": "2026-06-22T10:00:00+00:00",
+    "version": 1
+  }
+}
+```
+
+Errors: missing or non-string `collection`, or missing `fields` → `INVALID_ARGUMENT` (HTTP 400); create denied by rules → `PERMISSION_DENIED` (HTTP 403).
+
+> **Design note:** unlike the CRUD convenience endpoints (which encode the document path in a Base64 URL segment), `:add` carries `collection` in the JSON request body. This is consistent with the other colon-verbs (`:commit`, `:runQuery`, `:count`), which also take structured JSON bodies. Winche's colon-verb form is the deliberate, uniform choice.
 
 **:commit (batch)**
 
@@ -597,6 +698,42 @@ POST /documents:count
 200 OK
 {"count": 42}
 ```
+
+**:aggregate**
+
+Request body: `query` (required) and `aggregations` (required, 1–5 items). Each aggregation has a `kind` (`"count"`, `"sum"`, or `"average"`), an `alias` (non-empty, unique within the request), and for `sum`/`average` a `field` (dotted field path; may not be `__name__`). `count` takes no `field`.
+
+```json
+POST /documents:aggregate
+{
+  "query": {
+    "collection": "orders",
+    "where": {"field": "status", "op": "eq", "value": {"stringValue": "shipped"}}
+  },
+  "aggregations": [
+    {"kind": "count",   "alias": "cnt"},
+    {"kind": "sum",     "field": "total", "alias": "s"},
+    {"kind": "average", "field": "total", "alias": "a"}
+  ]
+}
+
+200 OK
+{
+  "result": {
+    "cnt": {"integerValue": "2"},
+    "s":   {"integerValue": "350"},
+    "a":   {"doubleValue": 175.0}
+  }
+}
+```
+
+Each value in the response is a tagged value (see §1). `count` → `integerValue`. `sum` → `integerValue` when all matched operands are integers; `doubleValue` when any is a double (NaN/Infinity propagated; integer overflow → double); empty match → `{"integerValue":"0"}`. `average` → `doubleValue`, or `{"nullValue":null}` when no numeric operand matched.
+
+Errors: bad `kind`, missing `alias`, duplicate alias, empty alias, missing `aggregations` array, more than 5 aggregations, `sum`/`average` with no `field`, `count` with a `field`, field is `__name__` → `INVALID_ARGUMENT` (HTTP 400); denied by rules → `PERMISSION_DENIED` (HTTP 403).
+
+> **Authorization:** `:aggregate` is authorized under the **`list`** rule (field-agnostic, same as `:count` and `:runQuery`). The query must provably satisfy a read rule or the request is rejected with `PERMISSION_DENIED`.
+
+> **Notes:** an explicit `limit` on the query caps all aggregations; collection-group queries are not supported.
 
 ### 6.4 Sticky-transaction caveat
 
@@ -678,7 +815,36 @@ Server: {"type": "response", "id": "3", "result": {"documents": [...], "hasMore"
 Client: {"type": "count", "id": "4",
          "query": {"collection": "users", "where": {"field": "score", "op": "gte", "value": {"integerValue": "50"}}}}
 Server: {"type": "response", "id": "4", "result": {"count": 42}}
+
+Client: {
+  "type": "aggregate",
+  "id": "5",
+  "query": {
+    "collection": "orders",
+    "where": {"field": "status", "op": "eq", "value": {"stringValue": "shipped"}}
+  },
+  "aggregations": [
+    {"kind": "count",   "alias": "cnt"},
+    {"kind": "sum",     "field": "total", "alias": "s"},
+    {"kind": "average", "field": "total", "alias": "a"}
+  ]
+}
+Server: {
+  "type": "response",
+  "id": "5",
+  "result": {
+    "result": {
+      "cnt": {"integerValue": "2"},
+      "s":   {"integerValue": "350"},
+      "a":   {"doubleValue": 175.0}
+    }
+  }
+}
 ```
+
+> **Note on the nested `result.result`:** the outer `result` is the standard WS response envelope (every `response` frame has `"result": {…}`); the inner `result` is the aggregate result object, mirroring the REST `:aggregate` response body. So the full path to the alias map is `response.result.result`.
+
+> **Authorization:** `aggregate` is authorized under the **`list`** rule (field-agnostic, same as `count` and `query`). The query must provably satisfy a read rule or the server returns an `error` frame with `PERMISSION_DENIED`.
 
 #### Writes
 
@@ -697,6 +863,25 @@ Server: {"type": "response", "id": "5", "result": {"writeResults": [
   {"updateTime": "2026-06-07T12:00:00+00:00", "transformResults": null},
   {"updateTime": "2026-06-07T12:00:00+00:00", "transformResults": null}
 ]}}
+```
+
+#### Add (auto-id)
+
+```json
+Client: {"type": "add", "id": "6", "collection": "users",
+         "fields": {"name": {"stringValue": "Alice"}, "score": {"integerValue": "0"}}}
+Server: {"type": "response", "id": "6", "result": {"document": {
+  "path": "users/aB3dEfGhIjKlMnOpQrSt", "id": "aB3dEfGhIjKlMnOpQrSt",
+  "collection": "users",
+  "fields": {"name": {"stringValue": "Alice"}, "score": {"integerValue": "0"}},
+  "createTime": "2026-06-22T10:00:00+00:00", "updateTime": "2026-06-22T10:00:00+00:00", "version": 1
+}}}
+```
+
+On denial:
+
+```json
+Server: {"type": "error", "id": "6", "status": "PERMISSION_DENIED", "message": "Access denied."}
 ```
 
 #### Keepalive
@@ -759,6 +944,60 @@ Optional resume:
 ```json
 Client: {"type": "listen", "id": "s1", "query": {"collection": "users"}, "resumeToken": 42}
 ```
+
+#### Single-document subscribe (`doc.listen`)
+
+`doc.listen` subscribes to a single document by path. The server sends the same `response` → `listen.snapshot` → `listen.delta` sequence as `listen`; the `documents` array in each frame holds 0 or 1 elements (absent or present).
+
+```json
+Client: {"type": "doc.listen", "id": "d1", "path": "users/u1"}
+Server: {"type": "response", "id": "d1", "result": {"subscriptionId": "sub-doc-abc"}}
+```
+
+Optional resume:
+
+```json
+Client: {"type": "doc.listen", "id": "d1", "path": "users/u1", "resumeToken": 42}
+```
+
+First event — document present:
+
+```json
+{
+  "type":           "listen.snapshot",
+  "subscriptionId": "sub-doc-abc",
+  "documents":      [{"path": "users/u1", "fields": {...}, ...}],
+  "readTime":       "2026-06-22T10:00:00+00:00",
+  "resumeToken":    101
+}
+```
+
+First event — document absent:
+
+```json
+{
+  "type":           "listen.snapshot",
+  "subscriptionId": "sub-doc-abc",
+  "documents":      [],
+  "readTime":       "2026-06-22T10:00:00+00:00",
+  "resumeToken":    101
+}
+```
+
+Subsequent changes arrive as `listen.delta` frames (same shape as query deltas). Use the existing `unlisten` message with the returned `subscriptionId` to cancel.
+
+Errors:
+
+```json
+Client: {"type": "doc.listen", "id": "d2", "path": "users"}
+Server: {"type": "error", "id": "d2", "status": "INVALID_ARGUMENT", "message": "..."}
+```
+
+```json
+Server: {"type": "error", "id": "d1", "status": "PERMISSION_DENIED", "message": "Access denied."}
+```
+
+> **Authorization note:** `doc.listen` is authorized under the **`list`** rule (it rides on the query listener over a `__name__ == path` query), not the `get` rule. The query is provably constrained to one document path. Use `RuleOperations.Read` (which expands to both `get` and `list`) or an explicit `list` rule to permit single-document listens.
 
 #### Unsubscribe
 
@@ -877,3 +1116,9 @@ The practical window for this race is the p99 write-transaction duration — typ
 | `IdleTimeoutSpan` | 60 seconds | Transaction idle-out after this period of no activity |
 | `TotalTimeoutSpan` | 5 minutes | Absolute maximum transaction lifetime |
 | `CleanupInterval` | 1 second | How often the expiry sweeper runs |
+
+### 8.7 TTL (auto-expiry) — server-side only, no wire surface
+
+TTL policies are configured entirely server-side via `AddWincheDatabase` (`UseTtl`) and have **no REST or WebSocket wire surface**. Clients cannot register, query, or cancel TTL policies over the API.
+
+The TTL sweeper runs on the configured `SweepInterval` (default 5 minutes) and deletes documents whose registered field holds a past `timestampValue`. Deletes are executed through the normal write path: they appear on the change feed as ordinary `removed` events and are therefore visible to live-query listeners and document lifecycle hooks. The sweeper is system-initiated and bypasses security rules. By default the delete cascades to the document's subcollections; set `CascadeDelete = false` to delete only the matched document.

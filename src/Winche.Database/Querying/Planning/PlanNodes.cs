@@ -20,6 +20,6 @@ internal sealed record SortBoundary(IReadOnlyList<Value> Values, bool Inclusive)
 /// <summary>Cursor bounds, tied to the SortNode that precedes this node in the plan.</summary>
 internal sealed record CursorRangeNode(SortBoundary? Lower, SortBoundary? Upper) : PlanNode;
 
-internal sealed record PageNode(int Limit, int Skip, bool FetchExtraRow) : PlanNode;
+internal sealed record PageNode(int Limit, int Skip, bool FetchExtraRow, bool ReverseResult = false) : PlanNode;
 
 internal sealed record LogicalPlan(IReadOnlyList<PlanNode> Nodes);

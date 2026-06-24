@@ -2,6 +2,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Winche.Database.Abstraction;
 using Winche.Database.Documents;
+using Winche.Database.Runtime.Ttl;
+using Winche.Database.Runtime.Writes;
 using Winche.Rules;
 
 namespace Winche.Database.DependencyInjection;
@@ -38,6 +40,8 @@ public sealed class WincheDatabaseOptions
 
     public TransactionConfig TransactionConfig { get; set; } = new();
     public ChangeFeedConfig ChangeFeed { get; set; } = new();
+    public WriteLimits WriteLimits { get; set; } = new();
+    public TtlConfig Ttl { get; set; } = new();
 
     /// <summary>
     /// Registers one or more <see cref="IndexDefinition"/> instances. Multiple calls accumulate —
@@ -60,7 +64,27 @@ public sealed class WincheDatabaseOptions
     }
 
     /// <summary>
-    /// Registers document lifecycle hooks via a fluent builder, binding each hook to a Firestore-style
+    /// Registers one or more <see cref="TtlPolicy"/> instances via a fluent builder (mirrors
+    /// <see cref="UseIndexes(Action{IndexBuilder})"/>). Multiple calls accumulate — each policy is a
+    /// singleton so <c>GetServices&lt;TtlPolicy&gt;()</c> returns them all for the TTL sweeper at startup.
+    /// </summary>
+    public WincheDatabaseOptions UseTtl(Action<TtlBuilder> configure)
+    {
+        var builder = new TtlBuilder(Services);
+        configure(builder);
+        return this;
+    }
+
+    /// <summary>Convenience overload — registers the supplied policies directly.</summary>
+    public WincheDatabaseOptions UseTtl(params TtlPolicy[] policies)
+    {
+        foreach (var policy in policies)
+            Services.AddSingleton(policy);
+        return this;
+    }
+
+    /// <summary>
+    /// Registers document lifecycle hooks via a fluent builder, binding each hook to a
     /// path pattern at registration time (mirroring <see cref="UseIndexes(Action{IndexBuilder})"/>).
     /// Multiple calls accumulate — each binding is registered as a singleton so that
     /// <c>GetServices&lt;HookRegistration&gt;()</c> returns them all at startup.
@@ -111,6 +135,28 @@ public sealed record ChangeFeedConfig
     public int BatchSize { get; init; } = 500;
 }
 
+public sealed record TtlConfig
+{
+    /// <summary>
+    /// How often the TTL sweeper runs (default 5 min; managed TTL is typically best-effort (up to ~72h)).
+    /// Must be &gt; <see cref="TimeSpan.Zero"/> (a zero/negative interval would busy-loop the sweeper).
+    /// </summary>
+    public TimeSpan SweepInterval { get; init; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Max documents deleted per collection per batch; the sweeper loops until a batch is short.
+    /// The sweeper clamps this to <c>[1, WriteValidator.MaxBatchSize]</c> (500) — a delete batch above
+    /// that cap is rejected by the write path, so larger values are capped rather than honored.
+    /// </summary>
+    public int BatchSize { get; init; } = 500;
+
+    /// <summary>
+    /// Whether a TTL delete also deletes the document's subcollections (cascade). Defaults to <c>true</c>.
+    /// Set to <c>false</c> to delete only the matched document and leave its subcollection documents in place.
+    /// </summary>
+    public bool CascadeDelete { get; init; } = true;
+}
+
 public sealed record TransactionConfig
 {
     public TimeSpan TotalTimeoutSpan { get; init; } = TimeSpan.FromMinutes(5);
@@ -141,6 +187,28 @@ public sealed class IndexBuilder(IServiceCollection services)
     public IndexBuilder Add(string collectionId, params IndexField[] fields)
     {
         services.AddSingleton(new IndexDefinition(collectionId, fields));
+        return this;
+    }
+}
+
+/// <summary>
+/// Fluent builder used inside <see cref="WincheDatabaseOptions.UseTtl(Action{TtlBuilder})"/>. Each
+/// <see cref="Add(TtlPolicy)"/> registers one <see cref="TtlPolicy"/> as a singleton so that
+/// <c>GetServices&lt;TtlPolicy&gt;()</c> returns them all at startup.
+/// </summary>
+public sealed class TtlBuilder(IServiceCollection services)
+{
+    /// <summary>Adds a fully-constructed <see cref="TtlPolicy"/>.</summary>
+    public TtlBuilder Add(TtlPolicy policy)
+    {
+        services.AddSingleton(policy);
+        return this;
+    }
+
+    /// <summary>Convenience overload: creates and registers a policy from a collection id and field path.</summary>
+    public TtlBuilder Add(string collectionId, string field)
+    {
+        services.AddSingleton(TtlPolicy.For(collectionId, field));
         return this;
     }
 }

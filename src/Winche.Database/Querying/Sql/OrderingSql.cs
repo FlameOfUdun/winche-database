@@ -6,8 +6,8 @@ using Winche.Database.Querying.Planning;
 namespace Winche.Database.Querying.Sql;
 
 /// <summary>
-/// Sort keys → ORDER BY list. Six-expression family per field implements the Firestore
-/// total order (rank, then per-class payloads; winche_key last covers arrays/maps).
+/// Sort keys → ORDER BY list. Six-expression family per field implements the
+/// cross-type total order (rank, then per-class payloads; winche_key last covers arrays/maps).
 /// Postgres default NULL placement is consistent within a rank, so no explicit NULLS needed.
 /// </summary>
 internal static class OrderingSql

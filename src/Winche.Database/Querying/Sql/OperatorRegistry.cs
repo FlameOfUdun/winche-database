@@ -144,7 +144,7 @@ internal static class OperatorRegistry
         };
     }
 
-    /// <summary>Same-class inequality (Firestore rule 1): only the operand's type-class matches.</summary>
+    /// <summary>Same-class inequality: only the operand's type-class matches.</summary>
     internal static string EmitSameClassInequality(FieldPath field, FilterOperator op, Value operand, ParameterBag bag, string alias) =>
         EmitSameClassInequality(field, op, operand, bag, new SchemaResolver(DocumentSchema.Plain, alias));
 
@@ -159,7 +159,7 @@ internal static class OperatorRegistry
         var f = ((TaggedRef)fieldRef).Sql;
         return operand switch
         {
-            NullValue => "FALSE",                                       // Firestore: range over null matches nothing
+            NullValue => "FALSE",                                       // range over null matches nothing
             DoubleValue d when double.IsNaN(d.Value) => "FALSE",        // comparisons with NaN match nothing
             BooleanValue or IntegerValue or DoubleValue or TimestampValue =>
                 $"(winche_rank({f}) = {RankOf(operand)} AND winche_num({f}) {sqlOp} {ValueSql.NumOperand(operand, bag)})",
@@ -206,7 +206,7 @@ internal static class OperatorRegistry
         return $"(winche_rank({f}) {rankCmp} {rank} OR {sameClass})";
     }
 
-    /// <summary>GeoPoint range: latitude first, longitude breaks ties (Firestore order).</summary>
+    /// <summary>GeoPoint range: latitude first, longitude breaks ties.</summary>
     private static string EmitGeoInequality(string f, FilterOperator op, GeoPointValue g, ParameterBag bag)
     {
         var lat = ValueSql.DoubleOperand(g.Latitude, bag);

@@ -38,12 +38,18 @@ public static class WriteValidator
         switch (write)
         {
             case SetWrite s:
+                if (s.MergeFields is not null && s.Merge)
+                    throw Invalid("'mergeFields' cannot be combined with merge:true.");
+                if (s.MergeFields is { Count: 0 })
+                    throw Invalid("'mergeFields' must contain at least one field path.");
+                // Either merge mode permits a top-level deleteField and nested sentinels in maps.
+                var isMerge = s.Merge || s.MergeFields is not null;
                 foreach (var (key, value) in s.Fields)
                 {
-                    if (value is DeleteFieldValue && !s.Merge)
-                        throw Invalid($"deleteField ('{key}') requires SetWrite(Merge: true).");
+                    if (value is DeleteFieldValue && !isMerge)
+                        throw Invalid($"deleteField ('{key}') requires SetWrite(Merge: true) or mergeFields.");
                     if (value is not DeleteFieldValue)
-                        RejectIllegalSentinels(value, key, allowInMaps: s.Merge);
+                        RejectIllegalSentinels(value, key, allowInMaps: isMerge);
                 }
                 ValidateTransforms(s.Transforms);
                 break;

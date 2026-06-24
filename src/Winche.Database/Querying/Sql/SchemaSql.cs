@@ -4,10 +4,10 @@ namespace Winche.Database.Querying.Sql;
 
 /// <summary>
 /// DDL for the winche_* ordering helper functions — the SQL mirror of Values.TypeRank.
-/// Firestore total order: null(10) &lt; bool(20) &lt; NaN(29) &lt; number(30) &lt; timestamp(40)
+/// Canonical cross-type total order: null(10) &lt; bool(20) &lt; NaN(29) &lt; number(30) &lt; timestamp(40)
 /// &lt; string(50) &lt; bytes(60) &lt; reference(70) &lt; geopoint(80) &lt; array(90) &lt; map(100).
 /// Phase 1 ships scalar ordering; winche_key (arrays/maps) ships in Phase 2.
-/// Reference ordering compares full path bytes (not per-segment); diverges from Firestore only for ids containing chars below '/' (0x2F).
+/// Reference ordering compares full path bytes (not per-segment); diverges from the reference ordering only for ids containing chars below '/' (0x2F).
 /// IMMUTABLE note: winche_num/winche_rank cast text→timestamptz, which is only truly immutable for offset-bearing strings; the engine always writes 'Z'-suffixed timestamps, so expression indexes are safe — externally-written offset-less strings would not be.
 /// </summary>
 public static class SchemaSql
@@ -176,8 +176,18 @@ public static class SchemaSql
         SELECT (v->'geoPointValue'->>'longitude')::numeric
         $f$ LANGUAGE sql IMMUTABLE STRICT;
 
+        -- Strict numeric accessor for sum/average: ONLY integer/double contribute (others/missing → NULL,
+        -- ignored by SUM/AVG). Unlike winche_num, 'NaN'/'Infinity' are deliberately PRESERVED (not mapped to
+        -- NULL) so they propagate through aggregation unchanged — do not add NaN guards here.
+        CREATE OR REPLACE FUNCTION winche_agg_num(v jsonb) RETURNS numeric AS $f$
+        SELECT CASE
+            WHEN v ? 'integerValue' THEN (v->>'integerValue')::numeric
+            WHEN v ? 'doubleValue'  THEN (v->>'doubleValue')::numeric
+        END
+        $f$ LANGUAGE sql IMMUTABLE STRICT;
+
         -- winche_text returns text under the database's default collation.
-        -- Firestore orders strings by UTF-8 byte order: ORDER BY / comparison sites
+        -- Strings are ordered by UTF-8 byte order: ORDER BY / comparison sites
         -- MUST apply COLLATE "C" (the Phase 2 compiler emits this; tests do too).
         CREATE OR REPLACE FUNCTION winche_text(v jsonb) RETURNS text AS $f$
         SELECT CASE
@@ -215,7 +225,7 @@ public static class SchemaSql
         END $f$ LANGUAGE plpgsql IMMUTABLE STRICT;
 
         -- Recursive order-preserving key for ANY tagged value. bytea comparison of keys
-        -- equals Firestore value ordering (numbers approximated via float8 beyond 2^53).
+        -- equals the canonical value ordering (numbers approximated via float8 beyond 2^53).
         -- SET search_path FROM CURRENT is REQUIRED: this is the only helper that calls sibling
         -- winche_* functions by unqualified name, and CREATE INDEX evaluates it on existing rows
         -- under a hardened maintenance-time search_path that excludes the install schema

@@ -1,6 +1,6 @@
 namespace Winche.Database.Runtime;
 
-/// <summary>Firestore-parity status codes for runtime operations.</summary>
+/// <summary>Status codes for runtime operations.</summary>
 public enum RuntimeStatus
 {
     InvalidArgument,

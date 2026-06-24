@@ -9,7 +9,7 @@ namespace Winche.Database.Querying.Sql;
 /// (even when the intermediate document "P/X/&lt;id&gt;" is missing). So we scan every
 /// descendant of P and take the path segment immediately after P.
 ///
-/// COLLATE "C" is applied to all comparisons/ordering so results follow Firestore's
+/// COLLATE "C" is applied to all comparisons/ordering so results follow
 /// UTF-8 byte ordering and keyset pagination stays self-consistent.
 /// </summary>
 public static class CollectionListSql

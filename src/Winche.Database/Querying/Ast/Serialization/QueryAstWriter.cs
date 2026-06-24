@@ -17,6 +17,8 @@ public static class QueryAstWriter
                 ["direction"] = o.Direction == SortDirection.Desc ? "desc" : "asc",
             })]);
         if (q.Limit is not null) obj["limit"] = q.Limit;
+        if (q.Offset is not null) obj["offset"] = q.Offset;
+        if (q.LimitToLast is not null) obj["limitToLast"] = q.LimitToLast;
         if (q.Start is not null) obj["start"] = WriteCursor(q.Start);
         if (q.End is not null) obj["end"] = WriteCursor(q.End);
         if (q.Select is { Count: > 0 })

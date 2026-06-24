@@ -17,8 +17,10 @@ namespace Winche.Database.Runtime.Writes;
 /// causes affected-rows = 0, which is detected and turned into ABORTED before commit.
 /// For rows held under FOR UPDATE the guard always passes — no behavior change.
 /// </summary>
-public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? authorizer = null)
+public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? authorizer = null, WriteLimits? limits = null)
 {
+    private readonly WriteLimits _limits = limits ?? new();
+
     private sealed class DocState
     {
         public IReadOnlyDictionary<string, Value> Fields = new Dictionary<string, Value>();
@@ -105,8 +107,8 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
 
                 results.Add(write switch
                 {
-                    SetWrite s => ApplySet(doc, s, commitTime),
-                    UpdateWrite u => ApplyUpdate(doc, u, commitTime),
+                    SetWrite s => ApplySet(doc, s, commitTime, _limits),
+                    UpdateWrite u => ApplyUpdate(doc, u, commitTime, _limits),
                     DeleteWrite d => ApplyDelete(write.Path, d, state, cascadeVictims, commitTime),
                     _ => throw new NotSupportedException(write.GetType().Name),
                 });
@@ -159,25 +161,42 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
 
     // ── Apply ─────────────────────────────────────────────────────────────────
 
-    private static WriteResult ApplySet(DocState doc, SetWrite s, DateTimeOffset commitTime)
+    private static WriteResult ApplySet(DocState doc, SetWrite s, DateTimeOffset commitTime, WriteLimits limits)
     {
-        // Tree-walk to separate sentinel paths from actual data.
-        // Sentinel segments are LITERAL map keys — never dotted-parsed.
-        // Short-circuit: validator guarantees no sentinels when !Merge.
-        var sentinelPaths = new List<string[]>();
-        var prunedData = s.Merge
-            ? PruneSentinels(s.Fields, [], sentinelPaths)
-            : s.Fields;
+        IReadOnlyDictionary<string, Value> fields;
 
-        IReadOnlyDictionary<string, Value> fields = s.Merge && doc.Exists
-            ? DocumentMerger.Merge(doc.Fields, prunedData)
-            : prunedData;
+        if (s.MergeFields is { } mask)
+        {
+            // Explicit merge mask: set masked-present paths, delete masked-absent paths,
+            // leave unmasked paths untouched. (explicit mergeFields mask.)
+            fields = doc.Exists ? doc.Fields : new Dictionary<string, Value>();
+            // Functional update: FieldMutator.Set/Delete return new dicts; the starting doc.Fields is never mutated.
+            foreach (var path in mask)
+                fields = FieldMutator.TryGet(s.Fields, path, out var v) && v is not DeleteFieldValue
+                    ? FieldMutator.Set(fields, path, v)
+                    : FieldMutator.Delete(fields, path);
+        }
+        else
+        {
+            // Tree-walk to separate sentinel paths from actual data.
+            // Sentinel segments are LITERAL map keys — never dotted-parsed.
+            // Short-circuit: validator guarantees no sentinels when !Merge.
+            var sentinelPaths = new List<string[]>();
+            var prunedData = s.Merge
+                ? PruneSentinels(s.Fields, [], sentinelPaths)
+                : s.Fields;
 
-        // Apply sentinel deletes using LITERAL segment paths (not FieldPath.Parse — keys may contain dots).
-        foreach (var segments in sentinelPaths)
-            fields = FieldMutator.Delete(fields, segments);
+            fields = s.Merge && doc.Exists
+                ? DocumentMerger.Merge(doc.Fields, prunedData)
+                : prunedData;
+
+            // Apply sentinel deletes using LITERAL segment paths (not FieldPath.Parse — keys may contain dots).
+            foreach (var segments in sentinelPaths)
+                fields = FieldMutator.Delete(fields, segments);
+        }
 
         var transformResults = ApplyTransforms(ref fields, s.Transforms, commitTime);
+        DocumentLimits.Validate(s.Path, fields, limits);
         Bump(doc, fields, commitTime);
         return new WriteResult(commitTime, transformResults);
     }
@@ -187,7 +206,7 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
     /// and returning the pruned data (sentinels excluded). Nested MapValues are recursed;
     /// all other values pass through unchanged.
     ///
-    /// <para>Firestore mask semantics for all-sentinel maps: if a MapValue had ≥1 entry before
+    /// <para>Merge-mask semantics for all-sentinel maps: if a MapValue had ≥1 entry before
     /// pruning and ALL entries pruned away (sentinel leaves or recursively-emptied child maps),
     /// the key is dropped entirely from the result — so a merge-set of
     /// <c>m: {drop: delete}</c> against a doc without <c>m</c> does NOT create a phantom <c>m: {}</c>,
@@ -221,7 +240,7 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
                 var pruned = PruneSentinels(m.Fields, childSegments, sentinelPaths);
 
                 // Drop this key if the map had entries before pruning and ALL of them pruned
-                // away — Firestore mask semantics (phantom map / scalar-destroy prevention).
+                // away — merge-mask semantics (phantom map / scalar-destroy prevention).
                 // A literal empty map (m.Fields.Count == 0) is a real value and is kept.
                 if (m.Fields.Count > 0 && pruned.Count == 0)
                     continue;
@@ -236,7 +255,7 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
         return result;
     }
 
-    private static WriteResult ApplyUpdate(DocState doc, UpdateWrite u, DateTimeOffset commitTime)
+    private static WriteResult ApplyUpdate(DocState doc, UpdateWrite u, DateTimeOffset commitTime, WriteLimits limits)
     {
         var fields = doc.Fields;
         foreach (var (path, value) in u.Fields)
@@ -245,6 +264,7 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
                 : FieldMutator.Set(fields, path, value);
 
         var transformResults = ApplyTransforms(ref fields, u.Transforms, commitTime);
+        DocumentLimits.Validate(u.Path, fields, limits);
         Bump(doc, fields, commitTime);
         return new WriteResult(commitTime, transformResults);
     }
@@ -260,7 +280,7 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
         }
         else if (state.TryGetValue(path, out var doc))
         {
-            doc.Exists = false;                                  // missing → no-op (Firestore delete)
+            doc.Exists = false;                                  // missing → no-op (idempotent delete)
         }
         return new WriteResult(commitTime);
     }

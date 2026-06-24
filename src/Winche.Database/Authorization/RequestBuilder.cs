@@ -3,7 +3,7 @@ using Winche.Rules;
 namespace Winche.Database.Authorization;
 
 /// <summary>
-/// Builds the Firestore-style <c>request</c> map passed to the rules engine.
+/// Builds the <c>request</c> map passed to the rules engine.
 /// </summary>
 /// <remarks>
 /// Produced map structure:

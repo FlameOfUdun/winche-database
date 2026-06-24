@@ -50,6 +50,22 @@ public static class QueryParser
             limit = l;
         }
 
+        int? offset = null;
+        if (json["offset"] is { } on)
+        {
+            if (on is not JsonValue ov || !ov.TryGetValue<int>(out var o))
+                throw new QueryParseException("'offset' must be an integer", "$.offset");
+            offset = o;
+        }
+
+        int? limitToLast = null;
+        if (json["limitToLast"] is { } ltln)
+        {
+            if (ltln is not JsonValue ltlv || !ltlv.TryGetValue<int>(out var ltl))
+                throw new QueryParseException("'limitToLast' must be an integer", "$.limitToLast");
+            limitToLast = ltl;
+        }
+
         var start = json["start"] is { } s ? ParseCursor(s, "$.start") : null;
         var end = json["end"] is { } e ? ParseCursor(e, "$.end") : null;
 
@@ -61,7 +77,7 @@ public static class QueryParser
             select = [.. selArr.Select((n, i) => ParseFieldPath(n, $"$.select[{i}]"))];
         }
 
-        return new Query(collection, where, orderBy, limit, start, end, select);
+        return new Query(collection, where, orderBy, limit, start, end, select, offset, limitToLast);
     }
 
     public static Filter ParseFilter(JsonNode node, string path)

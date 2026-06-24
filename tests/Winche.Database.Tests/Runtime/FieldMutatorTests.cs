@@ -37,7 +37,7 @@ public class FieldMutatorTests
         Assert.Equal(new IntegerValue(7), a.Fields["keep"]);
         Assert.Equal(new StringValue("new"), a.Fields["b"]);
 
-        // non-map intermediate is replaced by a map (Firestore update behavior)
+        // non-map intermediate is replaced by a map (dotted-path update behavior)
         var r2 = FieldMutator.Set(Map(("a", new IntegerValue(1))), F("a.b"), new IntegerValue(2));
         Assert.IsType<MapValue>(r2["a"]);
     }

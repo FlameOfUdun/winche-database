@@ -8,7 +8,7 @@ public enum ListenChangeType { Added, Modified, Removed }
 public sealed record DocumentChangeInfo(ListenChangeType Type, Document Document, int OldIndex, int NewIndex);
 
 /// <summary>
-/// A consistent ordered result + the changes that produced it (Firestore listener contract).
+/// A consistent ordered result + the changes that produced it (query listener contract).
 /// <para>
 /// <see cref="Documents"/> is always the self-contained authoritative state of the query result.
 /// </para>

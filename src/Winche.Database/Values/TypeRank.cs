@@ -1,7 +1,7 @@
 namespace Winche.Database.Values;
 
 /// <summary>
-/// Firestore cross-type total order. Gaps left for future types.
+/// Canonical cross-type total order. Gaps left for future types.
 /// This enum is THE source of truth — the SQL helper functions
 /// (Querying/Sql/SchemaSql.cs) must emit these exact numbers.
 /// </summary>

@@ -66,6 +66,7 @@ public sealed class WriteJsonConverter : JsonConverter<Write>
         Path = GetString(body, "path"),
         Fields = ParseFields(body["fields"]),
         Merge = body["merge"]?.GetValue<bool>() ?? false,
+        MergeFields = ParseMergeFields(body["mergeFields"]),
         Transforms = ParseTransforms(body["transforms"]),
         Precondition = ParsePrecondition(body["precondition"]),
     };
@@ -135,6 +136,24 @@ public sealed class WriteJsonConverter : JsonConverter<Write>
             return ValueSerializer.Read(node ?? throw new JsonException($"{Ctx}: field value is null"));
         }
         catch (WireFormatException ex) { throw new JsonException($"{Ctx}: {ex.Message}", ex); }
+    }
+
+    // ── mergeFields ─────────────────────────────────────────────────────────
+
+    private static IReadOnlyList<FieldPath>? ParseMergeFields(JsonNode? node)
+    {
+        if (node is null) return null;
+        if (node is not JsonArray arr)
+            throw new JsonException($"{Ctx}.mergeFields must be an array");
+        var paths = new List<FieldPath>(arr.Count);
+        foreach (var element in arr)
+        {
+            if (element is not JsonValue v || !v.TryGetValue<string>(out var s))
+                throw new JsonException($"{Ctx}.mergeFields entries must be strings");
+            try { paths.Add(FieldPath.Parse(s)); }
+            catch (ArgumentException ex) { throw new JsonException($"{Ctx}.mergeFields: {ex.Message}", ex); }
+        }
+        return paths;
     }
 
     // ── transforms ──────────────────────────────────────────────────────────

@@ -40,9 +40,9 @@ public class OrderingFunctionTests(PostgresFixture fx) : IAsyncLifetime
     }
 
     [Fact]
-    public async Task CrossTypeOrdering_MatchesFirestoreTotalOrder()
+    public async Task CrossTypeOrdering_MatchesCanonicalTotalOrder()
     {
-        // seeded deliberately out of order; expected order is the Firestore total order
+        // seeded deliberately out of order; expected order is the cross-type total order
         await Seed("h_geo", new GeoPointValue(0, 0));
         await Seed("a_null", new NullValue());
         await Seed("e_string", new StringValue("hello"));

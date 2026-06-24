@@ -266,7 +266,7 @@ public class WriteApplierTests(PostgresFixture fx) : QueryTestBase(fx)
         await Applier().ApplyAsync([new SetWrite { Path = "c/sc", Fields = Map(("m", new IntegerValue(5))) }]);
         await Applier().ApplyAsync([new SetWrite { Path = "c/sc", Merge = true, Fields = Map(
             ("m", new MapValue(Map(("drop", DeleteFieldValue.Instance))))) }]);
-        Assert.Equal(new IntegerValue(5), (await Get("c/sc"))!.Fields["m"]);   // scalar untouched (Firestore no-op)
+        Assert.Equal(new IntegerValue(5), (await Get("c/sc"))!.Fields["m"]);   // scalar untouched (idempotent no-op)
     }
 
     [Fact]

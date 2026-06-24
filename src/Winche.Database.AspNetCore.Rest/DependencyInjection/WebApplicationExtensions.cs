@@ -7,6 +7,7 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Winche.Database.AspNetCore.Rest.EndpointFilters;
 using Winche.Database.Documents;
+using Winche.Database.Querying;
 using Winche.Database.Querying.Ast;
 using Winche.Database.Querying.Ast.Serialization;
 using Winche.Database.Runtime;
@@ -78,7 +79,7 @@ public static class WebApplicationExtensions
             return Results.Ok();
         });
 
-        // colon-verb operations (Firestore dialect) — built-in claims+error filters always applied.
+        // colon-verb operations (extended verb syntax) — built-in claims+error filters always applied.
         // Each verb is a standalone route (mapped on `app`, not under the group, because of the ':'),
         // so collect them and fold them into the returned composite builder alongside the group.
         var verbs = new List<IEndpointConventionBuilder>();
@@ -185,6 +186,81 @@ public static class WebApplicationExtensions
             if (query is null) throw new RuntimeException(RuntimeStatus.InvalidArgument, "'query' must be a valid query object");
             var count = await db.CountAsync(query, ct);
             return Results.Json(new { count }, statusCode: 200, contentType: "application/json");
+        });
+
+        Verb("aggregate", async (HttpRequest request, IDocumentDatabase db, CancellationToken ct) =>
+        {
+            var node = (await JsonNode.ParseAsync(request.Body, cancellationToken: ct))?.AsObject()
+                ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "Request body must be a JSON object");
+            var queryNode = node["query"]
+                ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "'query' is required");
+            var query = queryNode.Deserialize<Query>(new System.Text.Json.JsonSerializerOptions
+            {
+                Converters = { new Querying.Ast.Serialization.QueryAstJsonConverter() }
+            }) ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "'query' must be a valid query object");
+
+            var aggregations = ParseAggregations(node["aggregations"]);
+            var result = await db.AggregateAsync(query, aggregations, ct);
+
+            var resultObj = new JsonObject();
+            foreach (var (alias, value) in result.Values)
+                resultObj[alias] = ValueSerializer.Write(value);
+            return Results.Json(new { result = resultObj }, statusCode: 200, contentType: "application/json");
+
+            static IReadOnlyList<Aggregation> ParseAggregations(JsonNode? aggNode)
+            {
+                if (aggNode is null)
+                    throw new RuntimeException(RuntimeStatus.InvalidArgument, "'aggregations' is required");
+                if (aggNode is not JsonArray arr)
+                    throw new RuntimeException(RuntimeStatus.InvalidArgument, "'aggregations' must be an array");
+                var list = new List<Aggregation>(arr.Count);
+                foreach (var el in arr)
+                {
+                    if (el is not JsonObject o)
+                        throw new RuntimeException(RuntimeStatus.InvalidArgument, "each aggregation must be an object");
+                    var kind = (string?)o["kind"] switch
+                    {
+                        "count" => AggregateKind.Count,
+                        "sum" => AggregateKind.Sum,
+                        "average" => AggregateKind.Average,
+                        _ => throw new RuntimeException(RuntimeStatus.InvalidArgument, "aggregation 'kind' must be count|sum|average"),
+                    };
+                    var alias = o["alias"] switch
+                    {
+                        null => throw new RuntimeException(RuntimeStatus.InvalidArgument, "aggregation 'alias' is required"),
+                        JsonValue av when av.TryGetValue<string>(out var a) => a,
+                        _ => throw new RuntimeException(RuntimeStatus.InvalidArgument, "aggregation 'alias' must be a string"),
+                    };
+                    var fieldStr = (string?)o["field"];
+                    FieldPath? field;
+                    try { field = fieldStr is null ? null : FieldPath.Parse(fieldStr); }
+                    catch (ArgumentException ex) { throw new RuntimeException(RuntimeStatus.InvalidArgument, ex.Message); }
+                    list.Add(new Aggregation(kind, alias, field));
+                }
+                return list;
+            }
+        });
+
+        Verb("add", async (HttpRequest request, IDocumentDatabase db, CancellationToken ct) =>
+        {
+            var node = (await JsonNode.ParseAsync(request.Body, cancellationToken: ct))?.AsObject()
+                ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "Request body must be a JSON object");
+            var collection = node["collection"] switch
+            {
+                null => throw new RuntimeException(RuntimeStatus.InvalidArgument, "'collection' is required"),
+                JsonValue cv when cv.TryGetValue<string>(out var cs) => cs,
+                _ => throw new RuntimeException(RuntimeStatus.InvalidArgument, "'collection' must be a string"),
+            };
+            var fieldsNode = node["fields"]
+                ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "'fields' is required");
+            var fields = fieldsNode.Deserialize<IReadOnlyDictionary<string, Value>>(
+                new System.Text.Json.JsonSerializerOptions
+                {
+                    Converters = { new Querying.Ast.Serialization.FieldsJsonConverter() }
+                })
+                ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "'fields' must be an object");
+            var doc = await db.AddAsync(collection, fields, ct);
+            return Results.Json(new { document = doc }, statusCode: 200, contentType: "application/json");
         });
 
         return new CompositeEndpointConventionBuilder([group, .. verbs]);

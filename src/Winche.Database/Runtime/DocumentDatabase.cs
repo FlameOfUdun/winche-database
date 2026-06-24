@@ -7,6 +7,7 @@ using Winche.Database.Querying.Ast;
 using Winche.Database.Runtime.Listening;
 using Winche.Database.Runtime.Transactions;
 using Winche.Database.Runtime.Writes;
+using Winche.Database.Values;
 
 namespace Winche.Database.Runtime;
 
@@ -28,7 +29,7 @@ public sealed class DocumentDatabase : IDocumentDatabase
         IWriteAuthorizer? writeAuthorizer = null)
     {
         _source = source;
-        _applier = new WriteApplier(source, writeAuthorizer);
+        _applier = new WriteApplier(source, writeAuthorizer, options.Value.WriteLimits);
         _ledger = new TransactionLedger(options.Value.TransactionConfig);
         _listeners = listeners;
         _scopes = scopes;
@@ -71,11 +72,17 @@ public sealed class DocumentDatabase : IDocumentDatabase
         return await new QueryExecutor(conn, null, _scopes).CountAsync(query, ct);
     }
 
+    public async Task<AggregationResult> AggregateAsync(Query query, IReadOnlyList<Aggregation> aggregations, CancellationToken ct = default)
+    {
+        await using var conn = await _source.OpenConnectionAsync(ct);
+        return await new QueryExecutor(conn, null, _scopes).AggregateAsync(query, aggregations, ct);
+    }
+
     /// <summary>
     /// Lists the ids of subcollections directly under <paramref name="parentDocumentPath"/>
     /// (or the top-level collections when null/empty). Privileged/internal: this is exposed
     /// only on the rule-free <see cref="DocumentDatabase"/>, never through IDocumentDatabase —
-    /// mirroring Firestore, where listCollectionIds is an Admin-SDK-only operation that
+    /// an administrative operation (no client-facing read-rule check applies);
     /// security rules never evaluate. Ids are distinct and ordered by UTF-8 byte order.
     /// </summary>
     public async Task<ListCollectionIdsResult> ListCollectionIdsAsync(
@@ -109,6 +116,33 @@ public sealed class DocumentDatabase : IDocumentDatabase
 
     public Task<IReadOnlyList<WriteResult>> WriteAsync(IReadOnlyList<Write> writes, CancellationToken ct = default) =>
         _applier.ApplyAsync(writes, ct: ct);
+
+    public async Task<Document> AddAsync(string collectionPath, IReadOnlyDictionary<string, Value> fields, CancellationToken ct = default)
+    {
+        if (!DocumentPathParser.IsValidCollectionPath(collectionPath, out var error))
+            throw new RuntimeException(RuntimeStatus.InvalidArgument, error!);
+
+        var id = DocumentId.NewId();
+        var path = $"{collectionPath}/{id}";
+        var results = await WriteAsync(
+            [new SetWrite { Path = path, Fields = fields, Precondition = new Precondition(Exists: false) }], ct);
+        if (results.Count != 1)
+            throw new InvalidOperationException($"AddAsync expected exactly 1 WriteResult; got {results.Count}.");
+        var updateTime = results[0].UpdateTime;
+
+        // No re-read: a SetWrite with no transforms stores fields verbatim, and commitTime flows
+        // back through WriteResult, so this in-memory Document matches what was persisted.
+        return new Document
+        {
+            Path = path,
+            Id = id,
+            Collection = collectionPath,
+            Fields = fields,
+            CreateTime = updateTime,
+            UpdateTime = updateTime,
+            Version = 1,
+        };
+    }
 
     // ── Transactions ──────────────────────────────────────────────────────────
 

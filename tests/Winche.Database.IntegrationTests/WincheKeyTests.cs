@@ -33,7 +33,7 @@ public class WincheKeyTests(PostgresFixture fx) : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ScalarKeyOrdering_MatchesFirestoreTotalOrder()
+    public async Task ScalarKeyOrdering_MatchesCanonicalTotalOrder()
     {
         await Seed("i_map", new MapValue(new Dictionary<string, Value> { ["a"] = new IntegerValue(1) }));
         await Seed("a_null", new NullValue());
@@ -55,7 +55,7 @@ public class WincheKeyTests(PostgresFixture fx) : IAsyncLifetime
     [Fact]
     public async Task Arrays_OrderElementWise_ShorterPrefixFirst()
     {
-        // Firestore: [1] < [1,2] < [2] — element-wise, NOT length-first (jsonb default would be wrong)
+        // element-wise order: [1] < [1,2] < [2] — element-wise, NOT length-first (jsonb default would be wrong)
         await Seed("a3", new ArrayValue([new IntegerValue(2)]));
         await Seed("a1", new ArrayValue([new IntegerValue(1)]));
         await Seed("a2", new ArrayValue([new IntegerValue(1), new IntegerValue(2)]));
@@ -94,7 +94,7 @@ public class WincheKeyTests(PostgresFixture fx) : IAsyncLifetime
     [Fact]
     public async Task Maps_OrderByKeyThenValue()
     {
-        // Firestore: {a:1} < {a:2} < {b:1} (keys byte-ordered, then values)
+        // key-then-value order: {a:1} < {a:2} < {b:1} (keys byte-ordered, then values)
         await Seed("m3", new MapValue(new Dictionary<string, Value> { ["b"] = new IntegerValue(1) }));
         await Seed("m1", new MapValue(new Dictionary<string, Value> { ["a"] = new IntegerValue(1) }));
         await Seed("m2", new MapValue(new Dictionary<string, Value> { ["a"] = new IntegerValue(2) }));

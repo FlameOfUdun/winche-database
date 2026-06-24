@@ -2,9 +2,12 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Winche.Database.AspNetCore.WebSockets.Connections;
 using Winche.Database.AspNetCore.WebSockets.Protocol;
+using Winche.Database.Querying;
+using Winche.Database.Querying.Ast;
 using Winche.Database.Runtime;
 using Winche.Database.Runtime.Listening;
 using Winche.Database.Runtime.Writes;
+using Winche.Database.Values;
 using Winche.Database.Wire; // ErrorMapper
 
 namespace Winche.Database.AspNetCore.WebSockets.Routing;
@@ -34,13 +37,16 @@ public sealed class MessageRouter
                 DocGetAllMessage getAll => Ok(id!, new JsonObject { ["documents"] = new JsonArray([.. (await scope.Db.GetAllAsync(getAll.Paths, ct)).Select(ToNode)]) }),
                 QueryMessage query => Ok(id!, ToNode(await scope.Db.QueryAsync(query.Query, ct))!.AsObject()),
                 CountMessage count => Ok(id!, new JsonObject { ["count"] = await scope.Db.CountAsync(count.Query, ct) }),
+                AggregateMessage agg => Ok(id!, new JsonObject { ["result"] = AggregateResultBody(await scope.Db.AggregateAsync(agg.Query, agg.Aggregations, ct)) }),
+                AddMessage add => Ok(id!, new JsonObject { ["document"] = ToNode(await scope.Db.AddAsync(add.Collection, add.Fields, ct)) }),
                 WriteMessage write => Ok(id!, WriteResultsBody(await scope.Db.WriteAsync(write.Writes, ct))),
                 TxBeginMessage => await HandleTxBegin(scope, id!, ct),
                 TxGetMessage txGet => Ok(id!, new JsonObject { ["document"] = ToNode(await scope.Db.GetAsync(RequireTx(scope, txGet.TransactionId), txGet.Path, ct)) }),
                 TxQueryMessage txQuery => Ok(id!, ToNode(await scope.Db.QueryAsync(RequireTx(scope, txQuery.TransactionId), txQuery.Query, ct))!.AsObject()),
                 TxCommitMessage txCommit => await HandleTxCommit(scope, id!, txCommit, ct),
                 TxRollbackMessage txRollback => await HandleTxRollback(scope, id!, txRollback, ct),
-                ListenMessage listen => HandleListen(scope, conn, id!, listen),
+                ListenMessage listen => HandleListen(scope, conn, id!, listen.Query, listen.ResumeToken),
+                DocListenMessage docListen => HandleListen(scope, conn, id!, DocumentListenQuery.For(docListen.Path), docListen.ResumeToken),
                 UnlistenMessage unlisten => await HandleUnlisten(scope, id!, unlisten),
                 _ => new ErrorMessage { Id = id, Status = "INVALID_ARGUMENT", Message = $"Unknown message: {message.GetType().Name}" },
             };
@@ -87,10 +93,10 @@ public sealed class MessageRouter
         return Ok(id, []);
     }
 
-    private static ServerMessage HandleListen(ConnectionScope scope, WsConnection conn, string id, ListenMessage listen)
+    private static ServerMessage HandleListen(ConnectionScope scope, WsConnection conn, string id, Query query, long? resumeToken)
     {
         var subscriptionId = Guid.NewGuid().ToString("N");
-        var listener = scope.Db.Listen(listen.Query, listen.ResumeToken is { } seq ? new ListenOptions(ResumeFrom: seq) : null);
+        var listener = scope.Db.Listen(query, resumeToken is { } seq ? new ListenOptions(ResumeFrom: seq) : null);
         var cts = CancellationTokenSource.CreateLinkedTokenSource(conn.Closed);
         var pump = SubscriptionPump.RunAsync(subscriptionId, listener, scope, conn, cts.Token);
         lock (scope.Gate) scope.Subscriptions[subscriptionId] = new ConnectionScope.Subscription(listener, pump, cts);
@@ -127,6 +133,14 @@ public sealed class MessageRouter
 
     private static JsonObject WriteResultsBody(IReadOnlyList<WriteResult> results) =>
         new() { ["writeResults"] = new JsonArray([.. results.Select(r => ToNode(r))]) };
+
+    private static JsonObject AggregateResultBody(AggregationResult result)
+    {
+        var obj = new JsonObject();
+        foreach (var (alias, value) in result.Values)
+            obj[alias] = ValueSerializer.Write(value);
+        return obj;
+    }
 
     private static JsonNode? ToNode<T>(T? value) =>
         value is null ? null : JsonSerializer.SerializeToNode(value, value.GetType());

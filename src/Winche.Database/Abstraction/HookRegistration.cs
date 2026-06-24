@@ -1,7 +1,7 @@
 namespace Winche.Database.Abstraction;
 
 /// <summary>
-/// Binds a Firestore-style path pattern to the <see cref="DocumentStoreHook"/> that fires for
+/// Binds a path pattern to the <see cref="DocumentStoreHook"/> that fires for
 /// matching documents. The hook supplies behavior; the path is supplied at registration time
 /// (mirroring how <see cref="Documents.IndexDefinition"/> supplies a collection id), so one hook
 /// type can be bound to multiple paths.

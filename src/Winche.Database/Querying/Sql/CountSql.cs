@@ -8,7 +8,7 @@ namespace Winche.Database.Querying.Sql;
 /// LogicalPlan → COUNT(*) SQL. Shares the WHERE assembly (collection + scope regexes +
 /// filter + cursor range) with <see cref="SqlCompiler"/>, but drops the document-column
 /// projection and ORDER BY (neither affects a count). When the query carried an EXPLICIT
-/// limit the count is capped at it (Firestore <c>count()</c> semantics) by counting the rows
+/// limit the count is capped at it (<c>count()</c> semantics) by counting the rows
 /// of a LIMITed row-stream; an absent limit counts the full match — the Normalizer's default
 /// page size (100) does NOT apply here.
 /// </summary>
@@ -31,7 +31,7 @@ internal static class CountSql
                 case FilterNode f: filter = f; break;
                 case SortNode so: sort = so; break;
                 case CursorRangeNode r: range = r; break;
-                case PageNode: break;          // count ignores paging; explicit limit handled below
+                case PageNode: break;          // count ignores paging (incl. offset/Skip); explicit limit handled below
                 default: throw new NotSupportedException($"CountSql cannot compile {node.GetType().Name}.");
             }
         }
