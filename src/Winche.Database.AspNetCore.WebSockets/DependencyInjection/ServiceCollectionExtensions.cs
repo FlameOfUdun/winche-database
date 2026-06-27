@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Winche.Database.AspNetCore.WebSockets.Connections;
 using Winche.Database.AspNetCore.WebSockets.Routing;
 
@@ -11,7 +12,7 @@ public static class ServiceCollectionExtensions
     {
         var options = new WsOptions();
         configure?.Invoke(options);
-        services.AddSingleton(options);
+        services.AddSingleton(Options.Create(options));
         services.AddSingleton<MessageRouter>();
         return services;
     }

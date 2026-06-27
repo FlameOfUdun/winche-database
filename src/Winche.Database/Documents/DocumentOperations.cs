@@ -8,7 +8,7 @@ namespace Winche.Database.Documents;
 /// Typed single-document CRUD against an open connection (and optional transaction).
 /// The new engine's execution primitive — DocumentManager adopts it in Phase 4.
 /// </summary>
-public sealed class DocumentOperations(NpgsqlConnection conn, NpgsqlTransaction? tx)
+internal sealed class DocumentOperations(NpgsqlConnection conn, NpgsqlTransaction? tx)
 {
     /// <summary>Single-query multi-get. Missing paths are simply absent from the map.</summary>
     public async Task<IReadOnlyDictionary<string, Document>> GetManyAsync(

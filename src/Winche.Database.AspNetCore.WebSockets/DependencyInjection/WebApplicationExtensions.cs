@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Winche.Database.AspNetCore.Abstraction;
 using Winche.Database.AspNetCore.WebSockets.Connections;
 using Winche.Database.AspNetCore.WebSockets.Protocol;
@@ -63,7 +64,7 @@ public static class WebApplicationExtensions
             return;
         }
 
-        var options = context.RequestServices.GetRequiredService<WsOptions>();
+        var options = context.RequestServices.GetRequiredService<IOptions<WsOptions>>().Value;
         var router = context.RequestServices.GetRequiredService<MessageRouter>();
         var db = context.RequestServices.GetRequiredService<IDocumentDatabase>();
         var claimsAccessor = context.RequestServices.GetRequiredService<DocumentClaimsAccessor>();
