@@ -799,17 +799,38 @@ Connect at `/documents/ws?access_token=<jwt>`. The connection authenticates at t
 
 See [PROTOCOL](docs/PROTOCOL.md#7-websocket-protocol) for full message shapes, close codes, and listener protocol details.
 
+## Upgrading to 9.0.0
+
+9.0.0 makes single-document subscriptions a first-class, `get`-authorized operation and tightens a
+few APIs. No data migration is required. Breaking changes:
+
+- **`ListenToDocument` is now async:** replace `db.ListenToDocument(path)` with
+  `await db.ListenToDocumentAsync(path)` (returns `Task<IDocumentListener>`).
+- **Single-document listens (`doc.listen` / `ListenToDocumentAsync`) are authorized by the `get`
+  rule** on the document path — not the parent-collection `list` rule. Add a `get` rule (or
+  `RuleOperations.Read`, which expands to `get` + `list`) for any path you listen to a single
+  document on.
+- **Reads inside `RunTransactionAsync`** — and the manual `GetAsync(transactionId, …)` /
+  `QueryAsync(transactionId, …)` reads — **are now authorized** as `get`/`list` under the rule guard,
+  like non-transactional reads. A denied read throws `PERMISSION_DENIED` and aborts the transaction.
+- **`ListenerRegistry` is renamed to `QueryListenerRegistry`**; a new `DocumentListenerRegistry`
+  backs single-document listeners. Relevant only if you reference these types directly.
+- **Some low-level types/members are now `internal`:** `DocumentOperations` and
+  `DocumentDatabase.Ledger`.
+- **`WsOptions` is resolved via `IOptions<WsOptions>`** — relevant only if you resolved `WsOptions`
+  from DI directly.
+
 ## Upgrading to 8.4.0
 
 8.4.0 is an additive feature release — no data migration and no changes required for code that
 *consumes* the database. It adds aggregations (`AggregateAsync`), `AddAsync` (auto-id create),
-single-document listeners (`ListenToDocumentAsync` / `DocumentSnapshot`), `set` merge masks
+single-document listeners (`ListenToDocument` / `DocumentSnapshot`), `set` merge masks
 (`MergeFields`), query `offset`/`limitToLast`, snapshot cursors, write/document limits, and TTL
 policies (`UseTtl`).
 
 - **Only relevant if you implement `IDocumentDatabase` yourself** (the built-in `DocumentDatabase`
   is the sole implementation in normal use): the interface gained `AggregateAsync`, `AddAsync`, and
-  `ListenToDocumentAsync`. `ListenToDocumentAsync` is a plain interface member implemented by `DocumentDatabase`, get-authorized by the rule guard; `AggregateAsync` and
+  `ListenToDocument`. `ListenToDocument` ships with a default implementation; `AggregateAsync` and
   `AddAsync` must be implemented by any custom type. Consumers calling the interface are unaffected.
 
 ## Upgrading to 8.0.0
