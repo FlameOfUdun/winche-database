@@ -43,6 +43,7 @@ public class PostgresDocumentSourceTests
         public Task RollbackTransactionAsync(string transactionId, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<T> RunTransactionAsync<T>(Func<TransactionContext, Task<T>> body, TransactionOptions? options = null, CancellationToken ct = default) => throw new NotImplementedException();
         public IQueryListener Listen(Query query, ListenOptions? options = null) => throw new NotImplementedException();
+        public Task<IDocumentListener> ListenToDocumentAsync(string path, ListenOptions? options = null, CancellationToken ct = default) => throw new NotSupportedException();
     }
 
     private static Document MakeDoc(string path, string id, IReadOnlyDictionary<string, Value>? fields = null) => new()

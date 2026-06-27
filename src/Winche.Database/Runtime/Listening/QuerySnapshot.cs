@@ -28,18 +28,8 @@ public sealed record QuerySnapshot(
 public sealed record ListenOptions(long? ResumeFrom = null);
 
 /// <summary>
-/// A live query subscription. Implemented in Runtime Plan 3.
+/// A live query subscription. Snapshot semantics are documented on
+/// <see cref="ISubscriptionListener{TSnapshot}"/>; concurrent enumerators split the stream
+/// (each snapshot is delivered to exactly one enumerator) — create a single enumerator per listener.
 /// </summary>
-public interface IQueryListener : IAsyncDisposable
-{
-    /// <summary>
-    /// Streams query snapshots as they arrive.
-    /// <para>
-    /// The underlying channel is a bounded coalescing channel (capacity 1, DropOldest): when a
-    /// snapshot is not consumed before the next one arrives, the older one is silently dropped and
-    /// only the newest state is delivered. Concurrent enumerators split the stream (each snapshot
-    /// is delivered to exactly one enumerator) — create a single enumerator per listener.
-    /// </para>
-    /// </summary>
-    IAsyncEnumerable<QuerySnapshot> Snapshots(CancellationToken ct = default);
-}
+public interface IQueryListener : ISubscriptionListener<QuerySnapshot>;

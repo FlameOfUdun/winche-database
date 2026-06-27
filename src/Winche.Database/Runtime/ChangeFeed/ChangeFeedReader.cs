@@ -1,5 +1,6 @@
 using Npgsql;
 using Winche.Database.Constants;
+using Winche.Database.Documents;
 
 namespace Winche.Database.Runtime.ChangeFeed;
 
@@ -56,13 +57,21 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source)
     }
 
     /// <summary>True when any feed row after <paramref name="afterSeq"/> touches the collection.</summary>
-    public async Task<bool> HasChangesAfterAsync(long afterSeq, string collection, CancellationToken ct = default)
+    public Task<bool> HasQueryChangesAfterAsync(long afterSeq, string collection, CancellationToken ct = default) =>
+        ExistsAfterAsync(afterSeq, "collection_path", collection, ct);
+
+    /// <summary>True when any feed row after <paramref name="afterSeq"/> touches the exact document path.</summary>
+    public Task<bool> HasDocumentChangesAfterAsync(long afterSeq, string documentPath, CancellationToken ct = default) =>
+        ExistsAfterAsync(afterSeq, "document_path", documentPath, ct);
+
+    // column MUST be a trusted constant (never user input) — it is interpolated into the SQL text.
+    private async Task<bool> ExistsAfterAsync(long afterSeq, string column, string value, CancellationToken ct)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT EXISTS(SELECT 1 FROM {WincheTables.Changes} WHERE seq > $1 AND collection_path = $2)";
+        cmd.CommandText = $"SELECT EXISTS(SELECT 1 FROM {WincheTables.Changes} WHERE seq > $1 AND {column} = $2)";
         cmd.Parameters.AddWithValue(afterSeq);
-        cmd.Parameters.AddWithValue(collection);
+        cmd.Parameters.AddWithValue(value);
         return (bool)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
@@ -107,5 +116,16 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source)
         cmd.CommandText = $"DELETE FROM {WincheTables.Changes} WHERE commit_time < $1";
         cmd.Parameters.AddWithValue(cutoff);
         return await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>Fetches the still-existing documents for the added/modified paths in <paramref name="records"/> (one batch query); removed paths are skipped.</summary>
+    public async Task<IReadOnlyDictionary<string, Document>> FetchDocumentsAsync(
+        IReadOnlyList<ChangeRecord> records, CancellationToken ct = default)
+    {
+        var paths = records.Where(r => r.Type != ChangeType.Removed)
+            .Select(r => r.Path).Distinct(StringComparer.Ordinal).ToList();
+        if (paths.Count == 0) return new Dictionary<string, Document>(StringComparer.Ordinal);
+        await using var conn = await source.OpenConnectionAsync(ct);
+        return await new DocumentOperations(conn, null).GetManyAsync(paths, ct);
     }
 }

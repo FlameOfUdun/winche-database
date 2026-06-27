@@ -671,7 +671,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
 
     // ── Phase 3: Listen authorization ────────────────────────────────────────
 
-    // Wires a DocumentDatabase + ListenerRegistry + ChangeFeedPump into one
+    // Wires a DocumentDatabase + QueryListenerRegistry + ChangeFeedPump into one
     // disposable rig, identical to the pattern used in ListenerTests.
     private sealed class ListenRig : IAsyncDisposable
     {
@@ -684,7 +684,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     private ListenRig StartListenRig()
     {
         var opts = Options.Create(new WincheDatabaseOptions());
-        var registry = new ListenerRegistry(Fx.DataSource);
+        var registry = new QueryListenerRegistry(Fx.DataSource);
         var db = new DocumentDatabase(Fx.DataSource, opts, registry);
         var pump = new ChangeFeedPump(
             Fx.DataSource,
@@ -827,5 +827,65 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
         // Batch that includes bob's doc → denied (single denial blocks the whole batch)
         await Assert.ThrowsAsync<AccessDeniedException>(() =>
             aliceGuard.GetAllAsync(["docs/d1", "docs/d3"]));
+    }
+
+    /// <summary>
+    /// RunTransactionAsync routes through the guard: a body that reads a document the caller is
+    /// allowed to get succeeds and returns the read value.
+    /// </summary>
+    [Fact]
+    public async Task RunTransaction_AuthorizedRead_Succeeds()
+    {
+        var core = Core();
+        var ruleset = RulesetBuilder.Build(r =>
+            r.Match("docs/{docId}", b =>
+                b.Allow(RuleOperations.Read, Expr.Resource("ownerId").Eq(Expr.Auth("uid")))));
+
+        await core.WriteAsync([new SetWrite
+        {
+            Path = "docs/d1",
+            Fields = Fields(("ownerId", new StringValue("alice"))),
+        }]);
+
+        var aliceGuard = Guard(core, ruleset, new Dictionary<string, object?> { ["uid"] = "alice" });
+
+        var ownerId = await aliceGuard.RunTransactionAsync(async tx =>
+        {
+            var doc = await tx.GetAsync("docs/d1");
+            return ((StringValue)doc!.Fields["ownerId"]).Value;
+        });
+
+        Assert.Equal("alice", ownerId);
+    }
+
+    /// <summary>
+    /// RunTransactionAsync authorizes the body's reads: a read the caller cannot get throws
+    /// AccessDeniedException, aborting the transaction before any buffered write is committed.
+    /// </summary>
+    [Fact]
+    public async Task RunTransaction_UnauthorizedRead_ThrowsAndCommitsNothing()
+    {
+        var core = Core();
+        var ruleset = RulesetBuilder.Build(r =>
+            r.Match("docs/{docId}", b =>
+                b.Allow(RuleOperations.Read, Expr.Resource("ownerId").Eq(Expr.Auth("uid")))));
+
+        await core.WriteAsync([new SetWrite
+        {
+            Path = "docs/d1",
+            Fields = Fields(("ownerId", new StringValue("alice"))),
+        }]);
+
+        var bobGuard = Guard(core, ruleset, new Dictionary<string, object?> { ["uid"] = "bob" });   // not the owner
+
+        await Assert.ThrowsAsync<AccessDeniedException>(() => bobGuard.RunTransactionAsync<int>(async tx =>
+        {
+            await tx.GetAsync("docs/d1");                              // denied → aborts here, before the write below
+            tx.Set("docs/d2", Fields(("x", new StringValue("nope"))));
+            return 0;
+        }));
+
+        // The transaction never committed: the write the body intended was never applied.
+        Assert.Null(await core.GetAsync("docs/d2"));
     }
 }

@@ -25,9 +25,10 @@ public class ListenToDocumentTests(PostgresFixture fx) : QueryTestBase(fx)
     private Rig Start()
     {
         var opts = Options.Create(new WincheDatabaseOptions());
-        var registry = new ListenerRegistry(Fx.DataSource);
-        var db = new DocumentDatabase(Fx.DataSource, opts, registry);
-        var pump = new ChangeFeedPump(Fx.DataSource, [registry],
+        var registry = new QueryListenerRegistry(Fx.DataSource);
+        var docRegistry = new DocumentListenerRegistry(Fx.DataSource);
+        var db = new DocumentDatabase(Fx.DataSource, opts, registry, docListeners: docRegistry);
+        var pump = new ChangeFeedPump(Fx.DataSource, [registry, docRegistry],
             new ChangeFeedConfig { PollInterval = TimeSpan.FromMilliseconds(200) },
             NullLogger<ChangeFeedPump>.Instance);
         var cts = new CancellationTokenSource();
@@ -48,7 +49,7 @@ public class ListenToDocumentTests(PostgresFixture fx) : QueryTestBase(fx)
         await using var rig = Start();
         IDocumentDatabase db = rig.Db;
 
-        await using var listener = db.ListenToDocument("c/a");
+        await using var listener = await db.ListenToDocumentAsync("c/a");
         await using var e = listener.Snapshots().GetAsyncEnumerator();
 
         var initial = await NextAsync(e);
@@ -76,6 +77,6 @@ public class ListenToDocumentTests(PostgresFixture fx) : QueryTestBase(fx)
         await using var rig = Start();
         IDocumentDatabase db = rig.Db;
         // "c" is a collection path (even slash count), not a document path.
-        Assert.Throws<RuntimeException>(() => db.ListenToDocument("c"));
+        await Assert.ThrowsAsync<RuntimeException>(() => db.ListenToDocumentAsync("c"));
     }
 }

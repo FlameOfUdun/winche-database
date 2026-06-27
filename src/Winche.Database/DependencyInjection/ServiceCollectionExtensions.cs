@@ -38,21 +38,27 @@ public static class ServiceCollectionExtensions
         services.AddNpgsqlDataSource(connectionString, serviceKey: ServiceKeys.DATA_SOURCE_KEY);
 
         services.AddSingleton<CollectionIndexResolver>();
-        services.AddSingleton(sp => new ListenerRegistry(
+        services.AddSingleton(sp => new QueryListenerRegistry(
             sp.GetRequiredKeyedService<NpgsqlDataSource>(ServiceKeys.DATA_SOURCE_KEY),
             sp.GetRequiredService<CollectionIndexResolver>())
         );
+        services.AddSingleton(sp => new DocumentListenerRegistry(
+            sp.GetRequiredKeyedService<NpgsqlDataSource>(ServiceKeys.DATA_SOURCE_KEY)));
+        // Plain (unguarded) core — for privileged reads (e.g. ListCollectionIdsAsync). Its TransactionLedger
+        // is NOT shared with the guarded core registered below; do not cross transaction handles between them.
         services.AddSingleton(sp => new DocumentDatabase(
             sp.GetRequiredKeyedService<NpgsqlDataSource>(ServiceKeys.DATA_SOURCE_KEY),
             sp.GetRequiredService<IOptions<WincheDatabaseOptions>>(),
-            sp.GetRequiredService<ListenerRegistry>(),
-            sp.GetRequiredService<CollectionIndexResolver>()
+            sp.GetRequiredService<QueryListenerRegistry>(),
+            sp.GetRequiredService<CollectionIndexResolver>(),
+            docListeners: sp.GetRequiredService<DocumentListenerRegistry>()
         ));
 
         services.AddSingleton<ISchemaManager, SchemaManager>();
 
         // Change feed consumers
-        services.AddSingleton<IChangeFeedConsumer>(sp => sp.GetRequiredService<ListenerRegistry>());
+        services.AddSingleton<IChangeFeedConsumer>(sp => sp.GetRequiredService<QueryListenerRegistry>());
+        services.AddSingleton<IChangeFeedConsumer>(sp => sp.GetRequiredService<DocumentListenerRegistry>());
         services.AddSingleton<IChangeFeedConsumer>(sp => new HookFeedConsumer(
             sp.GetRequiredService<IEnumerable<HookRegistration>>()));
 
@@ -80,9 +86,10 @@ public static class ServiceCollectionExtensions
                 new DocumentDatabase(
                     sp.GetRequiredKeyedService<NpgsqlDataSource>(ServiceKeys.DATA_SOURCE_KEY),
                     sp.GetRequiredService<IOptions<WincheDatabaseOptions>>(),
-                    sp.GetRequiredService<ListenerRegistry>(),
+                    sp.GetRequiredService<QueryListenerRegistry>(),
                     sp.GetRequiredService<CollectionIndexResolver>(),
-                    sp.GetRequiredService<IWriteAuthorizer>()
+                    sp.GetRequiredService<IWriteAuthorizer>(),
+                    docListeners: sp.GetRequiredService<DocumentListenerRegistry>()
                 ),
                 sp.GetRequiredKeyedService<RuleEngine>(ServiceKeys.RULE_ENGINE_KEY),
                 sp.GetRequiredService<IRuleClaimsAccessor>())

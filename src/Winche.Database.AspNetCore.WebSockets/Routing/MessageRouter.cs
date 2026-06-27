@@ -46,7 +46,7 @@ public sealed class MessageRouter
                 TxCommitMessage txCommit => await HandleTxCommit(scope, id!, txCommit, ct),
                 TxRollbackMessage txRollback => await HandleTxRollback(scope, id!, txRollback, ct),
                 ListenMessage listen => HandleListen(scope, conn, id!, listen.Query, listen.ResumeToken),
-                DocListenMessage docListen => HandleListen(scope, conn, id!, DocumentListenQuery.For(docListen.Path), docListen.ResumeToken),
+                DocListenMessage docListen => await HandleDocListen(scope, conn, id!, docListen.Path, docListen.ResumeToken, ct),
                 UnlistenMessage unlisten => await HandleUnlisten(scope, id!, unlisten),
                 _ => new ErrorMessage { Id = id, Status = "INVALID_ARGUMENT", Message = $"Unknown message: {message.GetType().Name}" },
             };
@@ -95,10 +95,27 @@ public sealed class MessageRouter
 
     private static ServerMessage HandleListen(ConnectionScope scope, WsConnection conn, string id, Query query, long? resumeToken)
     {
-        var subscriptionId = Guid.NewGuid().ToString("N");
         var listener = scope.Db.Listen(query, resumeToken is { } seq ? new ListenOptions(ResumeFrom: seq) : null);
+        var subscriptionId = Guid.NewGuid().ToString("N");
         var cts = CancellationTokenSource.CreateLinkedTokenSource(conn.Closed);
-        var pump = SubscriptionPump.RunAsync(subscriptionId, listener, scope, conn, cts.Token);
+        var pump = SubscriptionPump.RunQueryAsync(subscriptionId, listener, scope, conn, cts.Token);
+        return Register(scope, subscriptionId, listener, pump, cts, id);
+    }
+
+    private static async Task<ServerMessage> HandleDocListen(
+        ConnectionScope scope, WsConnection conn, string id, string path, long? resumeToken, CancellationToken ct)
+    {
+        var options = resumeToken is { } seq ? new ListenOptions(ResumeFrom: seq) : null;
+        var listener = await scope.Db.ListenToDocumentAsync(path, options, ct);   // get-authorized; throws → mapped to error frame
+        var subscriptionId = Guid.NewGuid().ToString("N");
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(conn.Closed);
+        var pump = SubscriptionPump.RunDocumentAsync(subscriptionId, listener, scope, conn, cts.Token);
+        return Register(scope, subscriptionId, listener, pump, cts, id);
+    }
+
+    private static ServerMessage Register(
+        ConnectionScope scope, string subscriptionId, IAsyncDisposable listener, Task pump, CancellationTokenSource cts, string id)
+    {
         lock (scope.Gate) scope.Subscriptions[subscriptionId] = new ConnectionScope.Subscription(listener, pump, cts);
         return Ok(id, new JsonObject { ["subscriptionId"] = subscriptionId });
     }

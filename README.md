@@ -377,16 +377,16 @@ public interface IDocumentDatabase
 
     // Live queries
     IQueryListener Listen(Query query, ListenOptions? options = null);
-    IDocumentListener ListenToDocument(string path, ListenOptions? options = null);
+    Task<IDocumentListener> ListenToDocumentAsync(string path, ListenOptions? options = null, CancellationToken ct = default);
 }
 ```
 
 ### Single-document listener
 
-`IDocumentDatabase.ListenToDocument(string path, ListenOptions? options = null)` returns an `IDocumentListener` that emits `DocumentSnapshot` values as the target document changes.
+`IDocumentDatabase.ListenToDocumentAsync(string path, ListenOptions? options = null, CancellationToken ct = default)` returns a `Task<IDocumentListener>` that emits `DocumentSnapshot` values as the target document changes.
 
 ```csharp
-await using var listener = db.ListenToDocument("users/u1");
+await using var listener = await db.ListenToDocumentAsync("users/u1");
 await foreach (var snap in listener.Snapshots())
 {
     if (snap.Exists)
@@ -405,9 +405,9 @@ await foreach (var snap in listener.Snapshots())
 | `ReadTime` | `DateTimeOffset` | Server read time for this snapshot |
 | `ResumeToken` | `long` | Feed watermark; pass as `ListenOptions.ResumeToken` to resume after reconnect |
 
-Internally, `ListenToDocument` rides on the query listener over a `__name__ == path` query constrained to one document, so the listen is authorized under the **`list`** rule (not the per-document `get` rule). The query is provably constrained to a single path. An invalid (non-document) path throws `RuntimeException(InvalidArgument)`.
+Internally, `ListenToDocumentAsync` is fulfilled by a native single-document subscription (a point read for the initial snapshot, then per-change updates straight from the change feed — no parent-collection query). The listen is authorized as a **`get`** on the document path, exactly like a one-shot read: single-document reads (one-shot or realtime) are governed by the per-document `get` rule, never the parent-collection `list` rule. An invalid (non-document) path throws `RuntimeException(InvalidArgument)`.
 
-> **Authorization note:** single-document listens are authorized under the `list` rule because they ride on the query listener (not the `get` rule). Write a `list` rule (or `RuleOperations.Read`, which expands to both `get` and `list`) to cover the path so that `ListenToDocument` is permitted.
+> **Authorization note:** single-document listens require a `get` rule (or `RuleOperations.Read`, which expands to both `get` and `list`) on the document path. They are **not** governed by the `list` rule.
 
 `WriteBatch` is a fluent helper — construct it with `new WriteBatch(db)`:
 
@@ -714,6 +714,8 @@ var doc    = await db.GetAsync(handle.Id, "accounts/a1");  // recorded read
 await db.CommitTransactionAsync(handle.Id, [new SetWrite { ... }]);
 ```
 
+> **Authorization:** under the rule guard, reads inside a `RunTransactionAsync` body — and the manual `GetAsync(transactionId, …)` / `QueryAsync(transactionId, …)` reads — are authorized as `get`/`list` exactly like non-transactional reads; a denied read throws `PERMISSION_DENIED` and aborts the transaction. Writes are authorized at commit.
+
 Transaction configuration (`WincheDatabaseOptions.TransactionConfig`):
 
 | Field | Default | Description |
@@ -788,7 +790,7 @@ Connect at `/documents/ws?access_token=<jwt>`. The connection authenticates at t
 | `tx.commit` | C→S | Commit a transaction |
 | `tx.rollback` | C→S | Roll back a transaction (idempotent) |
 | `listen` | C→S | Subscribe to a live query |
-| `doc.listen` | C→S | Subscribe to a single document (rides on the query listener; uses `list` rule) |
+| `doc.listen` | C→S | Subscribe to a single document (native subscription; authorized under the `get` rule) |
 | `unlisten` | C→S | Cancel a subscription |
 | `response` | S→C | Successful operation result |
 | `error` | S→C | Operation error |
@@ -801,13 +803,13 @@ See [PROTOCOL](docs/PROTOCOL.md#7-websocket-protocol) for full message shapes, c
 
 8.4.0 is an additive feature release — no data migration and no changes required for code that
 *consumes* the database. It adds aggregations (`AggregateAsync`), `AddAsync` (auto-id create),
-single-document listeners (`ListenToDocument` / `DocumentSnapshot`), `set` merge masks
+single-document listeners (`ListenToDocumentAsync` / `DocumentSnapshot`), `set` merge masks
 (`MergeFields`), query `offset`/`limitToLast`, snapshot cursors, write/document limits, and TTL
 policies (`UseTtl`).
 
 - **Only relevant if you implement `IDocumentDatabase` yourself** (the built-in `DocumentDatabase`
   is the sole implementation in normal use): the interface gained `AggregateAsync`, `AddAsync`, and
-  `ListenToDocument`. `ListenToDocument` ships with a default implementation; `AggregateAsync` and
+  `ListenToDocumentAsync`. `ListenToDocumentAsync` is a plain interface member implemented by `DocumentDatabase`, get-authorized by the rule guard; `AggregateAsync` and
   `AddAsync` must be implemented by any custom type. Consumers calling the interface are unaffected.
 
 ## Upgrading to 8.0.0

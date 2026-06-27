@@ -997,7 +997,7 @@ Server: {"type": "error", "id": "d2", "status": "INVALID_ARGUMENT", "message": "
 Server: {"type": "error", "id": "d1", "status": "PERMISSION_DENIED", "message": "Access denied."}
 ```
 
-> **Authorization note:** `doc.listen` is authorized under the **`list`** rule (it rides on the query listener over a `__name__ == path` query), not the `get` rule. The query is provably constrained to one document path. Use `RuleOperations.Read` (which expands to both `get` and `list`) or an explicit `list` rule to permit single-document listens.
+> **Authorization note:** `doc.listen` is authorized under the **`get`** rule on the document path — single-document reads (one-shot or realtime) are governed by the per-document get rule, never the parent-collection `list` rule. Use `RuleOperations.Read` (which expands to both `get` and `list`) or an explicit `get` rule to permit single-document listens.
 
 #### Unsubscribe
 
@@ -1103,7 +1103,7 @@ The practical window for this race is the p99 write-transaction duration — typ
 
 ### 8.4 Listener delivery is per-node
 
-`ListenerRegistry` is in-process (per-node). Listeners on node A do not see writes processed only on node B's feed pump batch. Each node's feed pump reads from the shared `changes` table and dispatches to that node's listeners. In a multi-node deployment, all nodes receive the same feed events (independently) and update their own in-process listener groups accordingly.
+`QueryListenerRegistry` is in-process (per-node). Listeners on node A do not see writes processed only on node B's feed pump batch. Each node's feed pump reads from the shared `changes` table and dispatches to that node's listeners. In a multi-node deployment, all nodes receive the same feed events (independently) and update their own in-process listener groups accordingly.
 
 ### 8.5 Filtered indexes
 

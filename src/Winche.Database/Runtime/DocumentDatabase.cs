@@ -21,22 +21,24 @@ public sealed class DocumentDatabase : IDocumentDatabase
     private readonly NpgsqlDataSource _source;
     private readonly WriteApplier _applier;
     private readonly TransactionLedger _ledger;
-    private readonly ListenerRegistry? _listeners;
+    private readonly QueryListenerRegistry? _listeners;
+    private readonly DocumentListenerRegistry? _documentListeners;
     private readonly CollectionIndexResolver? _scopes;
 
     public DocumentDatabase(NpgsqlDataSource source, IOptions<WincheDatabaseOptions> options,
-        ListenerRegistry? listeners = null, CollectionIndexResolver? scopes = null,
-        IWriteAuthorizer? writeAuthorizer = null)
+        QueryListenerRegistry? listeners = null, CollectionIndexResolver? scopes = null,
+        IWriteAuthorizer? writeAuthorizer = null, DocumentListenerRegistry? docListeners = null)
     {
         _source = source;
         _applier = new WriteApplier(source, writeAuthorizer, options.Value.WriteLimits);
         _ledger = new TransactionLedger(options.Value.TransactionConfig);
         _listeners = listeners;
+        _documentListeners = docListeners;
         _scopes = scopes;
     }
 
-    /// <summary>Exposed for the Plan-3 expiry sweeper.</summary>
-    public TransactionLedger Ledger => _ledger;
+    /// <summary>Exposed for the Plan-3 expiry sweeper (internal — transaction-management detail).</summary>
+    internal TransactionLedger Ledger => _ledger;
 
     // ── Reads ─────────────────────────────────────────────────────────────────
 
@@ -192,5 +194,10 @@ public sealed class DocumentDatabase : IDocumentDatabase
 
     public IQueryListener Listen(Query query, ListenOptions? options = null) =>
         _listeners?.Listen(query, options)
-        ?? throw new NotSupportedException("This DocumentDatabase was constructed without a ListenerRegistry.");
+        ?? throw new NotSupportedException("This DocumentDatabase was constructed without a QueryListenerRegistry.");
+
+    public Task<IDocumentListener> ListenToDocumentAsync(string path, ListenOptions? options = null, CancellationToken ct = default) =>
+        Task.FromResult(
+            _documentListeners?.ListenToDocument(path, options)
+            ?? throw new NotSupportedException("This DocumentDatabase was constructed without a DocumentListenerRegistry."));
 }

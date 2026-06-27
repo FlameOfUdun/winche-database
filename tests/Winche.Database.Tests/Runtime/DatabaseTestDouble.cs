@@ -26,4 +26,5 @@ public abstract class DatabaseTestDouble : IDocumentDatabase
     public virtual Task RollbackTransactionAsync(string transactionId, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<T> RunTransactionAsync<T>(Func<TransactionContext, Task<T>> body, TransactionOptions? options = null, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual IQueryListener Listen(Query query, ListenOptions? options = null) => throw new NotImplementedException();
+    public virtual Task<IDocumentListener> ListenToDocumentAsync(string path, ListenOptions? options = null, CancellationToken ct = default) => throw new NotSupportedException();
 }

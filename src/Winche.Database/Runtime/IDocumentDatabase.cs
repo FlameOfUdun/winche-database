@@ -37,14 +37,10 @@ public interface IDocumentDatabase
     IQueryListener Listen(Query query, ListenOptions? options = null);
 
     /// <summary>
-    /// Listens to a single document by path (the single-document snapshot contract). Rides on the query
-    /// listener over a __name__ == path query; emits a DocumentSnapshot per change (present/absent).
-    /// <para>
-    /// Authorization rides on <see cref="Listen"/>, so the caller's rules must permit <c>list</c> on
-    /// the parent collection — not the per-document <c>get</c> rule (an intentional phase
-    /// divergence; see PROTOCOL). Any concrete override MUST also authorize via <see cref="Listen"/>.
-    /// </para>
+    /// Subscribes to a single document by path (single-document snapshot contract). Authorized as a
+    /// <c>get</c> on the document path — single-document reads, one-shot or realtime, are governed by the
+    /// per-document get rule, never the parent-collection list rule. Emits a <see cref="DocumentSnapshot"/>
+    /// per change (present/absent).
     /// </summary>
-    IDocumentListener ListenToDocument(string path, ListenOptions? options = null) =>
-        new DocumentListener(Listen(DocumentListenQuery.For(path), options));
+    Task<IDocumentListener> ListenToDocumentAsync(string path, ListenOptions? options = null, CancellationToken ct = default);
 }

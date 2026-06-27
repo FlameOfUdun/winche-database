@@ -24,7 +24,7 @@ public sealed class ConnectionScope(
     IDocumentDatabase db,
     DocumentClaimsAccessor claimsAccessor) : IAsyncDisposable
 {
-    public sealed record Subscription(IQueryListener Listener, Task Pump, CancellationTokenSource Cts);
+    public sealed record Subscription(IAsyncDisposable Listener, Task Pump, CancellationTokenSource Cts);
 
     private volatile IReadOnlyDictionary<string, object?> _claims = new Dictionary<string, object?>();
 

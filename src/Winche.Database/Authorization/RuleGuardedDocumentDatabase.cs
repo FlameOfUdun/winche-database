@@ -17,11 +17,13 @@ namespace Winche.Database.Authorization;
 /// Write authorization (create, update, delete) is handled inside the write transaction by
 /// <see cref="IWriteAuthorizer"/> injected into the core <see cref="DocumentDatabase"/> — this
 /// decorator simply delegates <c>WriteAsync</c> and <c>CommitTransactionAsync</c> to the inner core.
+/// <c>RunTransactionAsync</c> runs through this guard, so reads inside the transaction body are
+/// authorized as get/list just like non-transactional reads.
 /// </summary>
 /// <remarks>
 /// Constructor arguments are intentionally decoupled from the transport layer:
-/// <paramref name="claimsProvider"/> is a <see cref="Func{T}"/> so the caller controls how auth
-/// claims are sourced (HTTP context, test fixture, etc.).
+/// <paramref name="claimsAccessor"/> is an <see cref="IRuleClaimsAccessor"/> so the caller controls
+/// how auth claims are sourced (HTTP context, test fixture, etc.).
 /// </remarks>
 public sealed class RuleGuardedDocumentDatabase(
     IDocumentDatabase inner,
@@ -41,14 +43,13 @@ public sealed class RuleGuardedDocumentDatabase(
     public async Task<IReadOnlyList<Document?>> GetAllAsync(
         IReadOnlyList<string> paths, CancellationToken ct = default)
     {
-        // Authorize each path individually as a get. Load via inner to get current document state
-        // for resource, then check rules. Any single denial throws before returning results.
-        foreach (var path in paths)
-        {
-            var doc = await inner.GetAsync(path, ct);
-            await AuthorizeGetAsync(path, doc, ct);
-        }
-        return await inner.GetAllAsync(paths, ct);
+        // One batch read; authorize each returned document against the SAME snapshot it returns
+        // (eliminates N individual reads and the read-twice TOCTOU). Any single denial throws
+        // before returning, so the caller never sees a document it cannot read.
+        var docs = await inner.GetAllAsync(paths, ct);
+        for (var i = 0; i < paths.Count; i++)
+            await AuthorizeGetAsync(paths[i], docs[i], ct);
+        return docs;
     }
 
     public async Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default)
@@ -109,8 +110,9 @@ public sealed class RuleGuardedDocumentDatabase(
         Func<TransactionContext, Task<T>> body,
         TransactionOptions? options = null,
         CancellationToken ct = default) =>
-        // TODO Phase 2/3: thread authorization through TransactionRunner using this guard
-        inner.RunTransactionAsync(body, options, ct);
+        // Run through THIS guard so the body's reads are authorized (get/list) exactly like
+        // non-transactional reads; writes remain authorized at commit via IWriteAuthorizer.
+        TransactionRunner.RunAsync(this, body, options, ct);
 
     /// <summary>
     /// Authorizes the subscription query at subscribe time using the same
@@ -133,6 +135,19 @@ public sealed class RuleGuardedDocumentDatabase(
     {
         AuthorizeListQuery(query);           // throws AccessDeniedException at subscribe time if not provably safe
         return inner.Listen(query, options); // provably safe → every live result is authorized; no per-doc filtering
+    }
+
+    /// <summary>
+    /// Authorizes a single-document subscription as a <c>get</c> on <paramref name="path"/> — single-document
+    /// reads (one-shot or realtime) are governed by the per-document get rule with the full path bound,
+    /// never the list rule over the parent collection. Evaluated once at subscribe time against the current
+    /// document (same subscribe-time-only model as <see cref="Listen"/>); later mutations are not re-checked.
+    /// </summary>
+    public async Task<IDocumentListener> ListenToDocumentAsync(string path, ListenOptions? options = null, CancellationToken ct = default)
+    {
+        var doc = await inner.GetAsync(path, ct);          // also validates the document path
+        await AuthorizeGetAsync(path, doc, ct);            // throws AccessDeniedException(path, "get") if denied
+        return await inner.ListenToDocumentAsync(path, options, ct);
     }
 
     // ── Authorization helpers ─────────────────────────────────────────────────

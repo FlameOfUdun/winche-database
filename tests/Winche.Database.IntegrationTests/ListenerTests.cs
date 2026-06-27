@@ -19,7 +19,7 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
     private sealed class Rig : IAsyncDisposable
     {
         public required DocumentDatabase Db { get; init; }
-        public required ListenerRegistry Registry { get; init; }
+        public required QueryListenerRegistry Registry { get; init; }
         public required CancellationTokenSource Cts { get; init; }
         public required Task Run { get; init; }
         public async ValueTask DisposeAsync() { Cts.Cancel(); await Run; }
@@ -28,7 +28,7 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
     private Rig Start()
     {
         var opts = Options.Create(new WincheDatabaseOptions());
-        var registry = new ListenerRegistry(Fx.DataSource);
+        var registry = new QueryListenerRegistry(Fx.DataSource);
         var db = new DocumentDatabase(Fx.DataSource, opts, registry);
         var pump = new ChangeFeedPump(Fx.DataSource, [registry],
             new ChangeFeedConfig { PollInterval = TimeSpan.FromMilliseconds(200) },
