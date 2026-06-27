@@ -130,7 +130,7 @@ public sealed class ChangeFeedPump(
             // Skip the doc fetch when there are no ephemeral consumers — durable runners
             // do their own fetching in DurableConsumerRunner (durable-only deployments).
             IReadOnlyDictionary<string, Document> docs = _ephemeral.Count > 0
-                ? await FetchDocsAsync(records, ct)
+                ? await _reader.FetchDocumentsAsync(records, ct)
                 : new Dictionary<string, Document>(StringComparer.Ordinal);
             var batch = new ChangeBatch(records, docs);
             foreach (var consumer in _ephemeral)
@@ -154,17 +154,6 @@ public sealed class ChangeFeedPump(
                 if (sem.CurrentCount == 0) sem.Release();
             }
         }
-    }
-
-    private async Task<IReadOnlyDictionary<string, Document>> FetchDocsAsync(
-        IReadOnlyList<ChangeRecord> records, CancellationToken ct)
-    {
-        var paths = records.Where(r => r.Type != ChangeType.Removed)
-            .Select(r => r.Path).Distinct(StringComparer.Ordinal).ToList();
-        if (paths.Count == 0) return new Dictionary<string, Document>(StringComparer.Ordinal);
-
-        await using var conn = await source.OpenConnectionAsync(ct);
-        return await new DocumentOperations(conn, null).GetManyAsync(paths, ct);
     }
 
     /// <summary>

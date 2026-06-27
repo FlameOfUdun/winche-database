@@ -1,10 +1,10 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
-using Winche.Database.Documents;
 using Winche.Database.Querying;
 using Winche.Database.Querying.Ast;
 using Winche.Database.Querying.Ast.Serialization;
+using Winche.Database.Runtime;
 using Winche.Database.Runtime.Writes;
 using Winche.Database.Values;
 
@@ -69,33 +69,8 @@ public sealed class AggregationListJsonConverter : JsonConverter<IReadOnlyList<A
     public override IReadOnlyList<Aggregation> Read(ref Utf8JsonReader reader, Type t, JsonSerializerOptions options)
     {
         var node = JsonNode.Parse(ref reader);
-        if (node is not JsonArray arr)
-            throw new JsonException("'aggregations' must be an array");
-        var list = new List<Aggregation>(arr.Count);
-        foreach (var el in arr)
-        {
-            if (el is not JsonObject o)
-                throw new JsonException("each aggregation must be an object");
-            var kind = (string?)o["kind"] switch
-            {
-                "count" => AggregateKind.Count,
-                "sum" => AggregateKind.Sum,
-                "average" => AggregateKind.Average,
-                _ => throw new JsonException("aggregation 'kind' must be count|sum|average"),
-            };
-            var alias = o["alias"] switch
-            {
-                null => throw new JsonException("aggregation 'alias' is required"),
-                JsonValue av when av.TryGetValue<string>(out var a) => a,
-                _ => throw new JsonException("aggregation 'alias' must be a string"),
-            };
-            var fieldStr = (string?)o["field"];
-            FieldPath? field;
-            try { field = fieldStr is null ? null : FieldPath.Parse(fieldStr); }
-            catch (ArgumentException ex) { throw new JsonException(ex.Message, ex); }
-            list.Add(new Aggregation(kind, alias, field));
-        }
-        return list;
+        try { return AggregationParser.Parse(node); }
+        catch (RuntimeException ex) { throw new JsonException(ex.Message, ex); }   // preserve the converter's JsonException contract
     }
 
     public override void Write(Utf8JsonWriter writer, IReadOnlyList<Aggregation> value, JsonSerializerOptions options) =>

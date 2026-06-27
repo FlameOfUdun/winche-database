@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Logging;
 using Npgsql;
-using Winche.Database.Documents;
 using Winche.Database.DependencyInjection;
 
 namespace Winche.Database.Runtime.ChangeFeed;
@@ -41,7 +40,7 @@ public sealed class DurableConsumerRunner(
                     continue;
                 }
 
-                var batch = new ChangeBatch(records, await FetchDocsAsync(records, ct));
+                var batch = new ChangeBatch(records, await _reader.FetchDocumentsAsync(records, ct));
                 await consumer.OnBatchAsync(batch, ct);                 // throws → retry same batch
 
                 cursor = records[^1].Seq;
@@ -86,13 +85,4 @@ public sealed class DurableConsumerRunner(
         return max;
     }
 
-    private async Task<IReadOnlyDictionary<string, Document>> FetchDocsAsync(
-        IReadOnlyList<ChangeRecord> records, CancellationToken ct)
-    {
-        var paths = records.Where(r => r.Type != ChangeType.Removed)
-            .Select(r => r.Path).Distinct(StringComparer.Ordinal).ToList();
-        if (paths.Count == 0) return new Dictionary<string, Document>(StringComparer.Ordinal);
-        await using var conn = await source.OpenConnectionAsync(ct);
-        return await new DocumentOperations(conn, null).GetManyAsync(paths, ct);
-    }
 }

@@ -18,6 +18,11 @@ namespace Winche.Database.AspNetCore.Rest.DependencyInjection;
 
 public static class WebApplicationExtensions
 {
+    // Reused across requests: JsonSerializerOptions is costly to build and caches internally; the
+    // converters are stateless and safe to share concurrently.
+    private static readonly JsonSerializerOptions QueryAstOptions = new() { Converters = { new QueryAstJsonConverter() } };
+    private static readonly JsonSerializerOptions FieldsOptions = new() { Converters = { new FieldsJsonConverter() } };
+
     private static string DecodeBase64(string base64)
     {
         byte[] bytes = Convert.FromBase64String(base64);
@@ -161,10 +166,7 @@ public static class WebApplicationExtensions
                 ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "Request body must be a JSON object");
             var queryNode = node["query"]
                 ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "'query' is required");
-            var query = queryNode.Deserialize<Query>(new System.Text.Json.JsonSerializerOptions
-            {
-                Converters = { new Querying.Ast.Serialization.QueryAstJsonConverter() }
-            });
+            var query = queryNode.Deserialize<Query>(QueryAstOptions);
             if (query is null) throw new RuntimeException(RuntimeStatus.InvalidArgument, "'query' must be a valid query object");
             var transaction = node["transaction"]?.GetValue<string>();
             var result = transaction is null
@@ -179,10 +181,7 @@ public static class WebApplicationExtensions
                 ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "Request body must be a JSON object");
             var queryNode = node["query"]
                 ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "'query' is required");
-            var query = queryNode.Deserialize<Query>(new System.Text.Json.JsonSerializerOptions
-            {
-                Converters = { new Querying.Ast.Serialization.QueryAstJsonConverter() }
-            });
+            var query = queryNode.Deserialize<Query>(QueryAstOptions);
             if (query is null) throw new RuntimeException(RuntimeStatus.InvalidArgument, "'query' must be a valid query object");
             var count = await db.CountAsync(query, ct);
             return Results.Json(new { count }, statusCode: 200, contentType: "application/json");
@@ -194,51 +193,16 @@ public static class WebApplicationExtensions
                 ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "Request body must be a JSON object");
             var queryNode = node["query"]
                 ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "'query' is required");
-            var query = queryNode.Deserialize<Query>(new System.Text.Json.JsonSerializerOptions
-            {
-                Converters = { new Querying.Ast.Serialization.QueryAstJsonConverter() }
-            }) ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "'query' must be a valid query object");
+            var query = queryNode.Deserialize<Query>(QueryAstOptions)
+                ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "'query' must be a valid query object");
 
-            var aggregations = ParseAggregations(node["aggregations"]);
+            var aggregations = AggregationParser.Parse(node["aggregations"]);
             var result = await db.AggregateAsync(query, aggregations, ct);
 
             var resultObj = new JsonObject();
             foreach (var (alias, value) in result.Values)
                 resultObj[alias] = ValueSerializer.Write(value);
             return Results.Json(new { result = resultObj }, statusCode: 200, contentType: "application/json");
-
-            static IReadOnlyList<Aggregation> ParseAggregations(JsonNode? aggNode)
-            {
-                if (aggNode is null)
-                    throw new RuntimeException(RuntimeStatus.InvalidArgument, "'aggregations' is required");
-                if (aggNode is not JsonArray arr)
-                    throw new RuntimeException(RuntimeStatus.InvalidArgument, "'aggregations' must be an array");
-                var list = new List<Aggregation>(arr.Count);
-                foreach (var el in arr)
-                {
-                    if (el is not JsonObject o)
-                        throw new RuntimeException(RuntimeStatus.InvalidArgument, "each aggregation must be an object");
-                    var kind = (string?)o["kind"] switch
-                    {
-                        "count" => AggregateKind.Count,
-                        "sum" => AggregateKind.Sum,
-                        "average" => AggregateKind.Average,
-                        _ => throw new RuntimeException(RuntimeStatus.InvalidArgument, "aggregation 'kind' must be count|sum|average"),
-                    };
-                    var alias = o["alias"] switch
-                    {
-                        null => throw new RuntimeException(RuntimeStatus.InvalidArgument, "aggregation 'alias' is required"),
-                        JsonValue av when av.TryGetValue<string>(out var a) => a,
-                        _ => throw new RuntimeException(RuntimeStatus.InvalidArgument, "aggregation 'alias' must be a string"),
-                    };
-                    var fieldStr = (string?)o["field"];
-                    FieldPath? field;
-                    try { field = fieldStr is null ? null : FieldPath.Parse(fieldStr); }
-                    catch (ArgumentException ex) { throw new RuntimeException(RuntimeStatus.InvalidArgument, ex.Message); }
-                    list.Add(new Aggregation(kind, alias, field));
-                }
-                return list;
-            }
         });
 
         Verb("add", async (HttpRequest request, IDocumentDatabase db, CancellationToken ct) =>
@@ -253,11 +217,7 @@ public static class WebApplicationExtensions
             };
             var fieldsNode = node["fields"]
                 ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "'fields' is required");
-            var fields = fieldsNode.Deserialize<IReadOnlyDictionary<string, Value>>(
-                new System.Text.Json.JsonSerializerOptions
-                {
-                    Converters = { new Querying.Ast.Serialization.FieldsJsonConverter() }
-                })
+            var fields = fieldsNode.Deserialize<IReadOnlyDictionary<string, Value>>(FieldsOptions)
                 ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "'fields' must be an object");
             var doc = await db.AddAsync(collection, fields, ct);
             return Results.Json(new { document = doc }, statusCode: 200, contentType: "application/json");
