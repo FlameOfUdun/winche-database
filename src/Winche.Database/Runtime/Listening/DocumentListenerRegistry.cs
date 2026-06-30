@@ -69,6 +69,9 @@ public sealed class DocumentListenerRegistry(NpgsqlDataSource source)
     protected override DocumentSnapshot BuildInitialSnapshot(DocumentGroup group) =>
         new(group.Current, group.Current is not null, DateTimeOffset.UtcNow, group.LastSeq);
 
+    protected override DocumentSnapshot BuildCurrentMarker(DocumentGroup group) =>
+        new(null, false, DateTimeOffset.UtcNow, group.LastSeq, Current: true);
+
     protected override Task<bool> HasRelevantChangesAfterAsync(DocumentGroup group, long resumeSeq, CancellationToken ct) =>
         Reader.HasDocumentChangesAfterAsync(resumeSeq, group.Path, ct);
 

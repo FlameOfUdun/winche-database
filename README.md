@@ -119,7 +119,7 @@ The built-in claims/exception filters are always applied internally and run oute
 - **typed engine** — 11 tagged value types (`null`, `bool`, `int64`, `double`, `timestamp`, `string`, `bytes`, `reference`, `geopoint`, `array`, `map`); cross-type total order; same-type-class inequality semantics; `__name__` tiebreaker; int/double numeric equality
 - **Document storage** — Store documents as typed field maps; each document carries `path`, `id`, `collection`, `createTime`, `updateTime`, and `version` metadata
 - **Querying** — 15 filter operators (including Winche extensions: `arrayContainsAll`, `contains`, `startsWith`, `endsWith`, `regex`, field-compare); `and`/`or`/`not` composites; `orderBy` with `__name__` tiebreaker; cursor-based pagination (`startAt`/`startAfter`/`endAt`/`endBefore`); field projection via `select`; `offset` (skip first N results) and `limitToLast` (last N results in ascending order)
-- **Live queries with delta listeners** — Subscribe to a query and receive an initial full snapshot, then indexed `added`/`modified`/`removed` deltas with `count` checksum; `listen.snapshot` REPLACES client state, `listen.delta` MUTATES it
+- **Live queries with delta listeners** — Subscribe to a query and receive an initial full snapshot, then indexed `added`/`modified`/`removed`/`deleted` deltas with a `count` checksum; `listen.snapshot` REPLACES client state, `listen.delta` MUTATES it. `removed` means the document left this query's window/filter (it still exists); `deleted` means it no longer exists at all (clients tombstone it). The `deleted` kind is sent only to clients that advertise `"protocol": >= 2` on the subscribe frame; older clients keep getting `removed`. Resuming with a still-current token sends a lightweight `listen.current` marker (live and up to date — no re-download) instead of a fresh snapshot; a stale/expired token resets via a full snapshot
 - **Optimistic transactions** — Optimistic read-version ledger; `ABORTED` on conflict with safe retry; `RunTransactionAsync` with automatic retry; reads-before-writes enforced; idle (60 s) and absolute (5 min) timeouts
 - **Batch writes** — Atomic commit of up to 500 `set`/`update`/`delete` operations with field transforms, preconditions, and a single commit timestamp; use `new WriteBatch(db)` for a fluent builder; `set` supports explicit merge masks via `MergeFields` (subset-merge alternative to `merge: true`)
 - **Field transforms** — `serverTimestamp`, `increment` (saturating int, promotes to double on mixed), `maximum`, `minimum`, `arrayUnion`, `arrayRemove`; use the `FieldValue` factory for a fluent C# API (`FieldValue.ServerTimestamp`, `Increment`, `Maximum`, `Minimum`, `ArrayUnion`, `ArrayRemove`, `Delete`)
@@ -789,15 +789,29 @@ Connect at `/documents/ws?access_token=<jwt>`. The connection authenticates at t
 | `tx.query` | C→S | Query inside a transaction (recorded reads) |
 | `tx.commit` | C→S | Commit a transaction |
 | `tx.rollback` | C→S | Roll back a transaction (idempotent) |
-| `listen` | C→S | Subscribe to a live query |
-| `doc.listen` | C→S | Subscribe to a single document (native subscription; authorized under the `get` rule) |
+| `listen` | C→S | Subscribe to a live query (optional `resumeToken`; optional `protocol` to opt into the `deleted` kind) |
+| `doc.listen` | C→S | Subscribe to a single document (native subscription; authorized under the `get` rule; optional `resumeToken`/`protocol`) |
 | `unlisten` | C→S | Cancel a subscription |
 | `response` | S→C | Successful operation result |
 | `error` | S→C | Operation error |
 | `listen.snapshot` | S→C | Full query state (REPLACES client list) |
-| `listen.delta` | S→C | Incremental change (MUTATES client list by index) |
+| `listen.delta` | S→C | Incremental change (MUTATES client list by index); change kinds `added`/`modified`/`removed`/`deleted` |
+| `listen.current` | S→C | Covered-resume marker: the subscription is live and already up to date; carries the resume token, no documents (sent instead of a snapshot when a resume token is still current) |
 
 See [PROTOCOL](docs/PROTOCOL.md#7-websocket-protocol) for full message shapes, close codes, and listener protocol details.
+
+## Upgrading to 9.1.0
+
+9.1.0 is an additive, backward-compatible release — no data migration and no code changes required.
+It introduces a live-listener **wire protocol v2**, opted into per subscription:
+
+- **New `deleted` change kind** distinguishes a document that no longer exists (clients tombstone it)
+  from one that merely left this query's window/filter but still exists (`removed`). Opt in by
+  sending `"protocol": 2` on the `listen` / `doc.listen` subscribe frame; clients that omit
+  `protocol` (or send `< 2`) keep receiving `removed` for every removal, exactly as before.
+- **New `listen.current` server frame** signals that a resumed subscription is live and already up to
+  date — the client keeps its cached state instead of re-downloading a snapshot. Clients that predate
+  this frame treat the unknown type as ignorable, so it is backward compatible.
 
 ## Upgrading to 9.0.0
 

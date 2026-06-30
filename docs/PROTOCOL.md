@@ -945,6 +945,9 @@ Optional resume:
 Client: {"type": "listen", "id": "s1", "query": {"collection": "users"}, "resumeToken": 42}
 ```
 
+The optional `"protocol": <int>` field declares the client's wire protocol version
+(current: 2). It gates the `deleted` change kind (see Delta below).
+
 #### Single-document subscribe (`doc.listen`)
 
 `doc.listen` subscribes to a single document by path. The server sends the same `response` → `listen.snapshot` → `listen.delta` sequence as `listen`; the `documents` array in each frame holds 0 or 1 elements (absent or present).
@@ -959,6 +962,9 @@ Optional resume:
 ```json
 Client: {"type": "doc.listen", "id": "d1", "path": "users/u1", "resumeToken": 42}
 ```
+
+The optional `"protocol": <int>` field declares the client's wire protocol version
+(current: 2). It gates the `deleted` change kind (see Delta below).
 
 First event — document present:
 
@@ -1043,7 +1049,20 @@ The **first** event after subscribing is always a full snapshot:
 | - | - | - |
 | `added` | `-1` | position in new snapshot |
 | `removed` | position in previous snapshot | `-1` |
+| `deleted` | position in previous snapshot | `-1` |
 | `modified` | position in previous snapshot | position in new snapshot |
+
+`removed` means the document left this query's result (deleted, or out of the
+`limit`/`offset`/cursor window, or no longer matching `where`). `deleted` means the
+document **no longer exists** — the server determines this by checking existence at diff
+time, so it is reliable even across coalesced snapshots. Clients use `deleted` to evict the
+document from any local cache; `removed` only drops it from this query's view.
+
+**Negotiation:** the `deleted` kind is sent **only** to clients that advertise
+`"protocol": >= 2` on the `listen` / `doc.listen` subscribe frame. Clients that omit
+`protocol` (or send `< 2`) receive `removed` for every removal, exactly as before. A
+single-document (`doc.listen`) removal is always a true deletion, so it is reported as
+`deleted` for protocol >= 2 clients and `removed` otherwise.
 
 `count` is the result size **after** applying the delta. Use it as a checksum: if your local count differs from `count` after applying all changes, re-subscribe.
 
@@ -1060,6 +1079,21 @@ The `resumeToken` on every listener event is the feed sequence watermark.
 | Resume token is too old or unrecognized | **Reset** — same as stale |
 
 The first event after a stale/reset resume is a `listen.snapshot` (not a delta), allowing the client to rebuild its state.
+
+#### Current marker (`listen.current`)
+
+When a resume token is **current** (no feed rows after it touch the query), the server
+no longer stays silent: it sends a single `listen.current` frame so the client knows the
+subscription is live and its cached data is up to date.
+
+```json
+{"type": "listen.current", "subscriptionId": "sub-xyz", "resumeToken": 57}
+```
+
+It carries no documents — the client keeps its existing state and clears its "from cache"
+flag. A subsequent real change arrives as a normal `listen.snapshot`/`listen.delta`.
+Clients that predate this frame treat an unknown frame type as ignorable, so the marker is
+backward compatible.
 
 #### Backpressure
 

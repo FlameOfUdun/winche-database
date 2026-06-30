@@ -28,7 +28,7 @@ public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionInd
 
     protected override SubscriptionHandleBase<QuerySnapshot> CreateHandle(
         QueryGroup group, Func<SubscriptionHandleBase<QuerySnapshot>, ValueTask> onDispose) =>
-        new QueryHandle(onDispose);
+        new QueryHandle(onDispose, ExistingAsync);
 
     protected override async Task InitializeStateAsync(QueryGroup group, CancellationToken ct) =>
         group.State = (await RunQueryAsync(group.Query, ct)).Documents;
@@ -74,6 +74,9 @@ public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionInd
     protected override QuerySnapshot BuildInitialSnapshot(QueryGroup group) =>
         new(group.State, SnapshotDiff.Compute([], group.State), DateTimeOffset.UtcNow, group.LastSeq);
 
+    protected override QuerySnapshot BuildCurrentMarker(QueryGroup group) =>
+        new([], [], DateTimeOffset.UtcNow, group.LastSeq, Current: true);
+
     protected override Task<bool> HasRelevantChangesAfterAsync(QueryGroup group, long resumeSeq, CancellationToken ct) =>
         Reader.HasQueryChangesAfterAsync(resumeSeq, group.Query.Collection, ct);
 
@@ -83,6 +86,19 @@ public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionInd
     {
         await using var conn = await Source.OpenConnectionAsync(ct);
         return await new QueryExecutor(conn, null, scopes).ExecuteAsync(query, ct);
+    }
+
+    // Returns the subset of [paths] that currently exist, in ONE round-trip — so a delta with
+    // many removed docs costs a single connection, not one per doc. Checks CURRENT existence
+    // (at probe time, slightly after the snapshot's ReadTime); any divergence is corrected by
+    // the next authoritative snapshot. Unguarded by design: a list-authorized listener must be
+    // able to test existence even without a per-document get rule (existence is not field data).
+    private async Task<IReadOnlySet<string>> ExistingAsync(IReadOnlyList<string> paths, CancellationToken ct)
+    {
+        if (paths.Count == 0) return new HashSet<string>(StringComparer.Ordinal);
+        await using var conn = await Source.OpenConnectionAsync(ct);
+        var found = await new DocumentOperations(conn, null).GetManyAsync(paths, ct);
+        return found.Keys.ToHashSet(StringComparer.Ordinal);
     }
 
     // ── Group / handle ─────────────────────────────────────────────────────────
@@ -105,6 +121,12 @@ public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionInd
         public IReadOnlySet<string> StatePaths => _statePaths;
     }
 
-    private sealed class QueryHandle(Func<SubscriptionHandleBase<QuerySnapshot>, ValueTask> onDispose)
-        : SubscriptionHandleBase<QuerySnapshot>(onDispose), IQueryListener;
+    private sealed class QueryHandle(
+        Func<SubscriptionHandleBase<QuerySnapshot>, ValueTask> onDispose,
+        Func<IReadOnlyList<string>, CancellationToken, Task<IReadOnlySet<string>>> existingProbe)
+        : SubscriptionHandleBase<QuerySnapshot>(onDispose), IQueryListener
+    {
+        public Task<IReadOnlySet<string>> ExistingAsync(IReadOnlyList<string> paths, CancellationToken ct) =>
+            existingProbe(paths, ct);
+    }
 }

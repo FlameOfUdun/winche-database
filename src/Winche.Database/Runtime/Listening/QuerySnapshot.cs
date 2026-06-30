@@ -23,7 +23,8 @@ public sealed record QuerySnapshot(
     IReadOnlyList<Document> Documents,
     IReadOnlyList<DocumentChangeInfo> Changes,
     DateTimeOffset ReadTime,
-    long ResumeToken);
+    long ResumeToken,
+    bool Current = false);
 
 public sealed record ListenOptions(long? ResumeFrom = null);
 
@@ -32,4 +33,10 @@ public sealed record ListenOptions(long? ResumeFrom = null);
 /// <see cref="ISubscriptionListener{TSnapshot}"/>; concurrent enumerators split the stream
 /// (each snapshot is delivered to exactly one enumerator) — create a single enumerator per listener.
 /// </summary>
-public interface IQueryListener : ISubscriptionListener<QuerySnapshot>;
+public interface IQueryListener : ISubscriptionListener<QuerySnapshot>
+{
+    /// <summary>Unguarded batch existence check at the data layer — returns the subset of
+    /// [paths] that currently exist. Used by the WS pump (one round-trip per delta) to classify
+    /// removed results as true deletes (absent) vs window/filter exits (still present).</summary>
+    Task<IReadOnlySet<string>> ExistingAsync(IReadOnlyList<string> paths, CancellationToken ct);
+}

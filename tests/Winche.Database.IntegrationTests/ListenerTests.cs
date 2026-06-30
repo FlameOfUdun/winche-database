@@ -134,7 +134,7 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
     }
 
     [Fact]
-    public async Task Resume_NoRelevantChanges_SuppressesInitialSnapshot()
+    public async Task Resume_NoRelevantChanges_EmitsCurrentMarker()
     {
         await using var rig = Start();
         await rig.Db.WriteAsync([new SetWrite { Path = "c/a", Fields = Map() }]);
@@ -145,15 +145,19 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         await using (var e = l.Snapshots().GetAsyncEnumerator())
             token = (await NextAsync(e)).ResumeToken;
 
-        // resume with no changes since → silence until a real change
+        // resume with no changes since → a CURRENT marker (no documents) rather than
+        // a full snapshot; it carries the resume token so the client knows it is live.
         await using var resumed = rig.Db.Listen(new Query("c"), new ListenOptions(ResumeFrom: token));
         await using var er = resumed.Snapshots().GetAsyncEnumerator();
-        var pending = er.MoveNextAsync().AsTask();
-        Assert.NotSame(pending, await Task.WhenAny(pending, Task.Delay(1500)));
+        var marker = await NextAsync(er);
+        Assert.True(marker.Current);
+        Assert.Empty(marker.Documents);
 
+        // a real change then delivers a fresh full snapshot.
         await rig.Db.WriteAsync([new SetWrite { Path = "c/b", Fields = Map() }]);
-        Assert.True(await pending);
-        Assert.Equal(2, er.Current.Documents.Count);                       // fresh full snapshot
+        var snap = await NextAsync(er);
+        Assert.False(snap.Current);
+        Assert.Equal(2, snap.Documents.Count);
     }
 
     // ── Tests: I1 resume paths ───────────────────────────────────────────────
@@ -211,6 +215,25 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         Assert.True(snap.Documents.Count >= 1);                               // at least 'a' or 'b' present (not suppressed)
         await resumed.DisposeAsync();
         await er.DisposeAsync();
+    }
+
+    // ── Test: ExistingAsync batch probe ─────────────────────────────────────
+
+    [Fact]
+    public async Task ExistingAsync_ReflectsStorage()
+    {
+        await using var rig = Start();
+        await rig.Db.WriteAsync([new SetWrite { Path = "c/a", Fields = Map(("n", new IntegerValue(1))) }]);
+        await Task.Delay(400);
+
+        await using var listener = rig.Db.Listen(new Query("c"));
+        await using var e = listener.Snapshots().GetAsyncEnumerator();
+        await NextAsync(e);
+
+        var existing = await listener.ExistingAsync(
+            new[] { "c/a", "c/missing" }, CancellationToken.None);
+        Assert.Contains("c/a", existing);
+        Assert.DoesNotContain("c/missing", existing);
     }
 
     // ── Test: coalescing ─────────────────────────────────────────────────────

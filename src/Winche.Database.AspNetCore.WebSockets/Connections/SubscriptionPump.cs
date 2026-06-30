@@ -20,8 +20,12 @@ namespace Winche.Database.AspNetCore.WebSockets.Connections;
 /// </summary>
 public static class SubscriptionPump
 {
+    /// <summary>Minimum client protocol version that receives the `deleted` change kind. v1 clients get `removed`.</summary>
+    internal const long DeletedKindMinProtocol = 2;
+
     public static async Task RunQueryAsync(
-        string subscriptionId, IQueryListener listener, ConnectionScope scope, WsConnection conn, CancellationToken ct)
+        string subscriptionId, IQueryListener listener, ConnectionScope scope, WsConnection conn,
+        bool supportsDeletedKind, CancellationToken ct)
     {
         try
         {
@@ -33,6 +37,16 @@ public static class SubscriptionPump
                 scope.ApplyClaims();                              // inert for listener auth (subscribe-time only); kept for context coherence
                 if (!await snapshots.MoveNextAsync()) break;
                 var snapshot = snapshots.Current;
+
+                if (snapshot.Current)
+                {
+                    conn.TrySend(new ListenCurrentMessage
+                    {
+                        SubscriptionId = subscriptionId,
+                        ResumeToken = snapshot.ResumeToken,
+                    });
+                    continue;
+                }
 
                 if (sent is null)
                 {
@@ -51,17 +65,46 @@ public static class SubscriptionPump
                 sent = snapshot.Documents;
                 if (changes.Count == 0) continue;
 
+                // Batch the existence check for ALL removed changes into one probe so a
+                // bulk delete / limit-window churn costs a single DB round-trip, not one
+                // per removed doc. If the probe fails (transient DB error), degrade to
+                // "removed": never falsely tombstone the client, and keep the subscription
+                // alive rather than tearing it down mid-delta.
+                IReadOnlySet<string> existing = new HashSet<string>();
+                if (supportsDeletedKind)
+                {
+                    var removedPaths = changes
+                        .Where(c => c.Type == ListenChangeType.Removed)
+                        .Select(c => c.Document.Path)
+                        .ToList();
+                    if (removedPaths.Count > 0)
+                    {
+                        try { existing = await listener.ExistingAsync(removedPaths, ct); }
+                        catch (Exception) when (!ct.IsCancellationRequested)
+                        {
+                            existing = removedPaths.ToHashSet(); // degrade → all "removed"
+                        }
+                    }
+                }
+
+                var wireChanges = new List<WireChange>(changes.Count);
+                foreach (var c in changes)
+                {
+                    var kind = c.Type switch
+                    {
+                        ListenChangeType.Added => "added",
+                        ListenChangeType.Modified => "modified",
+                        _ => supportsDeletedKind && !existing.Contains(c.Document.Path)
+                            ? "deleted"
+                            : "removed",
+                    };
+                    wireChanges.Add(new WireChange(kind, c.Document, c.OldIndex, c.NewIndex));
+                }
+
                 conn.TrySend(new ListenDeltaMessage
                 {
                     SubscriptionId = subscriptionId,
-                    Changes = [.. changes.Select(c => new WireChange(
-                        c.Type switch
-                        {
-                            ListenChangeType.Added => "added",
-                            ListenChangeType.Modified => "modified",
-                            _ => "removed",
-                        },
-                        c.Document, c.OldIndex, c.NewIndex))],
+                    Changes = wireChanges,
                     Count = snapshot.Documents.Count,
                     ReadTime = snapshot.ReadTime,
                     ResumeToken = snapshot.ResumeToken,
@@ -77,7 +120,8 @@ public static class SubscriptionPump
     }
 
     public static async Task RunDocumentAsync(
-        string subscriptionId, IDocumentListener listener, ConnectionScope scope, WsConnection conn, CancellationToken ct)
+        string subscriptionId, IDocumentListener listener, ConnectionScope scope, WsConnection conn,
+        bool supportsDeletedKind, CancellationToken ct)
     {
         try
         {
@@ -90,6 +134,17 @@ public static class SubscriptionPump
                 scope.ApplyClaims();                              // inert for listener auth (subscribe-time only)
                 if (!await snapshots.MoveNextAsync()) break;
                 var snapshot = snapshots.Current;
+
+                if (snapshot.Current)
+                {
+                    conn.TrySend(new ListenCurrentMessage
+                    {
+                        SubscriptionId = subscriptionId,
+                        ResumeToken = snapshot.ResumeToken,
+                    });
+                    continue;
+                }
+
                 IReadOnlyList<Document> docs = snapshot.Document is { } d ? new[] { d } : Array.Empty<Document>();
 
                 if (!sentAny)
@@ -106,7 +161,7 @@ public static class SubscriptionPump
                     continue;
                 }
 
-                var change = DocumentChange(sent, snapshot.Document);
+                var change = DocumentChange(sent, snapshot.Document, supportsDeletedKind);
                 sent = snapshot.Document;
                 if (change is null) continue;
 
@@ -142,11 +197,11 @@ public static class SubscriptionPump
         });
     }
 
-    private static WireChange? DocumentChange(Document? prev, Document? next)
+    private static WireChange? DocumentChange(Document? prev, Document? next, bool supportsDeletedKind)
     {
         if (prev is null && next is null) return null;
         if (prev is null) return new WireChange("added", next!, -1, 0);
-        if (next is null) return new WireChange("removed", prev, 0, -1);
+        if (next is null) return new WireChange(supportsDeletedKind ? "deleted" : "removed", prev, 0, -1);
         if (prev.UpdateTime == next.UpdateTime) return null;
         return new WireChange("modified", next, 0, 0);
     }

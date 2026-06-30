@@ -45,8 +45,8 @@ public sealed class MessageRouter
                 TxQueryMessage txQuery => Ok(id!, ToNode(await scope.Db.QueryAsync(RequireTx(scope, txQuery.TransactionId), txQuery.Query, ct))!.AsObject()),
                 TxCommitMessage txCommit => await HandleTxCommit(scope, id!, txCommit, ct),
                 TxRollbackMessage txRollback => await HandleTxRollback(scope, id!, txRollback, ct),
-                ListenMessage listen => HandleListen(scope, conn, id!, listen.Query, listen.ResumeToken),
-                DocListenMessage docListen => await HandleDocListen(scope, conn, id!, docListen.Path, docListen.ResumeToken, ct),
+                ListenMessage listen => HandleListen(scope, conn, id!, listen.Query, listen.ResumeToken, listen.Protocol),
+                DocListenMessage docListen => await HandleDocListen(scope, conn, id!, docListen.Path, docListen.ResumeToken, docListen.Protocol, ct),
                 UnlistenMessage unlisten => await HandleUnlisten(scope, id!, unlisten),
                 _ => new ErrorMessage { Id = id, Status = "INVALID_ARGUMENT", Message = $"Unknown message: {message.GetType().Name}" },
             };
@@ -93,23 +93,25 @@ public sealed class MessageRouter
         return Ok(id, []);
     }
 
-    private static ServerMessage HandleListen(ConnectionScope scope, WsConnection conn, string id, Query query, long? resumeToken)
+    private static ServerMessage HandleListen(ConnectionScope scope, WsConnection conn, string id, Query query, long? resumeToken, long? clientProtocol)
     {
         var listener = scope.Db.Listen(query, resumeToken is { } seq ? new ListenOptions(ResumeFrom: seq) : null);
         var subscriptionId = Guid.NewGuid().ToString("N");
         var cts = CancellationTokenSource.CreateLinkedTokenSource(conn.Closed);
-        var pump = SubscriptionPump.RunQueryAsync(subscriptionId, listener, scope, conn, cts.Token);
+        var supportsDeleted = clientProtocol >= SubscriptionPump.DeletedKindMinProtocol;
+        var pump = SubscriptionPump.RunQueryAsync(subscriptionId, listener, scope, conn, supportsDeleted, cts.Token);
         return Register(scope, subscriptionId, listener, pump, cts, id);
     }
 
     private static async Task<ServerMessage> HandleDocListen(
-        ConnectionScope scope, WsConnection conn, string id, string path, long? resumeToken, CancellationToken ct)
+        ConnectionScope scope, WsConnection conn, string id, string path, long? resumeToken, long? clientProtocol, CancellationToken ct)
     {
         var options = resumeToken is { } seq ? new ListenOptions(ResumeFrom: seq) : null;
         var listener = await scope.Db.ListenToDocumentAsync(path, options, ct);   // get-authorized; throws → mapped to error frame
         var subscriptionId = Guid.NewGuid().ToString("N");
         var cts = CancellationTokenSource.CreateLinkedTokenSource(conn.Closed);
-        var pump = SubscriptionPump.RunDocumentAsync(subscriptionId, listener, scope, conn, cts.Token);
+        var supportsDeleted = clientProtocol >= SubscriptionPump.DeletedKindMinProtocol;
+        var pump = SubscriptionPump.RunDocumentAsync(subscriptionId, listener, scope, conn, supportsDeleted, cts.Token);
         return Register(scope, subscriptionId, listener, pump, cts, id);
     }
 

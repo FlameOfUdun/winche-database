@@ -42,6 +42,13 @@ public sealed record ListenSnapshotMessage : ServerMessage
     [JsonPropertyName("resumeToken")] public required long ResumeToken { get; init; }
 }
 
+public sealed record ListenCurrentMessage : ServerMessage
+{
+    [JsonPropertyName("type")] public string Type { get; } = "listen.current";
+    [JsonPropertyName("subscriptionId")] public required string SubscriptionId { get; init; }
+    [JsonPropertyName("resumeToken")] public required long ResumeToken { get; init; }
+}
+
 public sealed record WireChange(
     [property: JsonPropertyName("kind")] string Kind,
     [property: JsonPropertyName("document")] Document Document,

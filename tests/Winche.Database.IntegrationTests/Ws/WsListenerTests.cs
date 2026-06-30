@@ -22,6 +22,28 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         };
     }
 
+    private static JsonObject Set(string path, long n) => new()
+    {
+        ["type"] = "write",
+        ["writes"] = new JsonArray(new JsonObject
+        {
+            ["set"] = new JsonObject
+            {
+                ["path"] = path,
+                ["fields"] = new JsonObject { ["n"] = new JsonObject { ["integerValue"] = n.ToString() } },
+            },
+        }),
+    };
+
+    private static JsonObject Delete(string path) => new()
+    {
+        ["type"] = "write",
+        ["writes"] = new JsonArray(new JsonObject { ["delete"] = new JsonObject { ["path"] = path } }),
+    };
+
+    private Task<WsTestHost> AllowAllHost() => WsTestHost.StartAsync(Fx.ConnectionString,
+        c => c.UseRules(r => r.Match("{document=**}", b => b.Allow(RuleOperations.All, Expr.Const(true)))));
+
     private static JsonObject Int(long n) => new() { ["integerValue"] = n.ToString() };
     private static JsonObject Str(string s) => new() { ["stringValue"] = s };
 
@@ -80,7 +102,7 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
     }
 
     [Fact]
-    public async Task Resume_Current_IsSilent_ThenResetOnNextChange()
+    public async Task Resume_Current_EmitsListenCurrent_ThenResetOnNextChange()
     {
         await using var host = await PlainHost();
         await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
@@ -92,14 +114,16 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         await ws.RequestAsync(new JsonObject
             { ["type"] = "unlisten", ["subscriptionId"] = (string)sub1["result"]!["subscriptionId"]! });
 
-        // resume-current: silent until a change; the first frame after is a RESET snapshot
+        // resume-current: emits listen.current immediately; the first data frame after a write is a RESET snapshot
         var sub2 = await ws.RequestAsync(Listen("wsr", token));
         var subId2 = (string)sub2["result"]!["subscriptionId"]!;
-        await ws.AssertSilenceAsync(f => (string?)f["subscriptionId"] == subId2);
+        var current = await ws.WaitForAsync(f =>
+            (string?)f["type"] == "listen.current" && (string?)f["subscriptionId"] == subId2);
+        Assert.Equal(token, (long)current["resumeToken"]!);
 
         await ws.RequestAsync(Set("wsr/b", ("n", Int(2))));
-        var reset = await ws.WaitForAsync(f => (string?)f["subscriptionId"] == subId2);
-        Assert.Equal("listen.snapshot", (string?)reset["type"]);
+        var reset = await ws.WaitForAsync(f =>
+            (string?)f["type"] == "listen.snapshot" && (string?)f["subscriptionId"] == subId2);
         Assert.Equal(2, reset["documents"]!.AsArray().Count);
     }
 
@@ -219,5 +243,161 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         // Alice's constrained subscription (owner == "alice") must NOT receive bob's document
         await alice.AssertSilenceAsync(f => (string?)f["type"] == "listen.delta"
             && (string?)f["subscriptionId"] == aliceSubId);
+    }
+
+    [Fact]
+    public async Task Listen_Delete_WithProtocol2_EmitsDeletedKind()
+    {
+        await using var host = await AllowAllHost();
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
+
+        await ws.RequestAsync(Set("wsq/a", 1));
+        var resp = await ws.RequestAsync(new JsonObject
+        {
+            ["type"] = "listen",
+            ["query"] = new JsonObject { ["collection"] = "wsq" },
+            ["protocol"] = 2,
+        });
+        var subId = (string?)resp["result"]!["subscriptionId"];
+        await ws.WaitForAsync(f => (string?)f["type"] == "listen.snapshot" && (string?)f["subscriptionId"] == subId);
+
+        await ws.RequestAsync(Delete("wsq/a"));
+
+        var delta = await ws.WaitForAsync(f =>
+            (string?)f["type"] == "listen.delta" && (string?)f["subscriptionId"] == subId);
+        var change = delta["changes"]!.AsArray()[0]!.AsObject();
+        Assert.Equal("deleted", (string?)change["kind"]);
+    }
+
+    [Fact]
+    public async Task Listen_Delete_WithoutProtocol_EmitsRemovedKind()
+    {
+        await using var host = await AllowAllHost();
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
+
+        await ws.RequestAsync(Set("wsq2/a", 1));
+        var resp = await ws.RequestAsync(new JsonObject
+        {
+            ["type"] = "listen",
+            ["query"] = new JsonObject { ["collection"] = "wsq2" },
+        });
+        var subId = (string?)resp["result"]!["subscriptionId"];
+        await ws.WaitForAsync(f => (string?)f["type"] == "listen.snapshot" && (string?)f["subscriptionId"] == subId);
+
+        await ws.RequestAsync(Delete("wsq2/a"));
+
+        var delta = await ws.WaitForAsync(f =>
+            (string?)f["type"] == "listen.delta" && (string?)f["subscriptionId"] == subId);
+        var change = delta["changes"]!.AsArray()[0]!.AsObject();
+        Assert.Equal("removed", (string?)change["kind"]);
+    }
+
+    [Fact]
+    public async Task Listen_LimitWindowExit_WithProtocol2_EmitsRemovedNotDeleted()
+    {
+        await using var host = await AllowAllHost();
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
+
+        await ws.RequestAsync(Set("wsq3/a", 1));   // only member of a limit-1 query
+        var resp = await ws.RequestAsync(new JsonObject
+        {
+            ["type"] = "listen",
+            ["query"] = new JsonObject
+            {
+                ["collection"] = "wsq3",
+                ["orderBy"] = new JsonArray(new JsonObject { ["field"] = "n", ["direction"] = "asc" }),
+                ["limit"] = 1,
+            },
+            ["protocol"] = 2,
+        });
+        var subId = (string?)resp["result"]!["subscriptionId"];
+        await ws.WaitForAsync(f => (string?)f["type"] == "listen.snapshot" && (string?)f["subscriptionId"] == subId);
+
+        // Insert b with a smaller key → b enters the window, a is pushed out but STILL EXISTS.
+        await ws.RequestAsync(Set("wsq3/b", 0));
+
+        var delta = await ws.WaitForAsync(f =>
+            (string?)f["type"] == "listen.delta" && (string?)f["subscriptionId"] == subId);
+        var removed = delta["changes"]!.AsArray()
+            .Select(c => c!.AsObject())
+            .First(c => (string?)c["document"]!["id"] == "a");
+        Assert.Equal("removed", (string?)removed["kind"]);   // existence-at-diff-time: a still exists
+    }
+
+    [Fact]
+    public async Task Listen_ResumeWithCurrentToken_EmitsListenCurrent()
+    {
+        await using var host = await AllowAllHost();
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
+
+        await ws.RequestAsync(Set("wscur/a", 1));
+        var resp = await ws.RequestAsync(new JsonObject
+        {
+            ["type"] = "listen",
+            ["query"] = new JsonObject { ["collection"] = "wscur" },
+        });
+        var sub1 = (string?)resp["result"]!["subscriptionId"];
+        var snap = await ws.WaitForAsync(f =>
+            (string?)f["type"] == "listen.snapshot" && (string?)f["subscriptionId"] == sub1);
+        var token = (long)snap["resumeToken"]!;
+
+        await ws.RequestAsync(new JsonObject { ["type"] = "unlisten", ["subscriptionId"] = sub1 });
+
+        // Re-listen with the (still-current) token; nothing changed in between.
+        var resp2 = await ws.RequestAsync(new JsonObject
+        {
+            ["type"] = "listen",
+            ["query"] = new JsonObject { ["collection"] = "wscur" },
+            ["resumeToken"] = token,
+        });
+        var sub2 = (string?)resp2["result"]!["subscriptionId"];
+
+        var current = await ws.WaitForAsync(f =>
+            (string?)f["type"] == "listen.current" && (string?)f["subscriptionId"] == sub2);
+        Assert.Equal(token, (long)current["resumeToken"]!);
+    }
+
+    [Fact]
+    public async Task Listen_DeleteAmidOtherChangeInOneBatch_ClassifiesDeletedCorrectly()
+    {
+        await using var host = await AllowAllHost();
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
+
+        await ws.RequestAsync(Set("wsq4/a", 1));
+        await ws.RequestAsync(Set("wsq4/b", 2));
+        var resp = await ws.RequestAsync(new JsonObject
+        {
+            ["type"] = "listen",
+            ["query"] = new JsonObject { ["collection"] = "wsq4" },
+            ["protocol"] = 2,
+        });
+        var subId = (string?)resp["result"]!["subscriptionId"];
+        await ws.WaitForAsync(f => (string?)f["type"] == "listen.snapshot" && (string?)f["subscriptionId"] == subId);
+
+        // One atomic batch: delete `a`, modify `b`. Both land in a single delta, so
+        // the classification loop must label `a` deleted while `b` stays modified —
+        // a deterministic proxy for the coalesced removed-then-deleted case.
+        await ws.RequestAsync(new JsonObject
+        {
+            ["type"] = "write",
+            ["writes"] = new JsonArray(
+                new JsonObject { ["delete"] = new JsonObject { ["path"] = "wsq4/a" } },
+                new JsonObject
+                {
+                    ["set"] = new JsonObject
+                    {
+                        ["path"] = "wsq4/b",
+                        ["fields"] = new JsonObject { ["n"] = new JsonObject { ["integerValue"] = "9" } },
+                    },
+                }),
+        });
+
+        var delta = await ws.WaitForAsync(f =>
+            (string?)f["type"] == "listen.delta" && (string?)f["subscriptionId"] == subId);
+        var changes = delta["changes"]!.AsArray().Select(c => c!.AsObject()).ToList();
+        var aChange = changes.First(c => (string?)c["document"]!["id"] == "a");
+        var bChange = changes.First(c => (string?)c["document"]!["id"] == "b");
+        Assert.Equal("deleted", (string?)aChange["kind"]);    // truly deleted
+        Assert.Equal("modified", (string?)bChange["kind"]);   // still present, changed
     }
 }

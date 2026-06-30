@@ -45,6 +45,9 @@ public abstract class LiveSubscriptionRegistry<TGroup, TSnapshot>(NpgsqlDataSour
     /// <summary>Build the initial snapshot from the group's already-initialized state.</summary>
     protected abstract TSnapshot BuildInitialSnapshot(TGroup group);
 
+    /// <summary>Build a "current" marker (no documents) for a covered resume.</summary>
+    protected abstract TSnapshot BuildCurrentMarker(TGroup group);
+
     /// <summary>True when the feed has a change relevant to this group after <paramref name="resumeSeq"/>.</summary>
     protected abstract Task<bool> HasRelevantChangesAfterAsync(TGroup group, long resumeSeq, CancellationToken ct);
 
@@ -140,7 +143,8 @@ public abstract class LiveSubscriptionRegistry<TGroup, TSnapshot>(NpgsqlDataSour
                 {
                     // I3: join the group silently so the handle still receives future diffs.
                     lock (group.Gate) group.Handles.Add(handle);
-                    return;                                                 // provably nothing relevant
+                    handle.Push(BuildCurrentMarker(group)); // tell the client it is current
+                    return;
                 }
 
                 // I3: add handle to group under the semaphore, immediately before pushing the initial

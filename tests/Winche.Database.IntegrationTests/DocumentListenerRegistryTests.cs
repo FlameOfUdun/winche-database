@@ -110,16 +110,19 @@ public class DocumentListenerRegistryTests(PostgresFixture fx) : QueryTestBase(f
         await using (var e0 = l.Snapshots().GetAsyncEnumerator())
             token = (await NextAsync(e0)).ResumeToken;
 
-        // Resume with no change to the target → initial snapshot suppressed (stays silent)…
+        // Resume with no change to the target → a CURRENT marker (no document) instead of
+        // a full snapshot.
         await using var resumed = await db.ListenToDocumentAsync("dlr3/a", new ListenOptions(ResumeFrom: token));
         await using var er = resumed.Snapshots().GetAsyncEnumerator();
-        var pending = er.MoveNextAsync().AsTask();
+        var marker = await NextAsync(er);
+        Assert.True(marker.Current);
 
-        // …even after a SIBLING write (path-scoped resume: sibling changes are irrelevant).
+        // A SIBLING write is irrelevant (path-scoped resume) → no further frame.
+        var pending = er.MoveNextAsync().AsTask();
         await rig.Db.WriteAsync([new SetWrite { Path = "dlr3/b", Fields = Map(("n", new IntegerValue(9))) }]);
         Assert.NotSame(pending, await Task.WhenAny(pending, Task.Delay(1500)));   // still pending → suppressed
 
-        // A write to the TARGET lifts suppression → snapshot arrives with the latest state.
+        // A write to the TARGET delivers a snapshot with the latest state.
         await rig.Db.WriteAsync([new SetWrite { Path = "dlr3/a", Fields = Map(("n", new IntegerValue(2))) }]);
         Assert.True(await pending);
         Assert.True(er.Current.Exists);
