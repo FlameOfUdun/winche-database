@@ -30,7 +30,7 @@ public class TransactionalGetAuthTests(PostgresFixture fx) : QueryTestBase(fx)
         await core.WriteAsync([new SetWrite { Path = path, Fields = new Dictionary<string, Value> { ["x"] = new IntegerValue(1) } }]);
 
         // Deny-all ruleset: a transactional get must now throw rather than leak the document.
-        var guard = new RuleGuardedDocumentDatabase(core, new RuleEngine(RulesetBuilder.Build(_ => { }), WincheRuleValueComparer.Instance), new StaticClaimsAccessor(Claims));
+        var guard = new RuleGuardedDocumentDatabase(core, new RuleEngine(new StaticRuleSetRepository(RuleSetBuilder.Build(_ => { })), WincheRuleValueComparer.Instance), new StaticClaimsAccessor(Claims));
 
         var tx = await guard.BeginTransactionAsync();
         await Assert.ThrowsAsync<AccessDeniedException>(() => guard.GetAsync(tx.Id, path));
@@ -43,9 +43,9 @@ public class TransactionalGetAuthTests(PostgresFixture fx) : QueryTestBase(fx)
         var path = $"secret/{Guid.NewGuid():N}";
         await core.WriteAsync([new SetWrite { Path = path, Fields = new Dictionary<string, Value> { ["x"] = new IntegerValue(1) } }]);
 
-        var allowRead = RulesetBuilder.Build(r =>
+        var allowRead = RuleSetBuilder.Build(r =>
             r.Match("secret/{id}", m => m.Allow(RuleOperations.Read, new LiteralExpression(RuleValue.Bool(true)))));
-        var guard = new RuleGuardedDocumentDatabase(core, new RuleEngine(allowRead, WincheRuleValueComparer.Instance), new StaticClaimsAccessor(Claims));
+        var guard = new RuleGuardedDocumentDatabase(core, new RuleEngine(new StaticRuleSetRepository(allowRead), WincheRuleValueComparer.Instance), new StaticClaimsAccessor(Claims));
 
         var tx = await guard.BeginTransactionAsync();
         var doc = await guard.GetAsync(tx.Id, path);

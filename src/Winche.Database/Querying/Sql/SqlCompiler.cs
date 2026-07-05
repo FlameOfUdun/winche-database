@@ -52,7 +52,7 @@ internal static class SqlCompiler
         var allColumns = Columns.Split(", ")
             .Select(c => c == "data" ? dataColumn : $"{Alias}.{c}");
         sb.AppendLine($"SELECT {string.Join(", ", allColumns)}");
-        sb.AppendLine($"FROM {WincheTables.Documents} {Alias}");
+        sb.AppendLine($"FROM {WincheDatabaseTables.Documents} {Alias}");
         sb.AppendLine($"WHERE {Alias}.collection_path = {bag.Add(scan.Collection)}");
         if (collectionIdScope is not null)
             sb.AppendLine($"  AND {Alias}.collection_id = {bag.Add(collectionIdScope)}");

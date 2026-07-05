@@ -10,7 +10,7 @@ using Winche.Database.Runtime.ChangeFeed;
 namespace Winche.Database.Runtime.Hosting;
 
 public sealed class ChangeFeedHostedService(
-    [FromKeyedServices(ServiceKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source,
+    [FromKeyedServices(WincheDatabaseKeys.DataSource)] NpgsqlDataSource source,
     IOptions<WincheDatabaseOptions> options,
     IEnumerable<IChangeFeedConsumer> consumers,
     ILogger<ChangeFeedPump> logger) : BackgroundService

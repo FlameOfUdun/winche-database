@@ -12,7 +12,7 @@ public static class DocumentSql
         var bag = new ParameterBag();
         var p = bag.Add(path);
         var suffix = forUpdate ? " FOR UPDATE" : "";
-        return new CompiledSql($"SELECT {Columns} FROM {WincheTables.Documents} WHERE document_path = {p}{suffix}", bag.ToArray());
+        return new CompiledSql($"SELECT {Columns} FROM {WincheDatabaseTables.Documents} WHERE document_path = {p}{suffix}", bag.ToArray());
     }
 
     public static CompiledSql Upsert(string path, string id, string collection, string collectionId, string dataJson)
@@ -25,9 +25,9 @@ public static class DocumentSql
         var pData = bag.AddJsonb(dataJson);
 
         var sql = $"""
-            INSERT INTO {WincheTables.Documents} (document_path, document_id, collection_path, collection_id, data, created_at, updated_at, version)
+            INSERT INTO {WincheDatabaseTables.Documents} (document_path, document_id, collection_path, collection_id, data, created_at, updated_at, version)
             VALUES ({pPath}, {pId}, {pCol}, {pColId}, {pData}, NOW(), NOW(), 1)
-            ON CONFLICT (document_path) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW(), version = {WincheTables.Documents}.version + 1
+            ON CONFLICT (document_path) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW(), version = {WincheDatabaseTables.Documents}.version + 1
             RETURNING {Columns}
             """;
         return new CompiledSql(sql, bag.ToArray());
@@ -40,7 +40,7 @@ public static class DocumentSql
         var pData = bag.AddJsonb(dataJson);
 
         var sql = $"""
-            UPDATE {WincheTables.Documents}
+            UPDATE {WincheDatabaseTables.Documents}
             SET data = {pData}, updated_at = NOW(), version = version + 1
             WHERE document_path = {pPath}
             RETURNING {Columns}
@@ -54,7 +54,7 @@ public static class DocumentSql
         var pPath = bag.Add(path);
         var pPrefix = bag.Add(LikePatternEscaper.Escape(path) + "/%");
         var sql = $"""
-            SELECT document_path FROM {WincheTables.Documents}
+            SELECT document_path FROM {WincheDatabaseTables.Documents}
             WHERE document_path = {pPath} OR document_path LIKE {pPrefix} ESCAPE '\'
             FOR UPDATE
             """;
@@ -64,7 +64,7 @@ public static class DocumentSql
     public static CompiledSql GetMany(IReadOnlyList<string> paths)
     {
         var bag = new ParameterBag();
-        return new CompiledSql($"SELECT {Columns} FROM {WincheTables.Documents} WHERE document_path = ANY({bag.AddTextArray(paths.ToArray())})", bag.ToArray());
+        return new CompiledSql($"SELECT {Columns} FROM {WincheDatabaseTables.Documents} WHERE document_path = ANY({bag.AddTextArray(paths.ToArray())})", bag.ToArray());
     }
 
     public static CompiledSql DeleteSubtree(string path)
@@ -74,7 +74,7 @@ public static class DocumentSql
         var pPrefix = bag.Add(LikePatternEscaper.Escape(path) + "/%");
 
         var sql = $"""
-            DELETE FROM {WincheTables.Documents}
+            DELETE FROM {WincheDatabaseTables.Documents}
             WHERE document_path = {pPath} OR document_path LIKE {pPrefix} ESCAPE '\'
             RETURNING document_path
             """;

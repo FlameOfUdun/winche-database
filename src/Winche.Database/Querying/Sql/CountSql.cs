@@ -50,8 +50,8 @@ internal static class CountSql
 
         // An explicit limit caps the count: count rows of a LIMITed projection. Otherwise count the lot.
         var sql = limit is { } n
-            ? $"SELECT COUNT(*) FROM (SELECT 1 FROM {WincheTables.Documents} {Alias} WHERE {where} LIMIT {bag.Add(n)}) _c"
-            : $"SELECT COUNT(*) FROM {WincheTables.Documents} {Alias} WHERE {where}";
+            ? $"SELECT COUNT(*) FROM (SELECT 1 FROM {WincheDatabaseTables.Documents} {Alias} WHERE {where} LIMIT {bag.Add(n)}) _c"
+            : $"SELECT COUNT(*) FROM {WincheDatabaseTables.Documents} {Alias} WHERE {where}";
 
         return new CompiledSql(sql, bag.ToArray());
     }

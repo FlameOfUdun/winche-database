@@ -11,7 +11,7 @@ namespace Winche.Database.Runtime.Hosting;
 
 /// <summary>Bounds the feed table: deletes rows older than ChangeFeed.Retention (spec §4).</summary>
 public sealed class RetentionPruner(
-    [FromKeyedServices(ServiceKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source,
+    [FromKeyedServices(WincheDatabaseKeys.DataSource)] NpgsqlDataSource source,
     IOptions<WincheDatabaseOptions> options,
     ILogger<RetentionPruner> logger) : BackgroundService
 {

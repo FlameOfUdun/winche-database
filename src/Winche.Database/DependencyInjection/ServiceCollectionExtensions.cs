@@ -12,6 +12,7 @@ using Winche.Database.Runtime.Listening;
 using Winche.Database.Runtime.Writes;
 using Winche.Database.Schema;
 using Winche.Rules;
+using Winche.Rules.DependencyInjection;
 
 namespace Winche.Database.DependencyInjection;
 
@@ -35,19 +36,19 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton(Options.Create(options));
 
-        services.AddNpgsqlDataSource(connectionString, serviceKey: ServiceKeys.DATA_SOURCE_KEY);
+        services.AddNpgsqlDataSource(connectionString, serviceKey: WincheDatabaseKeys.DataSource);
 
         services.AddSingleton<CollectionIndexResolver>();
         services.AddSingleton(sp => new QueryListenerRegistry(
-            sp.GetRequiredKeyedService<NpgsqlDataSource>(ServiceKeys.DATA_SOURCE_KEY),
+            sp.GetRequiredKeyedService<NpgsqlDataSource>(WincheDatabaseKeys.DataSource),
             sp.GetRequiredService<CollectionIndexResolver>())
         );
         services.AddSingleton(sp => new DocumentListenerRegistry(
-            sp.GetRequiredKeyedService<NpgsqlDataSource>(ServiceKeys.DATA_SOURCE_KEY)));
+            sp.GetRequiredKeyedService<NpgsqlDataSource>(WincheDatabaseKeys.DataSource)));
         // Plain (unguarded) core — for privileged reads (e.g. ListCollectionIdsAsync). Its TransactionLedger
         // is NOT shared with the guarded core registered below; do not cross transaction handles between them.
         services.AddSingleton(sp => new DocumentDatabase(
-            sp.GetRequiredKeyedService<NpgsqlDataSource>(ServiceKeys.DATA_SOURCE_KEY),
+            sp.GetRequiredKeyedService<NpgsqlDataSource>(WincheDatabaseKeys.DataSource),
             sp.GetRequiredService<IOptions<WincheDatabaseOptions>>(),
             sp.GetRequiredService<QueryListenerRegistry>(),
             sp.GetRequiredService<CollectionIndexResolver>(),
@@ -70,12 +71,14 @@ public static class ServiceCollectionExtensions
         // ── Rules guard ─────────────────────────────────────────────────────────
         // This package owns an isolated rules engine, registered under a package-specific key so the
         // Database engine and the Storage engine never merge. Built from this package's own UseRules
-        // rulesets (empty => deny-all), using the engine-faithful comparer.
-        var ruleEngine = new RuleEngine(RuleSet.Merge(options.Rulesets), WincheRuleValueComparer.Instance);
-        services.AddKeyedSingleton(ServiceKeys.RULE_ENGINE_KEY, ruleEngine);
+        // rulesets (empty => deny-all), using the engine-faithful comparer. The engine is hot-swappable
+        // via a mutable rule-set repository, still isolated under the package-specific key.
+        services.AddWincheRules(WincheDatabaseKeys.RuleEngine, o => o
+            .WithRuleValueComparer(WincheRuleValueComparer.Instance)
+            .WithMutableRuleSetRepository(RuleSet.Merge(options.Rulesets)));
 
         services.AddSingleton<IWriteAuthorizer>(sp => new RulesWriteAuthorizer(
-            sp.GetRequiredKeyedService<RuleEngine>(ServiceKeys.RULE_ENGINE_KEY),
+            sp.GetRequiredKeyedService<RuleEngine>(WincheDatabaseKeys.RuleEngine),
             sp.GetRequiredService<IRuleClaimsAccessor>())
         );
 
@@ -84,14 +87,14 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(sp =>
             new RuleGuardedDocumentDatabase(
                 new DocumentDatabase(
-                    sp.GetRequiredKeyedService<NpgsqlDataSource>(ServiceKeys.DATA_SOURCE_KEY),
+                    sp.GetRequiredKeyedService<NpgsqlDataSource>(WincheDatabaseKeys.DataSource),
                     sp.GetRequiredService<IOptions<WincheDatabaseOptions>>(),
                     sp.GetRequiredService<QueryListenerRegistry>(),
                     sp.GetRequiredService<CollectionIndexResolver>(),
                     sp.GetRequiredService<IWriteAuthorizer>(),
                     docListeners: sp.GetRequiredService<DocumentListenerRegistry>()
                 ),
-                sp.GetRequiredKeyedService<RuleEngine>(ServiceKeys.RULE_ENGINE_KEY),
+                sp.GetRequiredKeyedService<RuleEngine>(WincheDatabaseKeys.RuleEngine),
                 sp.GetRequiredService<IRuleClaimsAccessor>())
             );
 

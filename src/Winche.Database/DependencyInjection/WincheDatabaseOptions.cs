@@ -113,14 +113,14 @@ public sealed class WincheDatabaseOptions
     }
 
     /// <summary>
-    /// Builds a <see cref="RuleSet"/> from a <see cref="RulesetBuilder"/> delegate and adds it
-    /// to the merged set of active rulesets. Shorthand for <c>UseRules(RulesetBuilder.Build(configure))</c>.
+    /// Builds a <see cref="RuleSet"/> from a <see cref="RuleSetBuilder"/> delegate and adds it
+    /// to the merged set of active rulesets. Shorthand for <c>UseRules(RuleSetBuilder.Build(configure))</c>.
     /// Multiple <c>UseRules</c> calls accumulate — each registered ruleset's blocks are
     /// OR-combined with all others. With no <c>UseRules</c> call, access is default-deny.
     /// </summary>
-    public WincheDatabaseOptions UseRules(Action<RulesetBuilder> configure)
+    public WincheDatabaseOptions UseRules(Action<RuleSetBuilder> configure)
     {
-        Rulesets.Add(RulesetBuilder.Build(configure));
+        Rulesets.Add(RuleSetBuilder.Build(configure));
         return this;
     }
 }

@@ -50,11 +50,11 @@ public sealed class PostgresFixture : IAsyncLifetime
     {
         await using var conn = await DataSource.OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"TRUNCATE {WincheTables.Documents}";
+        cmd.CommandText = $"TRUNCATE {WincheDatabaseTables.Documents}";
         await cmd.ExecuteNonQueryAsync();
         await ResetChangesAsync();
         await using var cmd2 = conn.CreateCommand();
-        cmd2.CommandText = $"TRUNCATE {WincheTables.FeedCursors}";
+        cmd2.CommandText = $"TRUNCATE {WincheDatabaseTables.FeedCursors}";
         await cmd2.ExecuteNonQueryAsync();
     }
 
@@ -64,7 +64,7 @@ public sealed class PostgresFixture : IAsyncLifetime
     {
         await using var conn = await DataSource.OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT seq, type, document_path, collection_path, version, commit_time FROM {WincheTables.Changes} WHERE seq > $1 ORDER BY seq";
+        cmd.CommandText = $"SELECT seq, type, document_path, collection_path, version, commit_time FROM {WincheDatabaseTables.Changes} WHERE seq > $1 ORDER BY seq";
         cmd.Parameters.AddWithValue(afterSeq);
         var rows = new List<(long, string, string, string, long, DateTimeOffset)>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -78,7 +78,7 @@ public sealed class PostgresFixture : IAsyncLifetime
     {
         await using var conn = await DataSource.OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"TRUNCATE {WincheTables.Changes} RESTART IDENTITY";
+        cmd.CommandText = $"TRUNCATE {WincheDatabaseTables.Changes} RESTART IDENTITY";
         await cmd.ExecuteNonQueryAsync();
     }
 }

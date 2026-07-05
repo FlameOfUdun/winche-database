@@ -12,12 +12,12 @@ namespace Winche.Database.IntegrationTests;
 public class RuleGuardedDocListenTests(PostgresFixture fx) : QueryTestBase(fx)
 {
     private static RuleGuardedDocumentDatabase Guard(DocumentDatabase core, RuleSet ruleset, IReadOnlyDictionary<string, object?>? claims) =>
-        new(core, new RuleEngine(ruleset, WincheRuleValueComparer.Instance), new StaticClaimsAccessor(claims));
+        new(core, new RuleEngine(new StaticRuleSetRepository(ruleset), WincheRuleValueComparer.Instance), new StaticClaimsAccessor(claims));
 
     private DocumentDatabase CoreWithDocListeners() =>
         new(Fx.DataSource, Options.Create(new WincheDatabaseOptions()), docListeners: new DocumentListenerRegistry(Fx.DataSource));
 
-    private static RuleSet OwnerOnly() => RulesetBuilder.Build(r =>
+    private static RuleSet OwnerOnly() => RuleSetBuilder.Build(r =>
         r.Match("userData/{userId}", b =>
             b.Allow(RuleOperations.Of(RuleOperation.Get), Expr.Auth("uid").Eq(Expr.Param("userId")))));
 

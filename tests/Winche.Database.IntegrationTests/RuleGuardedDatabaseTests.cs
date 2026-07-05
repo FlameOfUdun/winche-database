@@ -17,7 +17,7 @@ namespace Winche.Database.IntegrationTests;
 /// <summary>
 /// Integration tests for <see cref="RuleGuardedDocumentDatabase"/>.
 /// Constructs the guard directly: core <see cref="DocumentDatabase"/> + a <see cref="Ruleset"/>
-/// from <see cref="RulesetBuilder"/> + a <c>Func&lt;&gt;</c> returning fixed claims.
+/// from <see cref="RuleSetBuilder"/> + a <c>Func&lt;&gt;</c> returning fixed claims.
 /// Seed data is always written via the CORE (unguarded) db; assertions through the guard.
 /// Write authorization now lives inside the write transaction via <see cref="IWriteAuthorizer"/>;
 /// write tests use <see cref="AuthorizingCore"/> so the core carries the same ruleset/claims.
@@ -39,13 +39,13 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     /// </summary>
     private DocumentDatabase AuthorizingCore(RuleSet ruleset, IReadOnlyDictionary<string, object?>? claims) =>
         new(Fx.DataSource, Options.Create(new WincheDatabaseOptions()),
-            writeAuthorizer: new RulesWriteAuthorizer(new RuleEngine(ruleset, WincheRuleValueComparer.Instance), new StaticClaimsAccessor(claims)));
+            writeAuthorizer: new RulesWriteAuthorizer(new RuleEngine(new StaticRuleSetRepository(ruleset), WincheRuleValueComparer.Instance), new StaticClaimsAccessor(claims)));
 
     private static RuleGuardedDocumentDatabase Guard(
         DocumentDatabase core,
         RuleSet ruleset,
         IReadOnlyDictionary<string, object?>? claims) =>
-        new(core, new RuleEngine(ruleset, WincheRuleValueComparer.Instance), new StaticClaimsAccessor(claims));
+        new(core, new RuleEngine(new StaticRuleSetRepository(ruleset), WincheRuleValueComparer.Instance), new StaticClaimsAccessor(claims));
 
     private static Dictionary<string, Value> Fields(params (string K, Value V)[] entries) =>
         entries.ToDictionary(e => e.K, e => e.V);
@@ -60,7 +60,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Get_OwnerRule_OwnerAllowed_OtherDenied_MissingDenied()
     {
         var core = Core();
-        var ruleset = RulesetBuilder.Build(r =>
+        var ruleset = RuleSetBuilder.Build(r =>
             r.Match("docs/{docId}", b =>
                 b.Allow(
                     RuleOperations.Of(RuleOperation.Get),
@@ -97,7 +97,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     [Fact]
     public async Task Write_CreateRule_OwnerMatchAllowed_MismatchDenied()
     {
-        var ruleset = RulesetBuilder.Build(r =>
+        var ruleset = RuleSetBuilder.Build(r =>
             r.Match("items/{itemId}", b =>
                 b.Allow(
                     RuleOperations.Of(RuleOperation.Create),
@@ -133,7 +133,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     [Fact]
     public async Task Write_UpdateRule_OwnerImmutable_AllowedWhenUnchanged_DeniedWhenChanged()
     {
-        var ruleset = RulesetBuilder.Build(r =>
+        var ruleset = RuleSetBuilder.Build(r =>
             r.Match("notes/{noteId}", b =>
                 b.Allow(
                     RuleOperations.Of(RuleOperation.Update),
@@ -180,7 +180,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     [Fact]
     public async Task Write_DeleteRule_OwnerAllowed_OtherDenied()
     {
-        var ruleset = RulesetBuilder.Build(r =>
+        var ruleset = RuleSetBuilder.Build(r =>
             r.Match("posts/{postId}", b =>
                 b.Allow(
                     RuleOperations.Of(RuleOperation.Delete),
@@ -217,7 +217,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     {
         var core = Core();
         // Ruleset with no rules → default-deny for everything
-        var emptyRuleset = RulesetBuilder.Build(_ => { });
+        var emptyRuleset = RuleSetBuilder.Build(_ => { });
 
         await core.WriteAsync([new SetWrite
         {
@@ -232,7 +232,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     [Fact]
     public async Task Write_DefaultDeny_NoMatchingRule_Denied()
     {
-        var emptyRuleset = RulesetBuilder.Build(_ => { });
+        var emptyRuleset = RuleSetBuilder.Build(_ => { });
         var claims = new Dictionary<string, object?> { ["uid"] = "anyone" };
         var core = AuthorizingCore(emptyRuleset, claims);
         var seedCore = Core();
@@ -255,7 +255,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Write_BatchRejection_OneDenied_NeitherWritten()
     {
         // Rule: only allow create on "allowed" collection
-        var ruleset = RulesetBuilder.Build(r =>
+        var ruleset = RuleSetBuilder.Build(r =>
             r.Match("allowed/{docId}", b =>
                 b.Allow(RuleOperations.Of(RuleOperation.Create), Expr.Const(true))));
         // "blocked" collection has no rule → default-deny
@@ -287,7 +287,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Write_CreateVsUpdate_CorrectlyDetermined()
     {
         // Only allow Create, not Update
-        var ruleset = RulesetBuilder.Build(r =>
+        var ruleset = RuleSetBuilder.Build(r =>
             r.Match("once/{docId}", b =>
                 b.Allow(RuleOperations.Of(RuleOperation.Create), Expr.Const(true))));
 
@@ -324,7 +324,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Write_ServerTimestampTransform_RequestResourceEqualsRequestTime()
     {
         // Rule checks the transform-resolved field equals request.time
-        var ruleset = RulesetBuilder.Build(r =>
+        var ruleset = RuleSetBuilder.Build(r =>
             r.Match("ts/{docId}", b =>
                 b.Allow(
                     RuleOperations.Of(RuleOperation.Create),
@@ -361,7 +361,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     [Fact]
     public async Task Write_NoTransform_ServerTimestampRuleDenied()
     {
-        var ruleset = RulesetBuilder.Build(r =>
+        var ruleset = RuleSetBuilder.Build(r =>
             r.Match("ts2/{docId}", b =>
                 b.Allow(
                     RuleOperations.Of(RuleOperation.Create),
@@ -400,7 +400,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
         }]);
 
         // Rule: allow update only when incremented result == 15
-        var rulesetAllow = RulesetBuilder.Build(r =>
+        var rulesetAllow = RuleSetBuilder.Build(r =>
             r.Match("counters/{docId}", b =>
                 b.Allow(
                     RuleOperations.Of(RuleOperation.Update),
@@ -426,7 +426,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
         Assert.Equal(new IntegerValue(15L), after!.Fields["count"]);
 
         // Rule that requires count == 10 (the pre-write value): should be denied
-        var rulesetDeny = RulesetBuilder.Build(r =>
+        var rulesetDeny = RuleSetBuilder.Build(r =>
             r.Match("counters/{docId}", b =>
                 b.Allow(
                     RuleOperations.Of(RuleOperation.Update),
@@ -473,7 +473,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
         }]);
 
         // Rule: allow update if "b" is in the post-write tags
-        var ruleset = RulesetBuilder.Build(r =>
+        var ruleset = RuleSetBuilder.Build(r =>
             r.Match("arrays/{docId}", b =>
                 b.Allow(
                     RuleOperations.Of(RuleOperation.Update),
@@ -530,7 +530,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Query_OwnerRule_ConstrainedAllowed_UnconstrainedRejected()
     {
         var core = Core();
-        var ruleset = RulesetBuilder.Build(r =>
+        var ruleset = RuleSetBuilder.Build(r =>
             r.Match("owners/{docId}", b =>
                 b.Allow(
                     RuleOperations.Read,
@@ -572,7 +572,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Query_PublicFlagRule_ConstrainedAllowed_UnconstrainedRejected()
     {
         var core = Core();
-        var ruleset = RulesetBuilder.Build(r =>
+        var ruleset = RuleSetBuilder.Build(r =>
             r.Match("articles/{docId}", b =>
                 b.Allow(
                     RuleOperations.Read,
@@ -612,7 +612,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Count_OwnerRule_ConstrainedAllowed_UnconstrainedRejected()
     {
         var core = Core();
-        var ruleset = RulesetBuilder.Build(r =>
+        var ruleset = RuleSetBuilder.Build(r =>
             r.Match("items/{docId}", b =>
                 b.Allow(
                     RuleOperations.Read,
@@ -655,7 +655,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Query_DefaultDeny_NoMatchingRule_Rejected()
     {
         var core = Core();
-        var emptyRuleset = RulesetBuilder.Build(_ => { });
+        var emptyRuleset = RuleSetBuilder.Build(_ => { });
 
         await core.WriteAsync([new SetWrite
         {
@@ -713,7 +713,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Listen_UnconstrainedQuery_ThrowsAccessDenied_AtSubscribeTime()
     {
         await using var rig = StartListenRig();
-        var ruleset = RulesetBuilder.Build(r =>
+        var ruleset = RuleSetBuilder.Build(r =>
             r.Match("listeners/{docId}", b =>
                 b.Allow(
                     RuleOperations.Read,
@@ -736,7 +736,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Listen_ConstrainedQuery_AllowedAndDeliversOwnedDoc()
     {
         await using var rig = StartListenRig();
-        var ruleset = RulesetBuilder.Build(r =>
+        var ruleset = RuleSetBuilder.Build(r =>
             r.Match("listeners2/{docId}", b =>
                 b.Allow(
                     RuleOperations.Read,
@@ -779,7 +779,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     public void Listen_DefaultDeny_EmptyRuleset_Throws()
     {
         var core = Core();
-        var emptyRuleset = RulesetBuilder.Build(_ => { });
+        var emptyRuleset = RuleSetBuilder.Build(_ => { });
         var guard = Guard(core, emptyRuleset, new Dictionary<string, object?> { ["uid"] = "anyone" });
 
         Assert.Throws<AccessDeniedException>(() =>
@@ -795,7 +795,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task GetAll_OwnerRule_AllAllowed_OnePartiallyDeniedThrows()
     {
         var core = Core();
-        var ruleset = RulesetBuilder.Build(r =>
+        var ruleset = RuleSetBuilder.Build(r =>
             r.Match("docs/{docId}", b =>
                 b.Allow(
                     RuleOperations.Read,
@@ -837,7 +837,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task RunTransaction_AuthorizedRead_Succeeds()
     {
         var core = Core();
-        var ruleset = RulesetBuilder.Build(r =>
+        var ruleset = RuleSetBuilder.Build(r =>
             r.Match("docs/{docId}", b =>
                 b.Allow(RuleOperations.Read, Expr.Resource("ownerId").Eq(Expr.Auth("uid")))));
 
@@ -866,7 +866,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task RunTransaction_UnauthorizedRead_ThrowsAndCommitsNothing()
     {
         var core = Core();
-        var ruleset = RulesetBuilder.Build(r =>
+        var ruleset = RuleSetBuilder.Build(r =>
             r.Match("docs/{docId}", b =>
                 b.Allow(RuleOperations.Read, Expr.Resource("ownerId").Eq(Expr.Auth("uid")))));
 

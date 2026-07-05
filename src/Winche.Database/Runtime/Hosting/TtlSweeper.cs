@@ -19,7 +19,7 @@ namespace Winche.Database.Runtime.Hosting;
 /// </summary>
 public sealed class TtlSweeper(
     DocumentDatabase core,
-    [FromKeyedServices(ServiceKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source,
+    [FromKeyedServices(WincheDatabaseKeys.DataSource)] NpgsqlDataSource source,
     IEnumerable<TtlPolicy> policies,
     IOptions<WincheDatabaseOptions> options,
     ILogger<TtlSweeper> logger) : BackgroundService

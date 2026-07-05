@@ -15,8 +15,8 @@ public class TransactionalWriteAuthTests(PostgresFixture fx) : QueryTestBase(fx)
     [Fact]
     public async Task TxCommit_DeniedWrite_RollsBack()
     {
-        var ruleset = RulesetBuilder.Build(_ => { });   // deny-all
-        var authorizer = new RulesWriteAuthorizer(new RuleEngine(ruleset, WincheRuleValueComparer.Instance), new StaticClaimsAccessor(new Dictionary<string, object?> { ["uid"] = "u" }));
+        var ruleset = RuleSetBuilder.Build(_ => { });   // deny-all
+        var authorizer = new RulesWriteAuthorizer(new RuleEngine(new StaticRuleSetRepository(ruleset), WincheRuleValueComparer.Instance), new StaticClaimsAccessor(new Dictionary<string, object?> { ["uid"] = "u" }));
         var core = new DocumentDatabase(Fx.DataSource, Options.Create(new WincheDatabaseOptions()),
             listeners: null, scopes: null, writeAuthorizer: authorizer);
 

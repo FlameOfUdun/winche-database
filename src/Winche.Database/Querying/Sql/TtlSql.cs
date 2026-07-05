@@ -20,7 +20,7 @@ internal static class TtlSql
 
         // A missing field or non-timestamp value yields SQL NULL → NULL < now() is not true → excluded.
         var sql =
-            $"SELECT d.document_path FROM {WincheTables.Documents} d " +
+            $"SELECT d.document_path FROM {WincheDatabaseTables.Documents} d " +
             $"WHERE d.collection_id = {collId} " +
             $"AND ({tagged} ->> 'timestampValue')::timestamptz < now() " +
             $"LIMIT {limit}";

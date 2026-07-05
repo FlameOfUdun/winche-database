@@ -49,7 +49,7 @@ public static class CollectionListSql
             SELECT cid
             FROM (
                 SELECT DISTINCT {cidExpr} AS cid
-                FROM {WincheTables.Documents}
+                FROM {WincheDatabaseTables.Documents}
                 WHERE {where}
             ) sub
             WHERE ({pAfter}::text IS NULL OR cid > {pAfter}::text COLLATE "C")

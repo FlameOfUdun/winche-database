@@ -7,7 +7,7 @@ using Winche.Database.Querying.Sql;
 namespace Winche.Database.Schema;
 
 public sealed class SchemaManager(
-    [FromKeyedServices(ServiceKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source,
+    [FromKeyedServices(WincheDatabaseKeys.DataSource)] NpgsqlDataSource source,
     IEnumerable<IndexDefinition> indexes
 ) : ISchemaManager
 {

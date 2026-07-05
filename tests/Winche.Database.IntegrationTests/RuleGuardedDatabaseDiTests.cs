@@ -85,7 +85,7 @@ public class RuleGuardedDatabaseDiTests(PostgresFixture fx) : IAsyncLifetime
     [Fact]
     public async Task UseRules_AuthorizedGetSucceeds_UnauthorizedGetThrowsNativeException()
     {
-        var ruleset = RulesetBuilder.Build(r =>
+        var ruleset = RuleSetBuilder.Build(r =>
             r.Match("di/{docId}", b =>
                 b.Allow(
                     RuleOperations.Of(RuleOperation.Get),
@@ -135,7 +135,7 @@ public class RuleGuardedDatabaseDiTests(PostgresFixture fx) : IAsyncLifetime
     [Fact]
     public async Task UseRules_ClaimsBridge_ChangingClaimsChangesDecision()
     {
-        var ruleset = RulesetBuilder.Build(r =>
+        var ruleset = RuleSetBuilder.Build(r =>
             r.Match("bridge/{docId}", b =>
                 b.Allow(
                     RuleOperations.Of(RuleOperation.Get),
@@ -170,7 +170,7 @@ public class RuleGuardedDatabaseDiTests(PostgresFixture fx) : IAsyncLifetime
     [Fact]
     public void UseRules_IRuleClaimsAccessor_ResolvesCorrectly()
     {
-        var ruleset = RulesetBuilder.Build(_ => { });
+        var ruleset = RuleSetBuilder.Build(_ => { });
 
         // Build without registering a custom accessor — the null fallback should be used
         var services = new ServiceCollection();
@@ -190,13 +190,13 @@ public class RuleGuardedDatabaseDiTests(PostgresFixture fx) : IAsyncLifetime
     }
 
     /// <summary>
-    /// Verifies the <c>UseRules(Action&lt;RulesetBuilder&gt;)</c> overload wires correctly.
+    /// Verifies the <c>UseRules(Action&lt;RuleSetBuilder&gt;)</c> overload wires correctly.
     /// </summary>
     [Fact]
     public async Task UseRules_BuilderOverload_WiresCorrectly()
     {
         await using var provider = BuildProvider(
-            RulesetBuilder.Build(r =>
+            RuleSetBuilder.Build(r =>
                 r.Match("builder/{docId}", b =>
                     b.Allow(RuleOperations.Of(RuleOperation.Get), Expr.Const(true)))),
             out _);

@@ -84,7 +84,7 @@ internal static class AggregateSql
         var limitClause = limit is { } n ? $" LIMIT {bag.Add(n)}" : "";
         var sql =
             $"SELECT {string.Join(", ", outer)} " +
-            $"FROM (SELECT {string.Join(", ", inner)} FROM {WincheTables.Documents} {Alias} WHERE {where}{limitClause}) _agg";
+            $"FROM (SELECT {string.Join(", ", inner)} FROM {WincheDatabaseTables.Documents} {Alias} WHERE {where}{limitClause}) _agg";
 
         return new CompiledSql(sql, bag.ToArray());
     }

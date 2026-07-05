@@ -53,7 +53,7 @@ public static partial class IndexSql
             // The hash carries uniqueness/stability; the prefix is a human-readable label.
             // Collapse any non-identifier char (e.g. '-' in collection ids or field paths) to '_'
             // so the name stays DDL-safe.
-            var label = $"idx_{WincheTables.Documents}_{index.CollectionId}_{string.Join("_", index.Fields.Select(f => f.Path))}";
+            var label = $"idx_{WincheDatabaseTables.Documents}_{index.CollectionId}_{string.Join("_", index.Fields.Select(f => f.Path))}";
             var prefix = NonIdentifierChar().Replace(label, "_");
             name = $"{prefix[..Math.Min(prefix.Length, 54)]}_{hash}";
         }
@@ -79,7 +79,7 @@ public static partial class IndexSql
         if (index.Where is not null)
             whereClause += $" AND ({IndexPredicateSql.Emit(index.Where)})";
 
-        return $"CREATE INDEX IF NOT EXISTS \"{name}\" ON \"{WincheTables.Documents}\" ({string.Join(", ", exprs)}) {whereClause}";
+        return $"CREATE INDEX IF NOT EXISTS \"{name}\" ON \"{WincheDatabaseTables.Documents}\" ({string.Join(", ", exprs)}) {whereClause}";
     }
 
     public static string BuildDrop(string name)

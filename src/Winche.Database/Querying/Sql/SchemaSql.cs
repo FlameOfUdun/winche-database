@@ -18,7 +18,7 @@ public static class SchemaSql
     /// Cleanup lines drop the old trigger/function on existing databases.
     /// </summary>
     public static string TableDdl() => $$"""
-        CREATE TABLE IF NOT EXISTS {{WincheTables.Documents}} (
+        CREATE TABLE IF NOT EXISTS {{WincheDatabaseTables.Documents}} (
             document_path   TEXT        PRIMARY KEY,
             document_id     TEXT        NOT NULL,
             collection_path TEXT        NOT NULL,
@@ -29,16 +29,16 @@ public static class SchemaSql
             version         BIGINT      NOT NULL DEFAULT 1
         );
 
-        CREATE INDEX IF NOT EXISTS idx_{{WincheTables.Documents}}_document_id
-            ON {{WincheTables.Documents}}(document_id);
+        CREATE INDEX IF NOT EXISTS idx_{{WincheDatabaseTables.Documents}}_document_id
+            ON {{WincheDatabaseTables.Documents}}(document_id);
 
-        CREATE INDEX IF NOT EXISTS idx_{{WincheTables.Documents}}_collection_docid
-            ON {{WincheTables.Documents}}(collection_path, document_id ASC);
+        CREATE INDEX IF NOT EXISTS idx_{{WincheDatabaseTables.Documents}}_collection_docid
+            ON {{WincheDatabaseTables.Documents}}(collection_path, document_id ASC);
 
-        CREATE INDEX IF NOT EXISTS idx_{{WincheTables.Documents}}_data
-            ON {{WincheTables.Documents}} USING GIN(data);
+        CREATE INDEX IF NOT EXISTS idx_{{WincheDatabaseTables.Documents}}_data
+            ON {{WincheDatabaseTables.Documents}} USING GIN(data);
 
-        DROP TRIGGER IF EXISTS document_change_trigger ON {{WincheTables.Documents}};
+        DROP TRIGGER IF EXISTS document_change_trigger ON {{WincheDatabaseTables.Documents}};
         DROP FUNCTION IF EXISTS public.notify_document_change() CASCADE;
         """;
 
@@ -49,7 +49,7 @@ public static class SchemaSql
     /// DDL, so an existing database is migrated before the additive DDL would create new-named objects.
     /// Every step is guarded on current-schema existence checks, so it is a no-op on a fresh database
     /// and safe to run on every startup (idempotent). Uses literal historical object names on purpose
-    /// (not <c>WincheTables</c>, which now holds the new names).
+    /// (not <c>WincheDatabaseTables</c>, which now holds the new names).
     /// </summary>
     public static string MigrationDdl() => """
         DO $migrate$
@@ -110,7 +110,7 @@ public static class SchemaSql
     /// wake-up only — the rows are the durable truth (spec §2/§4).
     /// </summary>
     public static string ChangesDdl() => $$"""
-        CREATE TABLE IF NOT EXISTS {{WincheTables.Changes}} (
+        CREATE TABLE IF NOT EXISTS {{WincheDatabaseTables.Changes}} (
             seq             BIGSERIAL PRIMARY KEY,
             type            TEXT NOT NULL,
             document_path   TEXT NOT NULL,
@@ -119,10 +119,10 @@ public static class SchemaSql
             commit_time     TIMESTAMPTZ NOT NULL
         );
 
-        CREATE INDEX IF NOT EXISTS idx_{{WincheTables.Changes}}_commit_time
-            ON {{WincheTables.Changes}} (commit_time);
+        CREATE INDEX IF NOT EXISTS idx_{{WincheDatabaseTables.Changes}}_commit_time
+            ON {{WincheDatabaseTables.Changes}} (commit_time);
 
-        CREATE TABLE IF NOT EXISTS {{WincheTables.FeedCursors}} (
+        CREATE TABLE IF NOT EXISTS {{WincheDatabaseTables.FeedCursors}} (
             consumer   TEXT PRIMARY KEY,
             seq        BIGINT NOT NULL,
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -130,14 +130,14 @@ public static class SchemaSql
 
         CREATE OR REPLACE FUNCTION winche_notify_change() RETURNS TRIGGER AS $t$
         BEGIN
-            PERFORM pg_notify('{{WincheTables.ChangesNotifyChannel}}', NEW.seq::text);
+            PERFORM pg_notify('{{WincheDatabaseTables.ChangesNotifyChannel}}', NEW.seq::text);
             RETURN NEW;
         END;
         $t$ LANGUAGE plpgsql;
 
-        DROP TRIGGER IF EXISTS winche_documents_changes_trigger ON {{WincheTables.Changes}};
+        DROP TRIGGER IF EXISTS winche_documents_changes_trigger ON {{WincheDatabaseTables.Changes}};
         CREATE TRIGGER winche_documents_changes_trigger
-        AFTER INSERT ON {{WincheTables.Changes}}
+        AFTER INSERT ON {{WincheDatabaseTables.Changes}}
         FOR EACH ROW EXECUTE FUNCTION winche_notify_change();
         """;
 

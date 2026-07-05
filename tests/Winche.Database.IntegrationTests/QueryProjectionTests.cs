@@ -214,7 +214,7 @@ public class QueryProjectionTests(PostgresFixture fx) : QueryTestBase(fx)
     {
         var core = new DocumentDatabase(Fx.DataSource, Options.Create(new WincheDatabaseOptions()));
 
-        var ruleset = RulesetBuilder.Build(r =>
+        var ruleset = RuleSetBuilder.Build(r =>
             r.Match("owners/{docId}", b =>
                 b.Allow(
                     RuleOperations.Read,
@@ -243,7 +243,7 @@ public class QueryProjectionTests(PostgresFixture fx) : QueryTestBase(fx)
         }]);
 
         var aliceGuard = new RuleGuardedDocumentDatabase(
-            core, new RuleEngine(ruleset, WincheRuleValueComparer.Instance),
+            core, new RuleEngine(new StaticRuleSetRepository(ruleset), WincheRuleValueComparer.Instance),
             new StaticClaimsAccessor(new Dictionary<string, object?> { ["uid"] = "alice" }));
 
         // Query with WHERE ownerId == "alice" AND Select: ["name"]
@@ -274,7 +274,7 @@ public class QueryProjectionTests(PostgresFixture fx) : QueryTestBase(fx)
     {
         var core = new DocumentDatabase(Fx.DataSource, Options.Create(new WincheDatabaseOptions()));
 
-        var ruleset = RulesetBuilder.Build(r =>
+        var ruleset = RuleSetBuilder.Build(r =>
             r.Match("private/{docId}", b =>
                 b.Allow(
                     RuleOperations.Read,
@@ -287,7 +287,7 @@ public class QueryProjectionTests(PostgresFixture fx) : QueryTestBase(fx)
         }]);
 
         var aliceGuard = new RuleGuardedDocumentDatabase(
-            core, new RuleEngine(ruleset, WincheRuleValueComparer.Instance),
+            core, new RuleEngine(new StaticRuleSetRepository(ruleset), WincheRuleValueComparer.Instance),
             new StaticClaimsAccessor(new Dictionary<string, object?> { ["uid"] = "alice" }));
 
         // Unconstrained query + Select: ["ownerId"] → still denied (rules are not filters)

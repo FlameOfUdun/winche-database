@@ -226,6 +226,32 @@ Because a grant cannot be revoked by another rule, **grant narrowly**: don't wri
 read grant and expect a more specific rule to restrict it — instead grant read only where it should
 be allowed and let default-deny cover the rest.
 
+### Hot-swapping rules at runtime (10.0.0+)
+
+Rules are backed by a **mutable rule-set repository** seeded from your `UseRules(...)` calls at
+startup, and the engine reads the current ruleset on **every** evaluation. A running host can
+therefore replace the active ruleset without a restart or container rebuild — the change takes effect
+on the next operation. The engine and its repository are registered under the public key
+`WincheDatabaseKeys.RuleEngine`; resolve the write side to swap rules:
+
+```csharp
+using Microsoft.Extensions.DependencyInjection;
+using Winche.Database.Constants;
+using Winche.Rules;
+using Winche.Rules.Expressions;
+
+// Resolve the mutable repository registered under the public key (e.g. from an admin endpoint):
+var rules = provider.GetRequiredKeyedService<IMutableRuleSetRepository>(WincheDatabaseKeys.RuleEngine);
+
+// Replace the active ruleset — effective on the next operation, no restart:
+rules.Update(RuleSetBuilder.Build(r =>
+    r.Match("users/{userId}", u =>
+        u.Allow(RuleOperations.Read, Expr.Auth("uid").Eq(Expr.Param("userId"))))));
+```
+
+An in-flight evaluation keeps the ruleset snapshot it started with; the next one observes the new
+ruleset. To evaluate rules directly, resolve `RuleEngine` under the same key.
+
 ### Rules are not filters
 
 **For `list`/query operations, rules are not applied as post-execution row filters.** Instead, the
@@ -799,6 +825,24 @@ Connect at `/documents/ws?access_token=<jwt>`. The connection authenticates at t
 | `listen.current` | S→C | Covered-resume marker: the subscription is live and already up to date; carries the resume token, no documents (sent instead of a snapshot when a resume token is still current) |
 
 See [PROTOCOL](docs/PROTOCOL.md#7-websocket-protocol) for full message shapes, close codes, and listener protocol details.
+
+## Upgrading to 10.0.0
+
+10.0.0 upgrades the bundled rules engine to **Winche.Rules 3.0.0** and makes access rules
+**hot-swappable at runtime**. No data migration is required. Changes to be aware of:
+
+- **Rules are now hot-swappable.** The engine is backed by a mutable rule-set repository seeded from
+  your `UseRules(...)` calls, registered under the new public key `WincheDatabaseKeys.RuleEngine`.
+  Resolve `IMutableRuleSetRepository` under that key to replace the active ruleset without a restart
+  (see [Hot-swapping rules at runtime](#hot-swapping-rules-at-runtime-1000)). Existing startup
+  `UseRules` behavior is unchanged.
+- **`Winche.Rules` dependency bumped 2.1.0 → 3.0.0.** Relevant only if you reference `Winche.Rules`
+  types directly: the builder type was renamed `RulesetBuilder` → `RuleSetBuilder` (the `.Build(...)`
+  API is otherwise identical), and `RuleEngine` now takes an `IRuleSetRepository` instead of a
+  `RuleSet`. Code that only calls `config.UseRules(r => …)` is unaffected.
+- **`WincheTables` constant class renamed to `WincheDatabaseTables`** (naming consistency with
+  `WincheDatabaseKeys`). Affects only code/tooling that referenced the C# constants directly; the
+  underlying table names are unchanged.
 
 ## Upgrading to 9.1.0
 

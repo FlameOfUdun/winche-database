@@ -23,7 +23,7 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT seq, type, document_path, collection_path, version, commit_time FROM {WincheTables.Changes} WHERE seq > $1 ORDER BY seq LIMIT $2";
+        cmd.CommandText = $"SELECT seq, type, document_path, collection_path, version, commit_time FROM {WincheDatabaseTables.Changes} WHERE seq > $1 ORDER BY seq LIMIT $2";
         cmd.Parameters.AddWithValue(afterSeq);
         cmd.Parameters.AddWithValue(limit);
 
@@ -52,7 +52,7 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT COALESCE(MAX(seq), 0) FROM {WincheTables.Changes}";
+        cmd.CommandText = $"SELECT COALESCE(MAX(seq), 0) FROM {WincheDatabaseTables.Changes}";
         return (long)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
@@ -69,7 +69,7 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT EXISTS(SELECT 1 FROM {WincheTables.Changes} WHERE seq > $1 AND {column} = $2)";
+        cmd.CommandText = $"SELECT EXISTS(SELECT 1 FROM {WincheDatabaseTables.Changes} WHERE seq > $1 AND {column} = $2)";
         cmd.Parameters.AddWithValue(afterSeq);
         cmd.Parameters.AddWithValue(value);
         return (bool)(await cmd.ExecuteScalarAsync(ct))!;
@@ -80,7 +80,7 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT COALESCE(MIN(seq), 0) FROM {WincheTables.Changes}";
+        cmd.CommandText = $"SELECT COALESCE(MIN(seq), 0) FROM {WincheDatabaseTables.Changes}";
         return (long)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
@@ -88,7 +88,7 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT seq FROM {WincheTables.FeedCursors} WHERE consumer = $1";
+        cmd.CommandText = $"SELECT seq FROM {WincheDatabaseTables.FeedCursors} WHERE consumer = $1";
         cmd.Parameters.AddWithValue(consumer);
         return await cmd.ExecuteScalarAsync(ct) is long seq ? seq : null;
     }
@@ -100,8 +100,8 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source)
         // GREATEST guard: a backwards save (due to the seq/commit-order race) can only cause
         // redelivery (cursor stays at the higher value), never a permanent skip.
         cmd.CommandText = $"""
-            INSERT INTO {WincheTables.FeedCursors} (consumer, seq, updated_at) VALUES ($1, $2, now())
-            ON CONFLICT (consumer) DO UPDATE SET seq = GREATEST({WincheTables.FeedCursors}.seq, EXCLUDED.seq), updated_at = now()
+            INSERT INTO {WincheDatabaseTables.FeedCursors} (consumer, seq, updated_at) VALUES ($1, $2, now())
+            ON CONFLICT (consumer) DO UPDATE SET seq = GREATEST({WincheDatabaseTables.FeedCursors}.seq, EXCLUDED.seq), updated_at = now()
             """;
         cmd.Parameters.AddWithValue(consumer);
         cmd.Parameters.AddWithValue(seq);
@@ -113,7 +113,7 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"DELETE FROM {WincheTables.Changes} WHERE commit_time < $1";
+        cmd.CommandText = $"DELETE FROM {WincheDatabaseTables.Changes} WHERE commit_time < $1";
         cmd.Parameters.AddWithValue(cutoff);
         return await cmd.ExecuteNonQueryAsync(ct);
     }

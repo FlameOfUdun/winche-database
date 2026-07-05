@@ -86,7 +86,7 @@ public sealed class ChangeFeedPump(
 
         await using (var listen = conn.CreateCommand())
         {
-            listen.CommandText = $"LISTEN {WincheTables.ChangesNotifyChannel}";
+            listen.CommandText = $"LISTEN {WincheDatabaseTables.ChangesNotifyChannel}";
             await listen.ExecuteNonQueryAsync(ct);
         }
 

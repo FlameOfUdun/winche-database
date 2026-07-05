@@ -25,7 +25,7 @@ public class IndexSyncTests(PostgresFixture fx) : QueryTestBase(fx)
         string discoveredName;
         await using (var check = conn.CreateCommand())
         {
-            check.CommandText = $"SELECT indexname FROM pg_indexes WHERE indexname LIKE 'idx_{WincheTables.Documents}_c_%' AND tablename = '{WincheTables.Documents}'";
+            check.CommandText = $"SELECT indexname FROM pg_indexes WHERE indexname LIKE 'idx_{WincheDatabaseTables.Documents}_c_%' AND tablename = '{WincheDatabaseTables.Documents}'";
             var result = await check.ExecuteScalarAsync();
             Assert.NotNull(result);
             discoveredName = (string)result!;
