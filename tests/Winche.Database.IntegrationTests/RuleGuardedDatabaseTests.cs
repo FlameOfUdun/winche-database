@@ -858,6 +858,86 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
         Assert.Equal("alice", ownerId);
     }
 
+    // ── Cascade delete authorization ──────────────────────────────────────────
+
+    /// <summary>
+    /// Rule: allow delete on the org root; no rule matches its "teams" subcollection at all
+    /// (default-deny). A cascade delete must authorize every descendant, not just the root —
+    /// so the batch is denied and rolled back in full, root included.
+    /// </summary>
+    [Fact]
+    public async Task Write_CascadeDelete_DeniedDescendant_RollsBackWholeBatchRootIncluded()
+    {
+        var ruleset = RuleSetBuilder.Build(r =>
+            r.Match("orgs/{orgId}", b =>
+                b.Allow(RuleOperations.Of(RuleOperation.Delete), Expr.Const(true))));
+        // No rule for "orgs/{orgId}/teams/{teamId}" → default-deny.
+
+        var seedCore = Core();
+        await seedCore.WriteAsync([new SetWrite
+        {
+            Path = "orgs/o1",
+            Fields = Fields(("name", new StringValue("Acme"))),
+        }]);
+        await seedCore.WriteAsync([new SetWrite
+        {
+            Path = "orgs/o1/teams/t1",
+            Fields = Fields(("name", new StringValue("Core"))),
+        }]);
+
+        var claims = new Dictionary<string, object?> { ["uid"] = "alice" };
+        var core = AuthorizingCore(ruleset, claims);
+        var guard = Guard(core, ruleset, claims);
+
+        await Assert.ThrowsAsync<AccessDeniedException>(() =>
+            guard.WriteAsync([new DeleteWrite { Path = "orgs/o1", Cascade = true }]));
+
+        // Whole batch rolled back — root AND the denied descendant both still exist.
+        Assert.NotNull(await seedCore.GetAsync("orgs/o1"));
+        Assert.NotNull(await seedCore.GetAsync("orgs/o1/teams/t1"));
+    }
+
+    /// <summary>
+    /// Rule covers the org root and every descendant (root match + a recursive wildcard match) —
+    /// a cascade delete succeeds and removes the whole subtree, not just the root.
+    /// </summary>
+    [Fact]
+    public async Task Write_CascadeDelete_AllDescendantsPermitted_RemovesWholeSubtree()
+    {
+        var ruleset = RuleSetBuilder.Build(r =>
+        {
+            r.Match("orgs2/{orgId}", b => b.Allow(RuleOperations.Of(RuleOperation.Delete), Expr.Const(true)));
+            r.Match("orgs2/{orgId}/{document=**}", b => b.Allow(RuleOperations.Of(RuleOperation.Delete), Expr.Const(true)));
+        });
+
+        var seedCore = Core();
+        await seedCore.WriteAsync([new SetWrite
+        {
+            Path = "orgs2/o2",
+            Fields = Fields(("name", new StringValue("Acme"))),
+        }]);
+        await seedCore.WriteAsync([new SetWrite
+        {
+            Path = "orgs2/o2/teams/t1",
+            Fields = Fields(("name", new StringValue("Core"))),
+        }]);
+        await seedCore.WriteAsync([new SetWrite
+        {
+            Path = "orgs2/o2/teams/t1/members/m1",
+            Fields = Fields(("name", new StringValue("Bob"))),
+        }]);
+
+        var claims = new Dictionary<string, object?> { ["uid"] = "alice" };
+        var core = AuthorizingCore(ruleset, claims);
+        var guard = Guard(core, ruleset, claims);
+
+        await guard.WriteAsync([new DeleteWrite { Path = "orgs2/o2", Cascade = true }]);
+
+        Assert.Null(await seedCore.GetAsync("orgs2/o2"));
+        Assert.Null(await seedCore.GetAsync("orgs2/o2/teams/t1"));
+        Assert.Null(await seedCore.GetAsync("orgs2/o2/teams/t1/members/m1"));
+    }
+
     /// <summary>
     /// RunTransactionAsync authorizes the body's reads: a read the caller cannot get throws
     /// AccessDeniedException, aborting the transaction before any buffered write is committed.

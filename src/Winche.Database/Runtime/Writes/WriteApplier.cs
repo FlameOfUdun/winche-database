@@ -66,17 +66,6 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
             // ONE combined locking query — global ORDER BY path prevents deadlock.
             var state = await LoadAllLockedAsync(conn, tx, exactPaths, cascadeWritePaths, ct);
 
-            // Pre-write snapshots for authorization (taken before the apply loop mutates state).
-            Dictionary<string, Document?>? before = null;
-            if (authorizer is not null)
-            {
-                before = new Dictionary<string, Document?>(StringComparer.Ordinal);
-                foreach (var w in writes)
-                    before[w.Path] = state.TryGetValue(w.Path, out var s) && s.ExistedBefore
-                        ? ToDocument(w.Path, s.Fields, s.CreatedAt, s.UpdatedAt, s.Version)
-                        : null;
-            }
-
             // Compute cascade victims in C# from already-loaded state.
             var cascadeVictims = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
             foreach (var root in cascadeWritePaths)
@@ -85,6 +74,25 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
                     .Where(p => p == root || p.StartsWith(root + "/", StringComparison.Ordinal))
                     .Where(p => state[p].ExistedBefore)
                     .ToList();
+            }
+
+            // Pre-write snapshots for authorization (taken before the apply loop mutates state).
+            // Victims were filtered on ExistedBefore, so their lookup goes straight to ToDocument;
+            // a cascade root is both a write and a victim, hence the already-captured guard.
+            Dictionary<string, Document?>? before = null;
+            if (authorizer is not null)
+            {
+                before = new Dictionary<string, Document?>(StringComparer.Ordinal);
+                foreach (var w in writes)
+                    before[w.Path] = state.TryGetValue(w.Path, out var s) && s.ExistedBefore
+                        ? ToDocument(w.Path, s.Fields, s.CreatedAt, s.UpdatedAt, s.Version)
+                        : null;
+                foreach (var victim in cascadeVictims.Values.SelectMany(v => v))
+                {
+                    if (before.ContainsKey(victim)) continue;
+                    var s = state[victim];
+                    before[victim] = ToDocument(victim, s.Fields, s.CreatedAt, s.UpdatedAt, s.Version);
+                }
             }
 
             if (readValidations is not null)
@@ -117,13 +125,22 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
             if (authorizer is not null)
             {
                 var pending = new List<PendingWrite>(writes.Count);
+                var authorizedPaths = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var w in writes)
                 {
-                    var post = state[w.Path];
-                    var after = post.Exists
+                    var post = state.GetValueOrDefault(w.Path);
+                    var after = post is { Exists: true }
                         ? ToDocument(w.Path, post.Fields, post.CreatedAt, post.UpdatedAt, post.Version)
                         : null;
                     pending.Add(new PendingWrite(w, before![w.Path], after));
+                    authorizedPaths.Add(w.Path);
+                }
+                // Cascade roots are already in `writes`; skip victims that coincide with a write
+                // path or with a victim of another root in the same batch (overlapping subtrees).
+                foreach (var victim in cascadeVictims.Values.SelectMany(v => v))
+                {
+                    if (!authorizedPaths.Add(victim)) continue;
+                    pending.Add(new PendingWrite(new DeleteWrite { Path = victim }, before![victim], null));
                 }
                 // Throws on denial → tx disposes without commit → rolled back.
                 await authorizer.AuthorizeAsync(pending, new TxDocumentReader(conn, tx), commitTime, ct);
