@@ -20,4 +20,11 @@ public sealed class WsOptions
     /// so it is inert for non-JWT authentication setups.
     /// </summary>
     public bool CloseOnTokenExpiry { get; set; } = true;
+
+    /// <summary>
+    /// Upper bound on how long a draining close (see <see cref="WsConnection.DrainAndCloseAsync"/>)
+    /// waits for the send loop to flush queued frames before the socket is closed regardless.
+    /// Bounds teardown against a client that has stopped reading. Default: 5 seconds.
+    /// </summary>
+    public TimeSpan DrainTimeout { get; set; } = TimeSpan.FromSeconds(5);
 }

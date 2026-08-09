@@ -110,6 +110,24 @@ public class WsLifecycleTests(PostgresFixture fx) : QueryTestBase(fx)
         Assert.Equal("response", (string?)pong["type"]);
     }
 
+    // ── Draining close: a frame queued right before a client-initiated close is not dropped ──
+    [Fact]
+    public async Task NormalClose_DeliversFrameQueuedImmediatelyBeforeIt()
+    {
+        await using var host = await Host();
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
+
+        // Fire the request but don't wait for its response before closing the output side —
+        // the server's response lands in the send queue right as the close is noticed.
+        await ws.SendAsync(new JsonObject { ["type"] = "ping", ["id"] = "race" });
+        await ws.CloseOutputAsync();
+
+        var pong = await ws.WaitForAsync(f => (string?)f["id"] == "race");
+        Assert.Equal("response", (string?)pong["type"]);
+        await ws.WaitForCloseAsync();
+        Assert.Equal(WebSocketCloseStatus.NormalClosure, ws.CloseStatus);
+    }
+
     // ── Connection deadline: exp already elapsed → 4401 without serving requests ────
     [Fact]
     public async Task ExpiredExpClaim_ClosesPromptly_With4401()
@@ -118,6 +136,22 @@ public class WsLifecycleTests(PostgresFixture fx) : QueryTestBase(fx)
         var pastExp = DateTimeOffset.UtcNow.AddMinutes(-5).ToUnixTimeSeconds();
         var path = $"/documents/ws?access_token={Uri.EscapeDataString($"exp:{pastExp}")}";
         await using var ws = await WsTestClient.ConnectAsync(host.Server, path);
+        await ws.WaitForCloseAsync();
+        Assert.Equal((WebSocketCloseStatus)4401, ws.CloseStatus);
+    }
+
+    // ── Connection deadline: the UNAUTHENTICATED error frame is actually delivered alongside 4401 ──
+    [Fact]
+    public async Task ExpiredExpClaim_DeliversUnauthenticatedErrorFrame_With4401()
+    {
+        await using var host = await Host();
+        var pastExp = DateTimeOffset.UtcNow.AddMinutes(-5).ToUnixTimeSeconds();
+        var path = $"/documents/ws?access_token={Uri.EscapeDataString($"exp:{pastExp}")}";
+        await using var ws = await WsTestClient.ConnectAsync(host.Server, path);
+
+        var err = await ws.WaitForAsync(f => (string?)f["type"] == "error");
+        Assert.Equal("UNAUTHENTICATED", (string?)err["status"]);
+
         await ws.WaitForCloseAsync();
         Assert.Equal((WebSocketCloseStatus)4401, ws.CloseStatus);
     }

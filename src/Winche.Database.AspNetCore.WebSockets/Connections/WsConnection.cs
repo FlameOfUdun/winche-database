@@ -42,16 +42,23 @@ public sealed class WsConnection(WebSocket socket, WsOptions options) : IAsyncDi
     }
 
     /// <summary>
-    /// Completes the send channel (so RunSendLoopAsync drains and exits), then performs
-    /// the WebSocket close handshake. Call this instead of CloseAsync() when the caller
-    /// already holds a reference to the sendLoop task and cannot await it independently.
+    /// Completes the send channel and waits for RunSendLoopAsync to drain the queue and exit
+    /// on its own, then performs the WebSocket close handshake. Call this instead of
+    /// CloseAsync() when the caller already holds a reference to the sendLoop task and wants
+    /// queued frames delivered before closing. The wait is bounded by
+    /// <see cref="WsOptions.DrainTimeout"/> so a client that stops reading cannot hang teardown.
     /// </summary>
     public async Task DrainAndCloseAsync(Task sendLoop, WebSocketCloseStatus status, string reason)
     {
         _completed = true;
-        _closed.Cancel();
         _send.Writer.TryComplete();
-        await sendLoop;                                                   // drain queued frames first
+
+        // Attached before the wait so a fault surfacing after the timeout branch below gives up
+        // on sendLoop is still observed instead of becoming an unobserved task exception.
+        _ = sendLoop.ContinueWith(static t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
+        await Task.WhenAny(sendLoop, Task.Delay(options.DrainTimeout));
+        _closed.Cancel();
+
         try
         {
             if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)

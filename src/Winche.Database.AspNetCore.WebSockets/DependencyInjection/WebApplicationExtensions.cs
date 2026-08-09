@@ -174,9 +174,8 @@ public static class WebApplicationExtensions
         {
             await scope.DisposeAsync();
 
-            // The deadline close (4401) must win over the "bye"/NormalClosure below, so it is sent
-            // here first. The error frame is best effort — the close code and reason are the
-            // signal the client can rely on.
+            // The deadline close (4401) must win over the "bye"/NormalClosure below: send it here,
+            // first, via the draining close so the error frame is actually delivered alongside it.
             if (deadlineCts.IsCancellationRequested && !context.RequestAborted.IsCancellationRequested)
             {
                 conn.TrySend(new ErrorMessage
@@ -184,7 +183,7 @@ public static class WebApplicationExtensions
                     Status = "UNAUTHENTICATED",
                     Message = "Token or connection lifetime expired; reconnect with a fresh token.",
                 });
-                await conn.CloseAsync((WebSocketCloseStatus)4401, "token or connection lifetime expired; reconnect");
+                await conn.DrainAndCloseAsync(sendLoop, (WebSocketCloseStatus)4401, "token or connection lifetime expired; reconnect");
             }
 
             // No-op when the block above already closed the socket (state is no longer

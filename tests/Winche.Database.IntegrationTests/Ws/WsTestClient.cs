@@ -62,6 +62,11 @@ public sealed class WsTestClient : IAsyncDisposable
         await _socket.SendAsync(data, WebSocketMessageType.Binary, true, CancellationToken.None);
     }
 
+    /// <summary>Client-initiated close handshake: sends a close frame but keeps reading, so
+    /// any frame the server queued beforehand can still arrive ahead of the server's close.</summary>
+    public Task CloseOutputAsync(WebSocketCloseStatus status = WebSocketCloseStatus.NormalClosure, string reason = "client done") =>
+        _socket.CloseOutputAsync(status, reason, CancellationToken.None);
+
     /// <summary>Sends a request with an auto id; returns the terminal response/error frame.</summary>
     public async Task<JsonObject> RequestAsync(JsonObject frame, int timeoutMs = 10000)
     {
