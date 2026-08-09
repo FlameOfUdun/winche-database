@@ -117,37 +117,40 @@ public sealed class RuleGuardedDocumentDatabase(
     /// <summary>
     /// Authorizes the subscription query at subscribe time using the same
     /// <see cref="QueryToConstraints"/>-based analyzer as <see cref="QueryAsync"/>.
-    /// If the query is provably safe, every document the live stream can ever
-    /// return already satisfies the read rule (the query's own constraints
-    /// guarantee it), so no per-document filtering is applied to snapshots.
     /// If the query is not provably safe the subscription is rejected outright
     /// with <see cref="AccessDeniedException"/> — the "rules are not filters"
     /// principle applied to listeners.
     /// <para>
-    /// <b>Limitation:</b> authorization is evaluated once against the
-    /// subscribe-time claims. If the caller's auth token is refreshed or
-    /// revoked after the listener is open the subscription is NOT re-checked.
-    /// Re-authorization on token refresh is out of scope for Phase 3 and
-    /// should be addressed in a future phase.
+    /// The returned listener re-runs that analysis before every emission, so a ruleset tightened
+    /// while the subscription is open (or a rule whose outcome depends on <c>request.time</c>)
+    /// terminates the stream instead of continuing to deliver. Claims are captured at subscribe
+    /// time — see <see cref="RuleGuardedQueryListener"/> for what that does and does not cover.
     /// </para>
     /// </summary>
     public IQueryListener Listen(Query query, ListenOptions? options = null)
     {
         AuthorizeListQuery(query);           // throws AccessDeniedException at subscribe time if not provably safe
-        return inner.Listen(query, options); // provably safe → every live result is authorized; no per-doc filtering
+        return new RuleGuardedQueryListener(
+            inner.Listen(query, options), engine, inner, query, claimsAccessor.GetClaims());
     }
 
     /// <summary>
     /// Authorizes a single-document subscription as a <c>get</c> on <paramref name="path"/> — single-document
     /// reads (one-shot or realtime) are governed by the per-document get rule with the full path bound,
-    /// never the list rule over the parent collection. Evaluated once at subscribe time against the current
-    /// document (same subscribe-time-only model as <see cref="Listen"/>); later mutations are not re-checked.
+    /// never the list rule over the parent collection.
+    /// <para>
+    /// The returned listener re-evaluates that rule against the current document before every emission
+    /// carrying a body, so losing read access mid-subscription terminates the stream rather than
+    /// continuing to deliver document contents. Claims are captured at subscribe time — see
+    /// <see cref="RuleGuardedDocumentListener"/> for what that does and does not cover.
+    /// </para>
     /// </summary>
     public async Task<IDocumentListener> ListenToDocumentAsync(string path, ListenOptions? options = null, CancellationToken ct = default)
     {
         var doc = await inner.GetAsync(path, ct);          // also validates the document path
         await AuthorizeGetAsync(path, doc, ct);            // throws AccessDeniedException(path, "get") if denied
-        return await inner.ListenToDocumentAsync(path, options, ct);
+        return new RuleGuardedDocumentListener(
+            await inner.ListenToDocumentAsync(path, options, ct), engine, inner, path, claimsAccessor.GetClaims());
     }
 
     // ── Authorization helpers ─────────────────────────────────────────────────

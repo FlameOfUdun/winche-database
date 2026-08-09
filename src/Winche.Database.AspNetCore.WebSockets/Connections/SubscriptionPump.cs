@@ -14,9 +14,11 @@ namespace Winche.Database.AspNetCore.WebSockets.Connections;
 /// relative to client state across runtime coalescing. Empty re-diff ⇒ no frame.
 ///
 /// Claims note: claims are constant for the connection lifetime (fixed at the HTTP upgrade).
-/// Under the Winche.Rules guard a listener is authorized once at subscribe time (rules-are-not-filters).
-/// <c>ApplyClaims()</c> is called each iteration only to keep this pump's async-context slot
-/// coherent — it does not change authorization.
+/// Under the Winche.Rules guard a listener re-authorizes on every emission, but against the claims
+/// it captured when it was created — so <c>ApplyClaims()</c> here does not feed that decision; it is
+/// called each iteration to keep this pump's async-context slot coherent for any other database call.
+/// A denial surfaces out of <c>MoveNextAsync</c> and is turned into that subscription's terminal
+/// error frame by the catch below; the connection itself stays open.
 /// </summary>
 public static class SubscriptionPump
 {
@@ -34,7 +36,7 @@ public static class SubscriptionPump
 
             while (true)
             {
-                scope.ApplyClaims();                              // inert for listener auth (subscribe-time only); kept for context coherence
+                scope.ApplyClaims();                              // context coherence only; listener auth uses its captured claims
                 if (!await snapshots.MoveNextAsync()) break;
                 var snapshot = snapshots.Current;
 
@@ -131,7 +133,7 @@ public static class SubscriptionPump
 
             while (true)
             {
-                scope.ApplyClaims();                              // inert for listener auth (subscribe-time only)
+                scope.ApplyClaims();                              // context coherence only; listener auth uses its captured claims
                 if (!await snapshots.MoveNextAsync()) break;
                 var snapshot = snapshots.Current;
 
