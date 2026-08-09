@@ -9,13 +9,16 @@ namespace Winche.Database.Authorization;
 /// Produced map structure:
 /// <code>
 /// {
-///   "auth"     : Null  — when <paramref name="claims"/> is null or empty
-///              | Map { "uid": String|Null, "token": Map of all claims }
+///   "auth"     : Null  — when <paramref name="claims"/> is null, empty, or has no usable uid
+///              | Map { "uid": String, "token": Map of all claims }
 ///   "resource" : the incoming document resource (or <see cref="RuleValue.Null"/> for deletes)
 ///   "method"   : String (e.g. "create", "update", "delete", "get", "list")
 ///   "time"     : Timestamp(<see cref="DateTimeOffset.UtcNow"/>)
 /// }
 /// </code>
+/// A non-null <c>auth</c> always carries a non-empty <c>uid</c> — a claims dictionary with a
+/// missing, null, or blank <c>uid</c> is treated as unauthenticated regardless of what other
+/// claims it carries.
 /// </remarks>
 internal static class RequestBuilder
 {
@@ -64,16 +67,19 @@ internal static class RequestBuilder
         if (claims is null || claims.Count == 0)
             return RuleValue.Null;
 
-        var uid = claims.TryGetValue("uid", out var rawUid) && rawUid is not null
-            ? RuleValue.String(rawUid.ToString()!)
-            : RuleValue.Null;
+        if (!claims.TryGetValue("uid", out var rawUid) || rawUid is null)
+            return RuleValue.Null;
+
+        var uid = rawUid.ToString();
+        if (string.IsNullOrWhiteSpace(uid))
+            return RuleValue.Null;
 
         var token = RuleValue.Map(
             claims.ToDictionary(kv => kv.Key, kv => ConvertClaimValue(kv.Value)));
 
         return RuleValue.Map(new Dictionary<string, RuleValue>
         {
-            ["uid"] = uid,
+            ["uid"] = RuleValue.String(uid),
             ["token"] = token,
         });
     }

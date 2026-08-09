@@ -40,20 +40,53 @@ public class RequestBuilderTests
     }
 
     [Fact]
-    public void Build_Authenticated_MissingUidClaim_UidIsNull()
+    public void Build_MissingUidClaim_AuthIsNull()
     {
         var claims = new Dictionary<string, object?> { ["role"] = "admin" };
         var request = RequestBuilder.Build(claims, "delete", AnyResource);
-        var auth = request.AsMap["auth"];
-        Assert.Equal(RuleValueKind.Null, auth.AsMap["uid"].Kind);
+        Assert.Equal(RuleValueKind.Null, request.AsMap["auth"].Kind);
     }
 
     [Fact]
-    public void Build_Authenticated_NullUidValue_UidIsNull()
+    public void Build_NullUidValue_AuthIsNull()
     {
         var claims = new Dictionary<string, object?> { ["uid"] = null };
         var request = RequestBuilder.Build(claims, "get", AnyResource);
-        Assert.Equal(RuleValueKind.Null, request.AsMap["auth"].AsMap["uid"].Kind);
+        Assert.Equal(RuleValueKind.Null, request.AsMap["auth"].Kind);
+    }
+
+    [Fact]
+    public void Build_EmptyUidValue_AuthIsNull()
+    {
+        var claims = new Dictionary<string, object?> { ["uid"] = "   " };
+        var request = RequestBuilder.Build(claims, "get", AnyResource);
+        Assert.Equal(RuleValueKind.Null, request.AsMap["auth"].Kind);
+    }
+
+    [Fact]
+    public void Build_NoUidKey_OtherClaimsPresent_AuthIsNull()
+    {
+        var claims = new Dictionary<string, object?> { ["role"] = "admin", ["email"] = "user@example.com" };
+        var request = RequestBuilder.Build(claims, "get", AnyResource);
+        Assert.Equal(RuleValueKind.Null, request.AsMap["auth"].Kind);
+    }
+
+    [Fact]
+    public void Build_ValidUid_AuthIsMapWithUidAndToken()
+    {
+        var claims = new Dictionary<string, object?>
+        {
+            ["uid"] = "user123",
+            ["email"] = "user@example.com",
+        };
+        var request = RequestBuilder.Build(claims, "get", AnyResource);
+        var auth = request.AsMap["auth"];
+
+        Assert.Equal(RuleValueKind.Map, auth.Kind);
+        Assert.Equal("user123", auth.AsMap["uid"].AsString);
+        Assert.Equal(RuleValueKind.Map, auth.AsMap["token"].Kind);
+        Assert.Equal("user123", auth.AsMap["token"].AsMap["uid"].AsString);
+        Assert.Equal("user@example.com", auth.AsMap["token"].AsMap["email"].AsString);
     }
 
     [Fact]

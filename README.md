@@ -83,7 +83,11 @@ builder.Services
         config.UseTtl(t => t.Add("sessions", "expiresAt"));
 
         // Claims — maps the request principal to caller claims (DI available via http.RequestServices)
-        config.MapClaims(http => new Dictionary<string, object?> { ["uid"] = http.User.FindFirst("sub")?.Value });
+        config.MapClaims(http =>
+        {
+            var uid = http.User.FindFirst("sub")?.Value;
+            return uid is null ? null : new Dictionary<string, object?> { ["uid"] = uid };
+        });
     })
     .AddWincheDatabaseWsApi();   // WebSocket transport
 ```
@@ -269,8 +273,17 @@ For `get` operations, the rule is evaluated in-memory against the loaded documen
 To supply per-request caller claims, register a delegate with `MapClaims`:
 
 ```csharp
-config.MapClaims(http => new Dictionary<string, object?> { ["uid"] = http.User.FindFirst("sub")?.Value });
+config.MapClaims(http =>
+{
+    var uid = http.User.FindFirst("sub")?.Value;
+    return uid is null ? null : new Dictionary<string, object?> { ["uid"] = uid };
+});
 ```
+
+> **`request.auth` is non-null only when the claims carry a non-blank `uid`.** A dictionary whose
+> `uid` is missing, null, or blank is treated as unauthenticated no matter what other claims it
+> holds, so a rule guarded by `request.auth != null` cannot be satisfied without an identity.
+> Returning `null` outright for an unauthenticated caller, as above, states the intent most clearly.
 
 `MapClaims` is an extension method on `WincheDatabaseOptions` from
 `Winche.Database.AspNetCore.DependencyInjection`. It registers the accessor for both the REST and
