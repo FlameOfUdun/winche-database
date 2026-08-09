@@ -24,6 +24,7 @@ public sealed class DocumentDatabase : IDocumentDatabase
     private readonly QueryListenerRegistry? _listeners;
     private readonly DocumentListenerRegistry? _documentListeners;
     private readonly CollectionIndexResolver? _scopes;
+    private readonly TimeSpan? _statementTimeout;
 
     public DocumentDatabase(NpgsqlDataSource source, IOptions<WincheDatabaseOptions> options,
         QueryListenerRegistry? listeners = null, CollectionIndexResolver? scopes = null,
@@ -35,6 +36,7 @@ public sealed class DocumentDatabase : IDocumentDatabase
         _listeners = listeners;
         _documentListeners = docListeners;
         _scopes = scopes;
+        _statementTimeout = options.Value.QueryConfig.StatementTimeout;
     }
 
     /// <summary>Exposed for the Plan-3 expiry sweeper (internal — transaction-management detail).</summary>
@@ -65,19 +67,19 @@ public sealed class DocumentDatabase : IDocumentDatabase
     public async Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default)
     {
         await using var conn = await _source.OpenConnectionAsync(ct);
-        return await new QueryExecutor(conn, null, _scopes).ExecuteAsync(query, ct);
+        return await new QueryExecutor(conn, null, _scopes, _statementTimeout).ExecuteAsync(query, ct);
     }
 
     public async Task<long> CountAsync(Query query, CancellationToken ct = default)
     {
         await using var conn = await _source.OpenConnectionAsync(ct);
-        return await new QueryExecutor(conn, null, _scopes).CountAsync(query, ct);
+        return await new QueryExecutor(conn, null, _scopes, _statementTimeout).CountAsync(query, ct);
     }
 
     public async Task<AggregationResult> AggregateAsync(Query query, IReadOnlyList<Aggregation> aggregations, CancellationToken ct = default)
     {
         await using var conn = await _source.OpenConnectionAsync(ct);
-        return await new QueryExecutor(conn, null, _scopes).AggregateAsync(query, aggregations, ct);
+        return await new QueryExecutor(conn, null, _scopes, _statementTimeout).AggregateAsync(query, aggregations, ct);
     }
 
     /// <summary>

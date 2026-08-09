@@ -11,7 +11,7 @@ namespace Winche.Database.Runtime.Listening;
 /// Live-query registry: groups keyed by <see cref="QueryKey"/>; relevance bucket is the collection.
 /// Each relevant batch triggers ONE requery; the ordered result is diffed and broadcast.
 /// </summary>
-public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionIndexResolver? scopes = null)
+public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionIndexResolver? scopes = null, TimeSpan? statementTimeout = null)
     : LiveSubscriptionRegistry<QueryListenerRegistry.QueryGroup, QuerySnapshot>(source)
 {
     public IQueryListener Listen(Query query, ListenOptions? listenOptions = null) =>
@@ -85,7 +85,7 @@ public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionInd
     private async Task<QueryResult> RunQueryAsync(Query query, CancellationToken ct = default)
     {
         await using var conn = await Source.OpenConnectionAsync(ct);
-        return await new QueryExecutor(conn, null, scopes).ExecuteAsync(query, ct);
+        return await new QueryExecutor(conn, null, scopes, statementTimeout).ExecuteAsync(query, ct);
     }
 
     // Returns the subset of [paths] that currently exist, in ONE round-trip — so a delta with

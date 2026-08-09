@@ -745,6 +745,28 @@ An explicit `Limit` on the query **caps** all aggregations (consistent with `Cou
 
 > **Notes:** an explicit query `limit` caps all aggregations; collection-group queries are not yet supported.
 
+### Query timeout
+
+`WincheDatabaseOptions.QueryConfig` (`QueryConfig`) sets a server-side statement timeout for the read path:
+
+| Field | Default | Description |
+| --- | --- | --- |
+| `StatementTimeout` | 30 s | Postgres `statement_timeout` applied to `QueryAsync`, `CountAsync`, and `AggregateAsync` (and to a live query's requery on the change feed). `null` or `TimeSpan.Zero` (or negative) disables it — the statement runs unbounded. |
+
+```csharp
+services.AddWincheDatabase(config =>
+{
+    config.ConnectionString = "...";
+    config.QueryConfig = new() { StatementTimeout = TimeSpan.FromSeconds(10) };
+});
+```
+
+The timeout bounds the **backend**, not just the client's wait: an expensive filter (an unindexed `regex`/`contains` scan, a deep JSONB comparison) or an uncapped `count`/`aggregate` is aborted by Postgres itself, surfacing as `DEADLINE_EXCEEDED`. It is applied per statement — via a transaction this library opens and commits/rolls back around the single query — so it can never bleed into another request that later reuses the same pooled physical connection.
+
+**Not bounded by `StatementTimeout`:** schema initialization and index creation (`InitializeWincheDatabaseAsync`, `ISchemaManager`), the TTL sweeper, the change-feed pump, and the retention pruner — none of these go through the query path, so a large `CREATE INDEX` or a long-running housekeeping pass is unaffected. Writes (`WriteAsync` and friends) are also unaffected; see [Transactions](#transactions) and the write path for their own bounds.
+
+> **Defense in depth:** a `regex` filter's pattern is also capped at 512 characters (`REGEX_TOO_LONG`, `INVALID_QUERY`). This is a cheap rejection of obviously-abusive input only — a short pattern can be just as expensive to evaluate as a long one, so the length cap does not by itself bound how long a `regex` filter takes to run. `StatementTimeout` is what actually bounds it.
+
 ## Transactions
 
 ```csharp

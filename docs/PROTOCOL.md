@@ -498,7 +498,7 @@ All errors — WS `error` frames and REST error bodies — use this status vocab
 | `ABORTED` | Transaction conflict, expired transaction, or unknown transaction id |
 | `PERMISSION_DENIED` | Access rule denied the operation |
 | `UNAUTHENTICATED` | Authentication token invalid or missing |
-| `DEADLINE_EXCEEDED` | Operation timed out |
+| `DEADLINE_EXCEEDED` | Operation timed out — includes a `runQuery`/`count`/`aggregate` statement aborted server-side by `QueryConfig.StatementTimeout` (§8) |
 | `INTERNAL` | Unexpected server error (always a bug; report it) |
 
 ### 5.2 REST error body

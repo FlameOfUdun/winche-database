@@ -1,15 +1,24 @@
 using System.Diagnostics;
+using System.Globalization;
 using Npgsql;
 using Winche.Database.Documents;
 using Winche.Database.Querying.Ast;
 using Winche.Database.Querying.Planning;
 using Winche.Database.Querying.Sql;
+using Winche.Database.Runtime;
 using Winche.Database.Values;
 
 namespace Winche.Database.Querying;
 
-/// <summary>The query path end-to-end: normalize → compile → execute → decode.</summary>
-public sealed class QueryExecutor(NpgsqlConnection conn, NpgsqlTransaction? tx, CollectionIndexResolver? scopes = null)
+/// <summary>
+/// The query path end-to-end: normalize → compile → execute → decode. When <paramref name="statementTimeout"/>
+/// is set and no external <paramref name="tx"/> was supplied, each statement runs inside a transaction this
+/// class opens and commits itself, purely so a per-statement <c>SET LOCAL statement_timeout</c> can be
+/// applied — Postgres reverts a <c>LOCAL</c> setting when the transaction ends, so it never outlives the
+/// single statement it was meant for, regardless of what the underlying pooled connection is reused for next.
+/// </summary>
+public sealed class QueryExecutor(
+    NpgsqlConnection conn, NpgsqlTransaction? tx, CollectionIndexResolver? scopes = null, TimeSpan? statementTimeout = null)
 {
     public async Task<QueryResult> ExecuteAsync(Query query, CancellationToken ct = default)
     {
@@ -17,12 +26,15 @@ public sealed class QueryExecutor(NpgsqlConnection conn, NpgsqlTransaction? tx, 
         var pageNode = plan.Nodes.OfType<PageNode>().Single();
         var compiled = SqlCompiler.Compile(plan, scopes?.ScopeFor(query.Collection), query.Select);
 
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        compiled.Apply(cmd);
+        var docs = await RunBoundedAsync(async statementTx =>
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.Transaction = statementTx;
+            compiled.Apply(cmd);
 
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        var docs = await TypedDocumentReader.ReadAllAsync(reader, ct);
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            return await TypedDocumentReader.ReadAllAsync(reader, ct);
+        }, ct);
 
         // hasMore: a row beyond the page exists. For limitToLast (ReverseResult), the query ran
         // reversed, so this means a row exists BEFORE the returned window, not after it.
@@ -43,11 +55,14 @@ public sealed class QueryExecutor(NpgsqlConnection conn, NpgsqlTransaction? tx, 
         var plan = Normalizer.Normalize(query);
         var compiled = CountSql.Compile(plan, query.Limit, scopes?.ScopeFor(query.Collection));
 
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        compiled.Apply(cmd);
+        return await RunBoundedAsync(async statementTx =>
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.Transaction = statementTx;
+            compiled.Apply(cmd);
 
-        return Convert.ToInt64(await cmd.ExecuteScalarAsync(ct));
+            return Convert.ToInt64(await cmd.ExecuteScalarAsync(ct));
+        }, ct);
     }
 
     /// <summary>
@@ -62,8 +77,14 @@ public sealed class QueryExecutor(NpgsqlConnection conn, NpgsqlTransaction? tx, 
         var plan = Normalizer.Normalize(query);
         var compiled = AggregateSql.Compile(plan, aggregations, query.Limit, scopes?.ScopeFor(query.Collection));
 
+        return await RunBoundedAsync(statementTx => ReadAggregateAsync(compiled, aggregations, statementTx, ct), ct);
+    }
+
+    private async Task<AggregationResult> ReadAggregateAsync(
+        CompiledSql compiled, IReadOnlyList<Aggregation> aggregations, NpgsqlTransaction? statementTx, CancellationToken ct)
+    {
         await using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
+        cmd.Transaction = statementTx;
         compiled.Apply(cmd);
 
         await using var reader = await cmd.ExecuteReaderAsync(ct);
@@ -107,5 +128,42 @@ public sealed class QueryExecutor(NpgsqlConnection conn, NpgsqlTransaction? tx, 
         Debug.Assert(col == reader.FieldCount, "aggregate column read count must match the emitted columns");
 
         return new AggregationResult(values);
+    }
+
+    /// <summary>
+    /// Runs <paramref name="body"/> against the statement transaction to use (an externally supplied
+    /// <see cref="tx"/> takes precedence — this class never nests transactions of its own inside one it
+    /// didn't open). With no external transaction and a positive <see cref="statementTimeout"/>, wraps
+    /// the single statement in a transaction of its own so a <c>SET LOCAL statement_timeout</c> can be
+    /// applied — <c>LOCAL</c> settings are transaction-scoped in Postgres itself, so a statement that
+    /// commits, rolls back, or is cancelled always leaves the physical connection's session timeout
+    /// exactly where it found it before that connection can be reused for anything else.
+    /// </summary>
+    private async Task<T> RunBoundedAsync<T>(Func<NpgsqlTransaction?, Task<T>> body, CancellationToken ct)
+    {
+        if (tx is not null || statementTimeout is not { } timeout || timeout <= TimeSpan.Zero)
+            return await body(tx);
+
+        await using var statementTx = await conn.BeginTransactionAsync(ct);
+        await using (var setCmd = conn.CreateCommand())
+        {
+            setCmd.Transaction = statementTx;
+            // Milliseconds, computed here (never from caller input) — safe to inline; SET does not accept parameters.
+            var ms = (long)Math.Ceiling(timeout.TotalMilliseconds);
+            setCmd.CommandText = $"SET LOCAL statement_timeout = {ms.ToString(CultureInfo.InvariantCulture)}";
+            await setCmd.ExecuteNonQueryAsync(ct);
+        }
+
+        try
+        {
+            var result = await body(statementTx);
+            await statementTx.CommitAsync(ct);
+            return result;
+        }
+        catch (PostgresException ex) when (ex.SqlState == "57014")  // query_canceled (statement_timeout)
+        {
+            throw new RuntimeException(RuntimeStatus.DeadlineExceeded,
+                $"Query exceeded the statement timeout ({timeout}).");
+        }
     }
 }

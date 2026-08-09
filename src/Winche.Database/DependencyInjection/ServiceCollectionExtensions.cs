@@ -41,7 +41,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<CollectionIndexResolver>();
         services.AddSingleton(sp => new QueryListenerRegistry(
             sp.GetRequiredKeyedService<NpgsqlDataSource>(WincheDatabaseKeys.DataSource),
-            sp.GetRequiredService<CollectionIndexResolver>())
+            sp.GetRequiredService<CollectionIndexResolver>(),
+            sp.GetRequiredService<IOptions<WincheDatabaseOptions>>().Value.QueryConfig.StatementTimeout)
         );
         services.AddSingleton(sp => new DocumentListenerRegistry(
             sp.GetRequiredKeyedService<NpgsqlDataSource>(WincheDatabaseKeys.DataSource)));

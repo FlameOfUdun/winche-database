@@ -42,6 +42,8 @@ public sealed class WincheDatabaseOptions
     public ChangeFeedConfig ChangeFeed { get; set; } = new();
     public WriteLimits WriteLimits { get; set; } = new();
     public TtlConfig Ttl { get; set; } = new();
+    public QueryConfig QueryConfig { get; set; } = new();
+
 
     /// <summary>
     /// Registers one or more <see cref="IndexDefinition"/> instances. Multiple calls accumulate —
@@ -167,6 +169,21 @@ public sealed record TransactionConfig
     /// <summary>Spec (runtime §3): optimistic transactions idle out after 60 seconds by default.</summary>
     public TimeSpan IdleTimeoutSpan { get; init; } = TimeSpan.FromMinutes(1);
     public TimeSpan CleanupInterval { get; init; } = TimeSpan.FromSeconds(1);
+}
+
+public sealed record QueryConfig
+{
+    /// <summary>
+    /// Server-side cap (Postgres <c>statement_timeout</c>) applied to <c>runQuery</c>, <c>count</c>,
+    /// and <c>aggregate</c> — bounds the backend itself, not just the client's wait, so a runaway
+    /// statement (an expensive filter over an unindexed field, an uncapped scan, …) is aborted where
+    /// the CPU is actually being spent. Scoped to the single statement (never a shared session
+    /// setting), so it cannot bleed into another borrowed pooled connection. <c>null</c> or
+    /// <see cref="TimeSpan.Zero"/> (or negative) disables it — the statement runs unbounded.
+    /// Schema initialization, index creation, the TTL sweeper, the change-feed pump, and the
+    /// retention pruner never go through this path and are never subject to it.
+    /// </summary>
+    public TimeSpan? StatementTimeout { get; init; } = TimeSpan.FromSeconds(30);
 }
 
 /// <summary>
