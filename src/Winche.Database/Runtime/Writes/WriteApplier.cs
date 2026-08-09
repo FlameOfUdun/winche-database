@@ -105,13 +105,23 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
                 }
             }
 
+            // Precondition failures are recorded rather than thrown here: a write whose
+            // precondition fails is left unapplied (state untouched) and the rest of the
+            // batch still runs, so the authorization pass below sees every write and every
+            // cascade victim regardless of which ones would fail their precondition.
+            RuntimeException? firstPreconditionFailure = null;
             var results = new List<WriteResult>(writes.Count);
             foreach (var write in writes)
             {
                 if (!state.TryGetValue(write.Path, out var doc))
                     state[write.Path] = doc = new DocState();
 
-                CheckPrecondition(write, doc);
+                var failure = CheckPrecondition(write, doc);
+                if (failure is not null)
+                {
+                    firstPreconditionFailure ??= failure;
+                    continue;
+                }
 
                 results.Add(write switch
                 {
@@ -146,6 +156,11 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
                 await authorizer.AuthorizeAsync(pending, new TxDocumentReader(conn, tx), commitTime, ct);
             }
 
+            // Only surfaced once the batch is known to be authorized, so a precondition
+            // outcome (existence, updateTime) never reaches a caller who isn't allowed to see it.
+            if (firstPreconditionFailure is not null)
+                throw firstPreconditionFailure;
+
             await PersistAsync(conn, tx, state, commitTime, ct);
             await tx.CommitAsync(ct);
             return results;
@@ -159,21 +174,23 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
 
     // ── Preconditions ─────────────────────────────────────────────────────────
 
-    private static void CheckPrecondition(Write write, DocState doc)
+    private static RuntimeException? CheckPrecondition(Write write, DocState doc)
     {
         if (write is UpdateWrite && !doc.Exists)
-            throw new RuntimeException(RuntimeStatus.NotFound, $"No document to update: '{write.Path}'.");
+            return new RuntimeException(RuntimeStatus.NotFound, $"No document to update: '{write.Path}'.");
 
         var p = write.Precondition;
-        if (p is null) return;
+        if (p is null) return null;
 
         if (p.Exists == true && !doc.Exists)
-            throw new RuntimeException(RuntimeStatus.NotFound, $"Document '{write.Path}' does not exist.");
+            return new RuntimeException(RuntimeStatus.NotFound, $"Document '{write.Path}' does not exist.");
         if (p.Exists == false && doc.Exists)
-            throw new RuntimeException(RuntimeStatus.AlreadyExists, $"Document '{write.Path}' already exists.");
+            return new RuntimeException(RuntimeStatus.AlreadyExists, $"Document '{write.Path}' already exists.");
         if (p.UpdateTime is { } t && (!doc.Exists || doc.UpdatedAt != Truncate(t)))
-            throw new RuntimeException(RuntimeStatus.FailedPrecondition,
+            return new RuntimeException(RuntimeStatus.FailedPrecondition,
                 $"updateTime precondition failed for '{write.Path}'.");
+
+        return null;
     }
 
     // ── Apply ─────────────────────────────────────────────────────────────────
