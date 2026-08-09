@@ -24,6 +24,9 @@ namespace Winche.Database.IntegrationTests.Ws;
 /// Auth model: <c>UseWincheWsQueryToken</c> promotes <c>?access_token=…</c> to a Bearer
 /// header; <c>TestAuthHandler</c> validates it (token "uid:xyz" → claims {"uid":"xyz"};
 /// any other non-empty token → authenticated but no uid; no token → unauthenticated).
+/// The token also accepts ';'-separated "key:value" segments, so "uid:alice;exp:123" (or a
+/// bare "exp:123") additionally produces an <c>exp</c> claim — used to exercise WS
+/// connection-deadline enforcement without a real JWT.
 /// <c>RequireAuthorization</c> on the WS endpoint rejects unauthenticated upgrades.
 /// <c>MapClaims</c> maps <c>HttpContext.User</c> claims → the claims dict.
 /// </summary>
@@ -113,8 +116,14 @@ public sealed class TestAuthHandler(
             return Task.FromResult(AuthenticateResult.NoResult());
 
         var claims = new List<Claim> { new(ClaimTypes.Name, token) };
-        if (token.StartsWith("uid:", StringComparison.Ordinal))
-            claims.Add(new Claim("uid", token[4..]));
+        foreach (var segment in token.Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var idx = segment.IndexOf(':');
+            if (idx < 0) continue;
+            var key = segment[..idx];
+            if (key is "uid" or "exp")
+                claims.Add(new Claim(key, segment[(idx + 1)..]));
+        }
 
         var identity = new ClaimsIdentity(claims, SchemeName);
         var principal = new ClaimsPrincipal(identity);

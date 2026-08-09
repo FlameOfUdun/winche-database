@@ -763,18 +763,28 @@ On a successful upgrade the server **immediately** sends:
 {"type": "welcome", "connectionId": "a1b2c3..."}
 ```
 
-The connection's identity is fixed for its lifetime. On token expiry the client reconnects.
+The connection's identity is fixed for its lifetime — there is no in-band re-authentication. The
+server, not the client, enforces that lifetime: it computes a deadline at the upgrade from
+`WsOptions.MaxConnectionLifetime` and, when `WsOptions.CloseOnTokenExpiry` (default `true`) finds a
+standard JWT `exp` claim on the authenticated principal, from that claim too — whichever comes
+first. When the deadline passes the server closes the connection with code `4401`; the client is
+expected to reconnect with a fresh token. `CloseOnTokenExpiry` has no effect when the principal
+carries no `exp` claim, so it is inert for non-JWT authentication setups; with both options left at
+their defaults (no `MaxConnectionLifetime`, no `exp` claim) a connection is never closed for age.
 
-> **Security notes:** always require TLS in production (tokens in query strings appear in server logs and proxies); use short-lived tokens and reconnect on expiry.
+> **Security notes:** always require TLS in production (tokens in query strings appear in server logs and proxies); use short-lived tokens — the server will disconnect the socket once they expire.
 
 ### 7.2 Close codes
 
 | Code | Meaning |
 | - | - |
 | `4400` | Protocol violation (binary frame or other connection-level protocol error) |
+| `4401` | Connection deadline reached — `MaxConnectionLifetime` elapsed or the `exp` claim expired (see §7.1); reconnect with a fresh token. An `error` frame with status `UNAUTHENTICATED` precedes the close, but the close code/reason is still the authoritative signal |
 | `4413` | Incoming frame too large (default 1 MiB; configurable via `WsOptions.MaxFrameBytes`) |
 | `1013` | Send queue overflow — server could not drain outbound frames (queue limit 64; configurable via `WsOptions.SendQueueLimit`) |
 | `1000` | Normal closure (server-initiated clean shutdown) |
+
+Graceful closes (`1000` and `4401`) drain any already-queued frames before closing, so an in-flight response or the `4401` error frame above is delivered rather than dropped. The drain is bounded by `WsOptions.DrainTimeout` (default 5 seconds) — if the client has stopped reading, the server closes anyway once the timeout elapses. `4400` and `4413` close immediately without draining, since the client itself is the problem in those cases; `1013` also closes immediately — draining would be wrong when the queue is full precisely because the client isn't keeping up.
 
 ### 7.3 Envelope and correlation
 

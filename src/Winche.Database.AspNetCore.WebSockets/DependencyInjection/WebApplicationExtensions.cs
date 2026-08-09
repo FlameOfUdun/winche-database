@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -24,9 +25,11 @@ public static class WebApplicationExtensions
     /// Authentication is performed at the HTTP upgrade: the app's authentication scheme validates
     /// the request (e.g. a query-string token surfaced by <see cref="UseWincheWsQueryToken"/>),
     /// and the resulting <c>HttpContext.User</c> provides the caller's identity for the entire
-    /// connection lifetime. There is no in-band hello handshake or token refresh — if a token
-    /// expires the client reconnects. <c>.RequireAuthorization()</c> on this builder is the
-    /// recommended gate (rejects the upgrade before the socket is accepted).
+    /// connection lifetime. There is no in-band hello handshake or token refresh — the server
+    /// enforces the connection's lifetime instead of relying on the client to reconnect: see
+    /// <see cref="WsOptions.MaxConnectionLifetime"/> and <see cref="WsOptions.CloseOnTokenExpiry"/>.
+    /// <c>.RequireAuthorization()</c> on this builder is the recommended gate (rejects the upgrade
+    /// before the socket is accepted).
     /// </para>
     /// </summary>
     public static IEndpointConventionBuilder MapWincheDatabaseWsApi(this WebApplication app, string prefix = "documents") =>
@@ -56,6 +59,39 @@ public static class WebApplicationExtensions
             await next(context);
         });
 
+    // CancellationTokenSource throws ArgumentOutOfRangeException for delays beyond
+    // int.MaxValue milliseconds (~24.8 days); a far-future exp or a large MaxConnectionLifetime
+    // must not be able to break the upgrade.
+    private static readonly TimeSpan MaxScheduledDelay = TimeSpan.FromDays(24);
+
+    private static DateTimeOffset? ResolveConnectionDeadline(HttpContext context, WsOptions options)
+    {
+        DateTimeOffset? deadline = options.MaxConnectionLifetime is { } lifetime
+            ? DateTimeOffset.UtcNow + lifetime
+            : null;
+
+        if (options.CloseOnTokenExpiry && TryGetTokenExpiry(context.User, out var expiry) && (deadline is null || expiry < deadline))
+            deadline = expiry;
+
+        return deadline;
+    }
+
+    private static bool TryGetTokenExpiry(ClaimsPrincipal user, out DateTimeOffset expiry)
+    {
+        expiry = default;
+        var raw = user.FindFirstValue("exp");
+        if (raw is null || !long.TryParse(raw, out var seconds)) return false;
+        try
+        {
+            expiry = DateTimeOffset.FromUnixTimeSeconds(seconds);
+            return true;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return false;
+        }
+    }
+
     private static async Task HandleAsync(HttpContext context)
     {
         if (!context.WebSockets.IsWebSocketRequest)
@@ -75,6 +111,17 @@ public static class WebApplicationExtensions
         using var sendLoopCts = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, conn.Closed);
         var sendLoop = conn.RunSendLoopAsync(sendLoopCts.Token);
 
+        // Deadline is a plain (unstarted-timer) CTS when there is no cap — Closed stays false
+        // for the connection's whole life in that case, which is the "no cap" behavior.
+        var deadline = ResolveConnectionDeadline(context, options);
+        using var deadlineCts = new CancellationTokenSource();
+        if (deadline is { } dl)
+        {
+            var delay = dl - DateTimeOffset.UtcNow;
+            deadlineCts.CancelAfter(delay <= TimeSpan.Zero ? TimeSpan.Zero : delay > MaxScheduledDelay ? MaxScheduledDelay : delay);
+        }
+        using var receiveCts = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, deadlineCts.Token);
+
         var scope = new ConnectionScope(Guid.NewGuid().ToString("N"), db, claimsAccessor);
         try
         {
@@ -86,9 +133,9 @@ public static class WebApplicationExtensions
             conn.TrySend(new WelcomeMessage { ConnectionId = scope.ConnectionId });
 
             // ── serial message loop ───────────────────────────────────────────────
-            while (!context.RequestAborted.IsCancellationRequested)
+            while (!receiveCts.IsCancellationRequested)
             {
-                var doc = await conn.ReceiveAsync(context.RequestAborted);
+                var doc = await conn.ReceiveAsync(receiveCts.Token);
                 if (doc is null) break;
 
                 ClientMessage? message;
@@ -126,6 +173,22 @@ public static class WebApplicationExtensions
         finally
         {
             await scope.DisposeAsync();
+
+            // The deadline close (4401) must win over the "bye"/NormalClosure below, so it is sent
+            // here first. The error frame is best effort — the close code and reason are the
+            // signal the client can rely on.
+            if (deadlineCts.IsCancellationRequested && !context.RequestAborted.IsCancellationRequested)
+            {
+                conn.TrySend(new ErrorMessage
+                {
+                    Status = "UNAUTHENTICATED",
+                    Message = "Token or connection lifetime expired; reconnect with a fresh token.",
+                });
+                await conn.CloseAsync((WebSocketCloseStatus)4401, "token or connection lifetime expired; reconnect");
+            }
+
+            // No-op when the block above already closed the socket (state is no longer
+            // Open/CloseReceived), so the deadline's close code/reason is preserved.
             await conn.DrainAndCloseAsync(sendLoop, WebSocketCloseStatus.NormalClosure, "bye");
         }
     }

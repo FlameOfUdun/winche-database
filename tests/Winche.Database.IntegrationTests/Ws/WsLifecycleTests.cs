@@ -1,6 +1,8 @@
 using System.Net.WebSockets;
 using System.Text.Json.Nodes;
 using Winche.Database.AspNetCore.WebSockets.Connections;
+using Winche.Rules;
+using Winche.Rules.Expressions;
 
 namespace Winche.Database.IntegrationTests.Ws;
 
@@ -11,6 +13,10 @@ namespace Winche.Database.IntegrationTests.Ws;
 public class WsLifecycleTests(PostgresFixture fx) : QueryTestBase(fx)
 {
     private Task<WsTestHost> Host() => WsTestHost.StartAsync(Fx.ConnectionString);
+
+    private Task<WsTestHost> AllowAllHost(Action<WsOptions> configureWs) => WsTestHost.StartAsync(Fx.ConnectionString,
+        c => c.UseRules(r => r.Match("{document=**}", b => b.Allow(RuleOperations.All, Expr.Const(true)))),
+        configureWs);
 
     // ── Happy path: connect → server welcome → ping/pong ────────────────────
     [Fact]
@@ -102,5 +108,102 @@ public class WsLifecycleTests(PostgresFixture fx) : QueryTestBase(fx)
         Assert.Equal("INVALID_ARGUMENT", (string?)err["status"]);
         var pong = await ws.RequestAsync(new JsonObject { ["type"] = "ping" });
         Assert.Equal("response", (string?)pong["type"]);
+    }
+
+    // ── Connection deadline: exp already elapsed → 4401 without serving requests ────
+    [Fact]
+    public async Task ExpiredExpClaim_ClosesPromptly_With4401()
+    {
+        await using var host = await Host();
+        var pastExp = DateTimeOffset.UtcNow.AddMinutes(-5).ToUnixTimeSeconds();
+        var path = $"/documents/ws?access_token={Uri.EscapeDataString($"exp:{pastExp}")}";
+        await using var ws = await WsTestClient.ConnectAsync(host.Server, path);
+        await ws.WaitForCloseAsync();
+        Assert.Equal((WebSocketCloseStatus)4401, ws.CloseStatus);
+    }
+
+    // ── Connection deadline: MaxConnectionLifetime elapses → 4401; subscription torn down ──
+    [Fact]
+    public async Task MaxConnectionLifetime_Elapses_ClosesAndTearsDownSubscription()
+    {
+        await using var host = await AllowAllHost(o => o.MaxConnectionLifetime = TimeSpan.FromMilliseconds(600));
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
+
+        var sub = await ws.RequestAsync(new JsonObject
+        {
+            ["type"] = "listen",
+            ["query"] = new JsonObject { ["collection"] = "wsdeadline" },
+        });
+        var subId = (string)sub["result"]!["subscriptionId"]!;
+        await ws.WaitForAsync(f => (string?)f["type"] == "listen.snapshot" && (string?)f["subscriptionId"] == subId);
+
+        await ws.WaitForCloseAsync(5000);
+        Assert.Equal((WebSocketCloseStatus)4401, ws.CloseStatus);
+
+        // Behavioral verification the old subscription/scope was torn down: a fresh connection
+        // can still listen and receive deltas on the same collection without interference.
+        await using var ws2 = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
+        var sub2 = await ws2.RequestAsync(new JsonObject
+        {
+            ["type"] = "listen",
+            ["query"] = new JsonObject { ["collection"] = "wsdeadline" },
+        });
+        var subId2 = (string)sub2["result"]!["subscriptionId"]!;
+        await ws2.WaitForAsync(f => (string?)f["type"] == "listen.snapshot" && (string?)f["subscriptionId"] == subId2);
+
+        await ws2.RequestAsync(new JsonObject
+        {
+            ["type"] = "write",
+            ["writes"] = new JsonArray(new JsonObject
+            {
+                ["set"] = new JsonObject
+                {
+                    ["path"] = "wsdeadline/x",
+                    ["fields"] = new JsonObject { ["n"] = new JsonObject { ["integerValue"] = "1" } },
+                },
+            }),
+        });
+        var delta = await ws2.WaitForAsync(f => (string?)f["type"] == "listen.delta" && (string?)f["subscriptionId"] == subId2);
+        Assert.Single(delta["changes"]!.AsArray());
+    }
+
+    // ── Connection deadline: no exp claim, no MaxConnectionLifetime → no regression ──
+    [Fact]
+    public async Task NoExpClaim_NoMaxLifetime_ConnectionNotClosed()
+    {
+        await using var host = await Host();
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
+
+        await Task.Delay(300);
+        var pong = await ws.RequestAsync(new JsonObject { ["type"] = "ping" });
+        Assert.Equal("response", (string?)pong["type"]);
+        Assert.Null(ws.CloseStatus);
+    }
+
+    // ── Connection deadline: far-future exp must not throw at upgrade (clamping) ────
+    [Fact]
+    public async Task FarFutureExpClaim_DoesNotThrowAtUpgrade_ConnectionWorksNormally()
+    {
+        await using var host = await Host();
+        var farFuture = DateTimeOffset.UtcNow.AddYears(200).ToUnixTimeSeconds();
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server, $"exp:{farFuture}");
+
+        var pong = await ws.RequestAsync(new JsonObject { ["type"] = "ping" });
+        Assert.Equal("response", (string?)pong["type"]);
+        Assert.Null(ws.CloseStatus);
+    }
+
+    // ── Connection deadline: CloseOnTokenExpiry = false ignores a past exp ──────────
+    [Fact]
+    public async Task CloseOnTokenExpiryFalse_IgnoresPastExpClaim()
+    {
+        await using var host = await WsTestHost.StartAsync(Fx.ConnectionString,
+            configureWs: o => o.CloseOnTokenExpiry = false);
+        var pastExp = DateTimeOffset.UtcNow.AddMinutes(-5).ToUnixTimeSeconds();
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server, $"exp:{pastExp}");
+
+        var pong = await ws.RequestAsync(new JsonObject { ["type"] = "ping" });
+        Assert.Equal("response", (string?)pong["type"]);
+        Assert.Null(ws.CloseStatus);
     }
 }

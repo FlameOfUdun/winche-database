@@ -116,7 +116,16 @@ The built-in claims/exception filters are always applied internally and run oute
 
 > **WebSocket authentication is at the HTTP upgrade.** Browsers cannot set `Authorization` headers on WebSocket upgrades, so the library provides `app.UseWincheWsQueryToken()` — middleware that promotes a `?access_token=<jwt>` query parameter to an `Authorization: Bearer …` header so your existing auth scheme (JWT bearer, etc.) can validate it at the upgrade. Place it **before** `app.UseAuthentication()`. The library does **not** validate the token; that is the responsibility of your registered authentication handler. Once the upgrade succeeds, `HttpContext.User` is populated for the lifetime of the connection and the server sends a `welcome` frame immediately — there is no in-band `hello` handshake or `auth.refresh` message. Gate with `.RequireAuthorization()` to reject unauthenticated upgrades before the socket is accepted. Connect at `/documents/ws?access_token=<jwt>`.
 >
-> **Security notes:** always require TLS in production (tokens in query strings appear in server logs and proxies); use short-lived tokens and reconnect on expiry.
+> **The server enforces the connection's lifetime — the client doesn't have to.** `WsOptions.MaxConnectionLifetime` (default: none) caps how long any single connection may stay open. `WsOptions.CloseOnTokenExpiry` (default: `true`) additionally closes the connection once the authenticated principal's standard JWT `exp` claim (NumericDate) passes; it is a no-op when the principal carries no `exp` claim, so non-JWT setups are unaffected. Whichever deadline is earlier wins. When it's reached the server closes with code `4401` and a best-effort `error` frame (`UNAUTHENTICATED`) — the client is expected to reconnect with a fresh token:
+> ```csharp
+> builder.Services.AddWincheDatabaseWsApi(o =>
+> {
+>     o.MaxConnectionLifetime = TimeSpan.FromHours(12);
+>     // o.CloseOnTokenExpiry = false;   // opt out if you don't use JWT `exp` claims
+> });
+> ```
+>
+> **Security notes:** always require TLS in production (tokens in query strings appear in server logs and proxies); use short-lived tokens — the server disconnects the socket once they expire, so plan for your client to reconnect.
 
 ## Features
 
