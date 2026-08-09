@@ -31,10 +31,41 @@ public sealed class ConnectionScope(
     public string ConnectionId { get; } = connectionId;
     public IDocumentDatabase Db { get; } = db;
     public HashSet<string> Transactions { get; } = [];
+
+    /// <summary>
+    /// When each entry in <see cref="Transactions"/> was begun on this connection — used to prune
+    /// ids the ledger has already expired (see <see cref="PruneExpiredTransactions"/>) so a
+    /// long-lived connection that begins-and-abandons transactions doesn't accumulate dead entries.
+    /// Always kept in sync with <see cref="Transactions"/> under <see cref="Gate"/>.
+    /// </summary>
+    public Dictionary<string, DateTimeOffset> TransactionBeganAt { get; } = new(StringComparer.Ordinal);
+
     public Dictionary<string, Subscription> Subscriptions { get; } = new(StringComparer.Ordinal);
     public object Gate { get; } = new();
 
     public void SetClaims(IReadOnlyDictionary<string, object?> claims) => _claims = claims;
+
+    /// <summary>
+    /// Removes transaction ids that must already be expired in the ledger — i.e. begun longer ago
+    /// than <paramref name="totalTimeout"/> (the ledger's absolute lifetime cap). This is a
+    /// conservative, ledger-independent check: a transaction can also expire earlier via the
+    /// ledger's idle timeout, but those ids are still cleaned up lazily the next time the
+    /// connection tries to use them (the ledger rejects them and the caller removes the id).
+    /// Call under <see cref="Gate"/>.
+    /// </summary>
+    public void PruneExpiredTransactions(TimeSpan totalTimeout, DateTimeOffset now)
+    {
+        List<string>? expired = null;
+        foreach (var (id, beganAt) in TransactionBeganAt)
+            if (now - beganAt > totalTimeout)
+                (expired ??= []).Add(id);
+        if (expired is null) return;
+        foreach (var id in expired)
+        {
+            Transactions.Remove(id);
+            TransactionBeganAt.Remove(id);
+        }
+    }
 
     /// <summary>
     /// Pushes the connection's current claims into the DocumentClaimsAccessor's AsyncLocal for
@@ -53,6 +84,7 @@ public sealed class ConnectionScope(
             Subscriptions.Clear();
             txs = [.. Transactions];
             Transactions.Clear();
+            TransactionBeganAt.Clear();
         }
 
         foreach (var sub in subs)

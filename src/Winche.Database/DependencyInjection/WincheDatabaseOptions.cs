@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Winche.Database.Abstraction;
 using Winche.Database.Documents;
+using Winche.Database.Querying.Planning;
 using Winche.Database.Runtime.Ttl;
 using Winche.Database.Runtime.Writes;
 using Winche.Rules;
@@ -44,6 +45,14 @@ public sealed class WincheDatabaseOptions
     public TtlConfig Ttl { get; set; } = new();
     public QueryConfig QueryConfig { get; set; } = new();
 
+    /// <summary>
+    /// Ceilings on request shape for the query/read path (<c>limit</c>/<c>offset</c>, <c>orderBy</c>
+    /// key count, field-path depth/length, <c>in</c>/<c>notIn</c>/<c>arrayContainsAny</c>/
+    /// <c>arrayContainsAll</c> operand count, and <c>:batchGet</c>/<c>doc.getAll</c> array size).
+    /// Enforced at the REST and WebSocket entry points; violations are <c>INVALID_QUERY</c> (query
+    /// shape) or <c>INVALID_ARGUMENT</c> (batch-read size).
+    /// </summary>
+    public QueryLimits QueryLimits { get; set; } = new();
 
     /// <summary>
     /// Registers one or more <see cref="IndexDefinition"/> instances. Multiple calls accumulate —

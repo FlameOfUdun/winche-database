@@ -810,6 +810,29 @@ These limits are configurable — unlike many document databases that hard-code 
 
 > **Multi-node note:** Transaction state lives in the serving node's in-memory ledger. Multi-node deployments must use sticky routing (all requests in a transaction to the same node) or use the WebSocket API (connection-pinned). Routing violations surface as `ABORTED` — never corruption.
 
+Request-shape limits (`WincheDatabaseOptions.QueryLimits`):
+
+`QueryLimits` bounds how much work a single query/read request can force the planner, SQL compiler, and database to do, independent of authorization — e.g. an unbounded `limit`, `offset`, `orderBy` key count, or `in`-operand array otherwise compiles into an arbitrarily large SQL statement before the database ever rejects it. Enforced by `:runQuery`/`:count`/`:aggregate`/`:batchGet` (REST) and `query`/`count`/`aggregate`/`listen`/`doc.getAll` (WS) before the request reaches the database. Query-shape violations throw `INVALID_QUERY` (HTTP 400 over REST; `error` frame over WS, connection stays open); `MaxBatchGetSize` violations throw `INVALID_ARGUMENT`.
+
+| Field | Default | Description |
+| --- | --- | --- |
+| `MaxLimit` | 10,000 | Ceiling on `limit` and `limitToLast` |
+| `MaxOffset` | 10,000 | Ceiling on `offset` |
+| `MaxOrderByKeys` | 32 | Ceiling on the number of explicit `orderBy` keys |
+| `MaxFieldPathSegments` | 32 | Ceiling on the number of dotted segments in any field path in the query |
+| `MaxFieldPathSegmentLength` | 1,500 | Ceiling on the character length of any single field-path segment |
+| `MaxArrayOperandCount` | 100 | Ceiling on the element count of an `in`/`notIn`/`arrayContainsAny`/`arrayContainsAll` operand array |
+| `MaxBatchGetSize` | 500 | Ceiling on the number of document paths in a `:batchGet`/`doc.getAll` request (matches the `:commit` write-batch cap) |
+
+Per-connection limits (`Winche.Database.AspNetCore.WebSockets.Connections.WsOptions`, WS transport only):
+
+| Field | Default | Description |
+| --- | --- | --- |
+| `MaxSubscriptionsPerConnection` | 100 | Max concurrent `listen`/`doc.listen` subscriptions held by one connection |
+| `MaxTransactionsPerConnection` | 20 | Max concurrent open transactions held by one connection (checked on `tx.begin`, after pruning ids the ledger has already expired) |
+
+A cap exceeded over WS produces that message's normal `error` response — the connection is never torn down.
+
 ## REST API
 
 Mapped under `/documents` by default (configurable via `MapWincheDatabaseRestApi(prefix: "...")`). Document paths in URL parameters are Base64-encoded (UTF-8 bytes).

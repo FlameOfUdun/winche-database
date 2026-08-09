@@ -1,9 +1,13 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.Options;
 using Winche.Database.AspNetCore.WebSockets.Connections;
 using Winche.Database.AspNetCore.WebSockets.Protocol;
+using Winche.Database.DependencyInjection;
+using Winche.Database.Documents;
 using Winche.Database.Querying;
 using Winche.Database.Querying.Ast;
+using Winche.Database.Querying.Planning;
 using Winche.Database.Runtime;
 using Winche.Database.Runtime.Listening;
 using Winche.Database.Runtime.Writes;
@@ -17,8 +21,12 @@ namespace Winche.Database.AspNetCore.WebSockets.Routing;
 /// serial per connection (the endpoint awaits HandleAsync); listener events flow separately
 /// through the connection's send channel via SubscriptionPump.
 /// </summary>
-public sealed class MessageRouter
+public sealed class MessageRouter(IOptions<WincheDatabaseOptions> dbOptions, IOptions<WsOptions> wsOptions)
 {
+    private readonly QueryLimits _queryLimits = dbOptions.Value.QueryLimits;
+    private readonly TransactionConfig _txConfig = dbOptions.Value.TransactionConfig;
+    private readonly WsOptions _wsOptions = wsOptions.Value;
+
     public async Task<ServerMessage> HandleAsync(
         ConnectionScope scope, WsConnection conn, Microsoft.AspNetCore.Http.HttpContext httpContext,
         ClientMessage message, CancellationToken ct)
@@ -34,15 +42,15 @@ public sealed class MessageRouter
             {
                 PingMessage => Ok(id!, []),
                 DocGetMessage get => Ok(id!, new JsonObject { ["document"] = ToNode(await scope.Db.GetAsync(get.Path, ct)) }),
-                DocGetAllMessage getAll => Ok(id!, new JsonObject { ["documents"] = new JsonArray([.. (await scope.Db.GetAllAsync(getAll.Paths, ct)).Select(ToNode)]) }),
-                QueryMessage query => Ok(id!, ToNode(await scope.Db.QueryAsync(query.Query, ct))!.AsObject()),
-                CountMessage count => Ok(id!, new JsonObject { ["count"] = await scope.Db.CountAsync(count.Query, ct) }),
-                AggregateMessage agg => Ok(id!, new JsonObject { ["result"] = AggregateResultBody(await scope.Db.AggregateAsync(agg.Query, agg.Aggregations, ct)) }),
+                DocGetAllMessage getAll => Ok(id!, new JsonObject { ["documents"] = new JsonArray([.. (await GetAllValidatedAsync(scope, getAll.Paths, ct)).Select(ToNode)]) }),
+                QueryMessage query => Ok(id!, ToNode(await QueryValidatedAsync(scope, query.Query, ct))!.AsObject()),
+                CountMessage count => Ok(id!, new JsonObject { ["count"] = await CountValidatedAsync(scope, count.Query, ct) }),
+                AggregateMessage agg => Ok(id!, new JsonObject { ["result"] = AggregateResultBody(await AggregateValidatedAsync(scope, agg.Query, agg.Aggregations, ct)) }),
                 AddMessage add => Ok(id!, new JsonObject { ["document"] = ToNode(await scope.Db.AddAsync(add.Collection, add.Fields, ct)) }),
                 WriteMessage write => Ok(id!, WriteResultsBody(await scope.Db.WriteAsync(write.Writes, ct))),
                 TxBeginMessage => await HandleTxBegin(scope, id!, ct),
                 TxGetMessage txGet => Ok(id!, new JsonObject { ["document"] = ToNode(await scope.Db.GetAsync(RequireTx(scope, txGet.TransactionId), txGet.Path, ct)) }),
-                TxQueryMessage txQuery => Ok(id!, ToNode(await scope.Db.QueryAsync(RequireTx(scope, txQuery.TransactionId), txQuery.Query, ct))!.AsObject()),
+                TxQueryMessage txQuery => Ok(id!, ToNode(await TxQueryValidatedAsync(scope, RequireTx(scope, txQuery.TransactionId), txQuery.Query, ct))!.AsObject()),
                 TxCommitMessage txCommit => await HandleTxCommit(scope, id!, txCommit, ct),
                 TxRollbackMessage txRollback => await HandleTxRollback(scope, id!, txRollback, ct),
                 ListenMessage listen => HandleListen(scope, conn, id!, listen.Query, listen.ResumeToken, listen.Protocol),
@@ -58,10 +66,60 @@ public sealed class MessageRouter
         }
     }
 
-    private static async Task<ServerMessage> HandleTxBegin(ConnectionScope scope, string id, CancellationToken ct)
+    // ── Query-shape / batch-size validation (shared by the one-shot and transactional forms) ──
+
+    private Task<IReadOnlyList<Document?>> GetAllValidatedAsync(ConnectionScope scope, IReadOnlyList<string> paths, CancellationToken ct)
     {
+        if (paths.Count > _queryLimits.MaxBatchGetSize)
+            throw new RuntimeException(RuntimeStatus.InvalidArgument,
+                $"'paths' may contain at most {_queryLimits.MaxBatchGetSize} paths, got {paths.Count}.");
+        return scope.Db.GetAllAsync(paths, ct);
+    }
+
+    private Task<QueryResult> QueryValidatedAsync(ConnectionScope scope, Query query, CancellationToken ct)
+    {
+        QueryShapeValidator.Validate(query, _queryLimits);
+        return scope.Db.QueryAsync(query, ct);
+    }
+
+    private Task<QueryResult> TxQueryValidatedAsync(ConnectionScope scope, string transactionId, Query query, CancellationToken ct)
+    {
+        QueryShapeValidator.Validate(query, _queryLimits);
+        return scope.Db.QueryAsync(transactionId, query, ct);
+    }
+
+    private Task<long> CountValidatedAsync(ConnectionScope scope, Query query, CancellationToken ct)
+    {
+        QueryShapeValidator.Validate(query, _queryLimits);
+        return scope.Db.CountAsync(query, ct);
+    }
+
+    private Task<AggregationResult> AggregateValidatedAsync(
+        ConnectionScope scope, Query query, IReadOnlyList<Aggregation> aggregations, CancellationToken ct)
+    {
+        QueryShapeValidator.Validate(query, _queryLimits);
+        return scope.Db.AggregateAsync(query, aggregations, ct);
+    }
+
+    // ── Transactions ─────────────────────────────────────────────────────────────
+
+    private async Task<ServerMessage> HandleTxBegin(ConnectionScope scope, string id, CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow;
+        lock (scope.Gate)
+        {
+            scope.PruneExpiredTransactions(_txConfig.TotalTimeoutSpan, now);
+            if (scope.Transactions.Count >= _wsOptions.MaxTransactionsPerConnection)
+                throw new RuntimeException(RuntimeStatus.InvalidArgument,
+                    $"This connection already has {scope.Transactions.Count} open transactions, the maximum of {_wsOptions.MaxTransactionsPerConnection}.");
+        }
+
         var handle = await scope.Db.BeginTransactionAsync(ct);
-        lock (scope.Gate) scope.Transactions.Add(handle.Id);
+        lock (scope.Gate)
+        {
+            scope.Transactions.Add(handle.Id);
+            scope.TransactionBeganAt[handle.Id] = now;
+        }
         return Ok(id, new JsonObject { ["transactionId"] = handle.Id });
     }
 
@@ -76,7 +134,11 @@ public sealed class MessageRouter
         }
         finally
         {
-            lock (scope.Gate) scope.Transactions.Remove(txId);
+            lock (scope.Gate)
+            {
+                scope.Transactions.Remove(txId);
+                scope.TransactionBeganAt.Remove(txId);
+            }
         }
     }
 
@@ -87,14 +149,23 @@ public sealed class MessageRouter
         CancellationToken ct)
     {
         bool owned;
-        lock (scope.Gate) owned = scope.Transactions.Remove(msg.TransactionId);
+        lock (scope.Gate)
+        {
+            owned = scope.Transactions.Remove(msg.TransactionId);
+            scope.TransactionBeganAt.Remove(msg.TransactionId);
+        }
         if (owned)
             await scope.Db.RollbackTransactionAsync(msg.TransactionId, ct);
         return Ok(id, []);
     }
 
-    private static ServerMessage HandleListen(ConnectionScope scope, WsConnection conn, string id, Query query, long? resumeToken, long? clientProtocol)
+    // ── Listeners ────────────────────────────────────────────────────────────────
+
+    private ServerMessage HandleListen(ConnectionScope scope, WsConnection conn, string id, Query query, long? resumeToken, long? clientProtocol)
     {
+        QueryShapeValidator.Validate(query, _queryLimits);
+        EnsureSubscriptionCapacity(scope);
+
         var listener = scope.Db.Listen(query, resumeToken is { } seq ? new ListenOptions(ResumeFrom: seq) : null);
         var subscriptionId = Guid.NewGuid().ToString("N");
         var cts = CancellationTokenSource.CreateLinkedTokenSource(conn.Closed);
@@ -103,9 +174,11 @@ public sealed class MessageRouter
         return Register(scope, subscriptionId, listener, pump, cts, id);
     }
 
-    private static async Task<ServerMessage> HandleDocListen(
+    private async Task<ServerMessage> HandleDocListen(
         ConnectionScope scope, WsConnection conn, string id, string path, long? resumeToken, long? clientProtocol, CancellationToken ct)
     {
+        EnsureSubscriptionCapacity(scope);
+
         var options = resumeToken is { } seq ? new ListenOptions(ResumeFrom: seq) : null;
         var listener = await scope.Db.ListenToDocumentAsync(path, options, ct);   // get-authorized; throws → mapped to error frame
         var subscriptionId = Guid.NewGuid().ToString("N");
@@ -113,6 +186,16 @@ public sealed class MessageRouter
         var supportsDeleted = clientProtocol >= SubscriptionPump.DeletedKindMinProtocol;
         var pump = SubscriptionPump.RunDocumentAsync(subscriptionId, listener, scope, conn, supportsDeleted, cts.Token);
         return Register(scope, subscriptionId, listener, pump, cts, id);
+    }
+
+    private void EnsureSubscriptionCapacity(ConnectionScope scope)
+    {
+        lock (scope.Gate)
+        {
+            if (scope.Subscriptions.Count >= _wsOptions.MaxSubscriptionsPerConnection)
+                throw new RuntimeException(RuntimeStatus.InvalidArgument,
+                    $"This connection already has {scope.Subscriptions.Count} open subscriptions, the maximum of {_wsOptions.MaxSubscriptionsPerConnection}.");
+        }
     }
 
     private static ServerMessage Register(

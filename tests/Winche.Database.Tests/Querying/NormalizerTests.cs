@@ -194,6 +194,20 @@ public class NormalizerTests
             Throws(new Query("c", Where: new FieldFilter(F("f"), op, new IntegerValue(1)))).Code);
 
     [Fact]
+    public void Regex_AtMaxLength_IsAccepted()
+    {
+        var pattern = new string('a', FilterRules.MaxRegexPatternLength);
+        var plan = Normalizer.Normalize(new Query("c", Where: new FieldFilter(F("f"), FilterOperator.Regex, new StringValue(pattern))));
+        Assert.NotNull(plan);
+    }
+
+    [Fact]
+    public void Regex_OverMaxLength_Throws() =>
+        Assert.Equal("REGEX_TOO_LONG",
+            Throws(new Query("c", Where: new FieldFilter(
+                F("f"), FilterOperator.Regex, new StringValue(new string('a', FilterRules.MaxRegexPatternLength + 1))))).Code);
+
+    [Fact]
     public void EmptyComposite_Throws() =>
         Assert.Equal("EMPTY_COMPOSITE",
             Throws(new Query("c", Where: new CompositeFilter(CompositeOp.And, []))).Code);
@@ -236,5 +250,117 @@ public class NormalizerTests
         // comparisons stay legal
         Normalizer.Normalize(new Query("c",
             Where: new FieldFilter(F("__name__"), FilterOperator.Gt, new StringValue("c/a"))));
+    }
+
+    // ── QueryLimits: configurable ceilings on request shape ───────────────────
+
+    private static PlanValidationException ThrowsWithLimits(Query q, QueryLimits limits) =>
+        Assert.Throws<PlanValidationException>(() => Normalizer.Normalize(q, limits));
+
+    [Fact]
+    public void NoLimitsSupplied_CeilingsAreNotEnforced()
+    {
+        // Omitting QueryLimits skips the new ceiling checks entirely (pre-existing floor/shape
+        // checks still apply) — enforcement is the transport's job via QueryShapeValidator.
+        var hugeOrderBy = Enumerable.Range(0, 5000).Select(i => new Ordering(F($"f{i}"))).ToList();
+        Normalizer.Normalize(new Query("c", OrderBy: hugeOrderBy, Limit: int.MaxValue, Offset: int.MaxValue));
+    }
+
+    [Fact]
+    public void Limit_AtCeiling_Succeeds_OverCeiling_Throws()
+    {
+        var limits = new QueryLimits { MaxLimit = 10 };
+        Normalizer.Normalize(new Query("c", Limit: 10), limits);                 // at the limit
+        Assert.Equal("LIMIT_TOO_LARGE", ThrowsWithLimits(new Query("c", Limit: 11), limits).Code);
+    }
+
+    [Fact]
+    public void LimitToLast_AtCeiling_Succeeds_OverCeiling_Throws()
+    {
+        var limits = new QueryLimits { MaxLimit = 10 };
+        var ob = new List<Ordering> { new(F("a")) };
+        Normalizer.Normalize(new Query("c", OrderBy: ob, LimitToLast: 10), limits);
+        Assert.Equal("LIMIT_TO_LAST_TOO_LARGE",
+            ThrowsWithLimits(new Query("c", OrderBy: ob, LimitToLast: 11), limits).Code);
+    }
+
+    [Fact]
+    public void Offset_AtCeiling_Succeeds_OverCeiling_Throws()
+    {
+        var limits = new QueryLimits { MaxOffset = 10 };
+        Normalizer.Normalize(new Query("c", Offset: 10), limits);
+        Assert.Equal("OFFSET_TOO_LARGE", ThrowsWithLimits(new Query("c", Offset: 11), limits).Code);
+    }
+
+    [Fact]
+    public void OrderByCount_AtCeiling_Succeeds_OverCeiling_Throws()
+    {
+        var limits = new QueryLimits { MaxOrderByKeys = 5 };
+        var atCeiling = Enumerable.Range(0, 5).Select(i => new Ordering(F($"f{i}"))).ToList();
+        Normalizer.Normalize(new Query("c", OrderBy: atCeiling), limits);
+
+        var overCeiling = Enumerable.Range(0, 6).Select(i => new Ordering(F($"f{i}"))).ToList();
+        Assert.Equal("TOO_MANY_ORDER_BY_KEYS",
+            ThrowsWithLimits(new Query("c", OrderBy: overCeiling), limits).Code);
+    }
+
+    [Fact]
+    public void OrderByCount_FarOverCeiling_RejectsImmediately_WithoutQuadraticCursorWork()
+    {
+        // Regression guard for the O(n^2) CursorSql.BuildBound blowup: a pathological orderBy +
+        // full cursor must be rejected by the (cheap, linear) count check before the cursor is
+        // ever built, so this must return well under a second even for a huge key count.
+        var limits = new QueryLimits { MaxOrderByKeys = 32 };
+        const int hugeCount = 20_000;
+        var orderBy = Enumerable.Range(0, hugeCount).Select(i => new Ordering(F($"f{i}"))).ToList();
+        var cursorValues = Enumerable.Range(0, hugeCount).Select(i => (Value)new IntegerValue(i)).ToList();
+        var q = new Query("c", OrderBy: orderBy, Start: new Cursor(cursorValues, Before: true));
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        Assert.Equal("TOO_MANY_ORDER_BY_KEYS", ThrowsWithLimits(q, limits).Code);
+        Assert.True(sw.ElapsedMilliseconds < 2000, $"rejection took {sw.ElapsedMilliseconds}ms — expected near-instant");
+    }
+
+    [Fact]
+    public void FieldPathSegmentCount_AtCeiling_Succeeds_OverCeiling_Throws()
+    {
+        var limits = new QueryLimits { MaxFieldPathSegments = 3 };
+        Normalizer.Normalize(new Query("c", OrderBy: [new Ordering(F("a.b.c"))]), limits);
+        Assert.Equal("FIELD_PATH_TOO_DEEP",
+            ThrowsWithLimits(new Query("c", OrderBy: [new Ordering(F("a.b.c.d"))]), limits).Code);
+    }
+
+    [Fact]
+    public void FieldPathSegmentLength_AtCeiling_Succeeds_OverCeiling_Throws()
+    {
+        var limits = new QueryLimits { MaxFieldPathSegmentLength = 10 };
+        Normalizer.Normalize(new Query("c", OrderBy: [new Ordering(F(new string('a', 10)))]), limits);
+        Assert.Equal("FIELD_PATH_SEGMENT_TOO_LONG",
+            ThrowsWithLimits(new Query("c", OrderBy: [new Ordering(F(new string('a', 11)))]), limits).Code);
+    }
+
+    [Fact]
+    public void SelectFieldPath_IsAlsoBoundedByFieldPathLimits()
+    {
+        var limits = new QueryLimits { MaxFieldPathSegments = 2 };
+        Normalizer.Normalize(new Query("c", Select: [F("a.b")]), limits);
+        Assert.Equal("FIELD_PATH_TOO_DEEP",
+            ThrowsWithLimits(new Query("c", Select: [F("a.b.c")]), limits).Code);
+    }
+
+    [Theory]
+    [InlineData(FilterOperator.In)]
+    [InlineData(FilterOperator.NotIn)]
+    [InlineData(FilterOperator.ArrayContainsAny)]
+    [InlineData(FilterOperator.ArrayContainsAll)]
+    public void ArrayOperandCount_AtCeiling_Succeeds_OverCeiling_Throws(FilterOperator op)
+    {
+        var limits = new QueryLimits { MaxArrayOperandCount = 3 };
+        Value[] AtCeiling() => [new IntegerValue(1), new IntegerValue(2), new IntegerValue(3)];
+        Value[] OverCeiling() => [new IntegerValue(1), new IntegerValue(2), new IntegerValue(3), new IntegerValue(4)];
+
+        Normalizer.Normalize(new Query("c", Where: new FieldFilter(F("f"), op, new ArrayValue(AtCeiling()))), limits);
+        Assert.Equal("TOO_MANY_OPERANDS",
+            ThrowsWithLimits(new Query("c", Where: new FieldFilter(F("f"), op, new ArrayValue(OverCeiling()))), limits).Code);
     }
 }

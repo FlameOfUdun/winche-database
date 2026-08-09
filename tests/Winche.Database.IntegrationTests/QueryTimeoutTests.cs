@@ -73,6 +73,15 @@ public class QueryTimeoutTests(PostgresFixture fx) : QueryTestBase(fx)
         await schema.SyncIndexesAsync();
     }
 
+    [Fact]
+    public async Task OverLongRegexPattern_RejectedByValidation()
+    {
+        var pattern = new string('a', FilterRules.MaxRegexPatternLength + 1);
+        var query = new Query("c", Where: new FieldFilter(F("f"), FilterOperator.Regex, new StringValue(pattern)));
+
+        var ex = await Assert.ThrowsAsync<PlanValidationException>(() => RunTimed(query, null));
+        Assert.Equal("REGEX_TOO_LONG", ex.Code);
+    }
 
     [Fact]
     public async Task Timeout_DoesNotLeakToNextConnectionBorrowedFromPool()

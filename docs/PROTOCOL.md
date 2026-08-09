@@ -434,7 +434,7 @@ Each filter is a JSON object with exactly one recognized shape key.
 | `contains` | String fields | Substring match (case-sensitive) |
 | `startsWith` | String fields | Prefix match (case-sensitive) |
 | `endsWith` | String fields | Suffix match (case-sensitive) |
-| `regex` | String fields | Regular expression match (case-sensitive) |
+| `regex` | String fields | Regular expression match (case-sensitive). Pattern capped at 512 characters (`REGEX_TOO_LONG`); the underlying statement is additionally bounded by `QueryConfig.StatementTimeout` (§8) — the length cap alone does not bound match cost, since a short pattern can be as expensive to evaluate as a long one. |
 
 Inequality operators (`gt`, `gte`, `lt`, `lte`) are **same-type-class only**: the filter matches only values whose TypeRank equals the operand's TypeRank (Number, String, Timestamp, etc.). A numeric filter will never match a string field, even if the field name is the same.
 
@@ -553,6 +553,19 @@ These codes appear in `details.code` for `INVALID_QUERY` plan-validation failure
 | `NAME_OPERATOR` | `__name__` used with an unsupported operator (only `eq`/`ne`/`gt`/`gte`/`lt`/`lte`) |
 | `COMPARE_OP` | `compare` used with an unsupported operator (only `eq`/`ne`/`gt`/`gte`/`lt`/`lte`) |
 | `OPERAND_TYPE` | An operator's operand has the wrong type (e.g. `in` needs a non-empty array; `startsWith` needs a string) |
+| `REGEX_TOO_LONG` | A `regex` filter's pattern exceeds 512 characters |
+
+The following codes enforce the configurable ceilings in `WincheDatabaseOptions.QueryLimits` (§8) — checked by both `:runQuery`/`:count`/`:aggregate` (REST) and `query`/`count`/`aggregate`/`listen` (WS) before the query reaches the database:
+
+| Code | Meaning |
+| - | - |
+| `LIMIT_TOO_LARGE` | `limit` exceeds `QueryLimits.MaxLimit` |
+| `LIMIT_TO_LAST_TOO_LARGE` | `limitToLast` exceeds `QueryLimits.MaxLimit` |
+| `OFFSET_TOO_LARGE` | `offset` exceeds `QueryLimits.MaxOffset` |
+| `TOO_MANY_ORDER_BY_KEYS` | `orderBy` has more keys than `QueryLimits.MaxOrderByKeys` |
+| `FIELD_PATH_TOO_DEEP` | A field path (in `orderBy`, `where`, `compare`, or `select`) has more segments than `QueryLimits.MaxFieldPathSegments` |
+| `FIELD_PATH_SEGMENT_TOO_LONG` | A field-path segment is longer than `QueryLimits.MaxFieldPathSegmentLength` |
+| `TOO_MANY_OPERANDS` | An `in`/`notIn`/`arrayContainsAny`/`arrayContainsAll` operand array has more elements than `QueryLimits.MaxArrayOperandCount` |
 
 ---
 
@@ -582,8 +595,8 @@ These endpoints use literal-colon URL segments and are mapped **outside** the `/
 | `POST /documents:commit` | `{"writes": [...], "transaction"?: "id"}` | `{"writeResults": [...]}` | Atomic write batch. With `transaction`: commits the transaction. |
 | `POST /documents:beginTransaction` | `{}` | `{"transaction": "id"}` | Begin an optimistic transaction. |
 | `POST /documents:rollback` | `{"transaction": "id"}` | `{}` | Roll back (idempotent; unknown id is a no-op). |
-| `POST /documents:batchGet` | `{"documents": ["path1","path2",...], "transaction"?: "id"}` | `{"documents": [Document\|null, ...]}` | Bulk read preserving input order; missing docs are `null`. |
-| `POST /documents:runQuery` | `{"query": <Query>, "transaction"?: "id"}` | `{"documents": [...], "hasMore": false}` | Execute a query. Default `limit` = 100 when omitted. |
+| `POST /documents:batchGet` | `{"documents": ["path1","path2",...], "transaction"?: "id"}` | `{"documents": [Document\|null, ...]}` | Bulk read preserving input order; missing docs are `null`. `documents` is capped at `QueryLimits.MaxBatchGetSize` (default 500; see §8.8) — over the cap is `INVALID_ARGUMENT`. |
+| `POST /documents:runQuery` | `{"query": <Query>, "transaction"?: "id"}` | `{"documents": [...], "hasMore": false}` | Execute a query. Default `limit` = 100 when omitted. Query shape is bounded by `QueryLimits` (§8.8) — over any ceiling is `INVALID_QUERY`. |
 | `POST /documents:count` | `{"query": <Query>}` | `{"count": N}` | Count documents matching the query. An explicit `limit` caps the count; omitted = full match (the 100 default does **not** apply). Authorized as a `list` operation — the query must provably satisfy a read rule or the request is rejected with `PERMISSION_DENIED`. |
 | `POST /documents:aggregate` | `{"query": <Query>, "aggregations": [...]}` | `{"result": {<alias>: <tagged value>, …}}` | Run one or more aggregations (count / sum / average) over a query. An explicit `limit` caps all aggregations. Authorized as a `list` operation. |
 
@@ -817,7 +830,11 @@ Server: {"type": "response", "id": "1", "result": {"document": {…} | null}}
 
 Client: {"type": "doc.getAll", "id": "2", "paths": ["users/u1", "users/u2"]}
 Server: {"type": "response", "id": "2", "result": {"documents": [{…}, null]}}
+```
 
+`paths` is capped at `QueryLimits.MaxBatchGetSize` (default 500; see §8.8) — over the cap yields `{"type": "error", "status": "INVALID_ARGUMENT", ...}` without closing the connection. Query shape (`query`/`count`/`aggregate`/`listen`) is likewise bounded by `QueryLimits` — over any ceiling yields `{"type": "error", "status": "INVALID_QUERY", ...}`.
+
+```json
 Client: {"type": "query", "id": "3",
          "query": {"collection": "users", "where": {"field": "score", "op": "gt", "value": {"integerValue": "0"}}}}
 Server: {"type": "response", "id": "3", "result": {"documents": [...], "hasMore": false}}
@@ -940,6 +957,8 @@ Server: {"type": "response", "id": "t5", "result": {}}
 
 **Transaction expiry:** Transactions idle out after **60 seconds** of no activity (default; configurable via `WincheDatabaseOptions.TransactionConfig.IdleTimeoutSpan`). The absolute maximum lifetime is **5 minutes** (configurable via `TotalTimeoutSpan`). Access on an expired or unknown transaction id yields `ABORTED`.
 
+**Per-connection cap:** each connection may hold at most `WsOptions.MaxTransactionsPerConnection` (default 20; see §8.8) open transactions at once. `tx.begin` beyond the cap yields `{"type": "error", "status": "INVALID_ARGUMENT", ...}` without closing the connection; the connection prunes ids it can prove the ledger has already expired (via `TotalTimeoutSpan`) before checking the cap, so a connection that begins-and-abandons transactions does not permanently lose slots.
+
 ### 7.6 Listener protocol
 
 #### Subscribe
@@ -957,6 +976,8 @@ Client: {"type": "listen", "id": "s1", "query": {"collection": "users"}, "resume
 
 The optional `"protocol": <int>` field declares the client's wire protocol version
 (current: 2). It gates the `deleted` change kind (see Delta below).
+
+**Per-connection cap:** each connection may hold at most `WsOptions.MaxSubscriptionsPerConnection` (default 100; see §8.8) concurrent subscriptions (`listen` and `doc.listen` combined). A subscribe beyond the cap yields `{"type": "error", "status": "INVALID_ARGUMENT", ...}` without closing the connection or consuming a slot; `unlisten` frees one.
 
 #### Single-document subscribe (`doc.listen`)
 

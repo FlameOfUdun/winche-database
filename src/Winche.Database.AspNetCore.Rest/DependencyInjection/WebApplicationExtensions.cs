@@ -1,11 +1,13 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Options;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Winche.Database.AspNetCore.Rest.EndpointFilters;
+using Winche.Database.DependencyInjection;
 using Winche.Database.Documents;
 using Winche.Database.Querying;
 using Winche.Database.Querying.Ast;
@@ -135,7 +137,7 @@ public static class WebApplicationExtensions
             return Results.Json(new { }, statusCode: 200, contentType: "application/json");
         });
 
-        Verb("batchGet", async (HttpRequest request, IDocumentDatabase db, CancellationToken ct) =>
+        Verb("batchGet", async (HttpRequest request, IDocumentDatabase db, IOptions<WincheDatabaseOptions> options, CancellationToken ct) =>
         {
             var node = (await JsonNode.ParseAsync(request.Body, cancellationToken: ct))?.AsObject()
                 ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "Request body must be a JSON object");
@@ -144,6 +146,10 @@ public static class WebApplicationExtensions
             var documents = docsArray.Select(n => n?.GetValue<string>()
                 ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "Each document path must be a string"))
                 .ToList();
+            var maxBatchGet = options.Value.QueryLimits.MaxBatchGetSize;
+            if (documents.Count > maxBatchGet)
+                throw new RuntimeException(RuntimeStatus.InvalidArgument,
+                    $"'documents' may contain at most {maxBatchGet} paths, got {documents.Count}.");
             var transaction = node["transaction"]?.GetValue<string>();
             IReadOnlyList<Document?> docs;
             if (transaction is null)
@@ -160,7 +166,7 @@ public static class WebApplicationExtensions
             return Results.Json(new { documents = docs }, statusCode: 200, contentType: "application/json");
         });
 
-        Verb("runQuery", async (HttpRequest request, IDocumentDatabase db, CancellationToken ct) =>
+        Verb("runQuery", async (HttpRequest request, IDocumentDatabase db, IOptions<WincheDatabaseOptions> options, CancellationToken ct) =>
         {
             var node = (await JsonNode.ParseAsync(request.Body, cancellationToken: ct))?.AsObject()
                 ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "Request body must be a JSON object");
@@ -168,6 +174,7 @@ public static class WebApplicationExtensions
                 ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "'query' is required");
             var query = queryNode.Deserialize<Query>(QueryAstOptions);
             if (query is null) throw new RuntimeException(RuntimeStatus.InvalidArgument, "'query' must be a valid query object");
+            QueryShapeValidator.Validate(query, options.Value.QueryLimits);
             var transaction = node["transaction"]?.GetValue<string>();
             var result = transaction is null
                 ? await db.QueryAsync(query, ct)
@@ -175,7 +182,7 @@ public static class WebApplicationExtensions
             return Results.Json(result, statusCode: 200, contentType: "application/json");
         });
 
-        Verb("count", async (HttpRequest request, IDocumentDatabase db, CancellationToken ct) =>
+        Verb("count", async (HttpRequest request, IDocumentDatabase db, IOptions<WincheDatabaseOptions> options, CancellationToken ct) =>
         {
             var node = (await JsonNode.ParseAsync(request.Body, cancellationToken: ct))?.AsObject()
                 ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "Request body must be a JSON object");
@@ -183,11 +190,12 @@ public static class WebApplicationExtensions
                 ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "'query' is required");
             var query = queryNode.Deserialize<Query>(QueryAstOptions);
             if (query is null) throw new RuntimeException(RuntimeStatus.InvalidArgument, "'query' must be a valid query object");
+            QueryShapeValidator.Validate(query, options.Value.QueryLimits);
             var count = await db.CountAsync(query, ct);
             return Results.Json(new { count }, statusCode: 200, contentType: "application/json");
         });
 
-        Verb("aggregate", async (HttpRequest request, IDocumentDatabase db, CancellationToken ct) =>
+        Verb("aggregate", async (HttpRequest request, IDocumentDatabase db, IOptions<WincheDatabaseOptions> options, CancellationToken ct) =>
         {
             var node = (await JsonNode.ParseAsync(request.Body, cancellationToken: ct))?.AsObject()
                 ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "Request body must be a JSON object");
@@ -195,6 +203,7 @@ public static class WebApplicationExtensions
                 ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "'query' is required");
             var query = queryNode.Deserialize<Query>(QueryAstOptions)
                 ?? throw new RuntimeException(RuntimeStatus.InvalidArgument, "'query' must be a valid query object");
+            QueryShapeValidator.Validate(query, options.Value.QueryLimits);
 
             var aggregations = AggregationParser.Parse(node["aggregations"]);
             var result = await db.AggregateAsync(query, aggregations, ct);

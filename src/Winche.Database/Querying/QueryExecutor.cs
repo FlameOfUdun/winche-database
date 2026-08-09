@@ -16,13 +16,18 @@ namespace Winche.Database.Querying;
 /// class opens and commits itself, purely so a per-statement <c>SET LOCAL statement_timeout</c> can be
 /// applied — Postgres reverts a <c>LOCAL</c> setting when the transaction ends, so it never outlives the
 /// single statement it was meant for, regardless of what the underlying pooled connection is reused for next.
+/// <para>
+/// <paramref name="limits"/> is applied here rather than only at a transport boundary so that no caller —
+/// including one added later — can reach the planner with an unbounded query shape.
+/// </para>
 /// </summary>
 public sealed class QueryExecutor(
-    NpgsqlConnection conn, NpgsqlTransaction? tx, CollectionIndexResolver? scopes = null, TimeSpan? statementTimeout = null)
+    NpgsqlConnection conn, NpgsqlTransaction? tx, CollectionIndexResolver? scopes = null, TimeSpan? statementTimeout = null,
+    QueryLimits? limits = null)
 {
     public async Task<QueryResult> ExecuteAsync(Query query, CancellationToken ct = default)
     {
-        var plan = Normalizer.Normalize(query);
+        var plan = Normalizer.Normalize(query, limits);
         var pageNode = plan.Nodes.OfType<PageNode>().Single();
         var compiled = SqlCompiler.Compile(plan, scopes?.ScopeFor(query.Collection), query.Select);
 
@@ -52,7 +57,7 @@ public sealed class QueryExecutor(
     /// </summary>
     public async Task<long> CountAsync(Query query, CancellationToken ct = default)
     {
-        var plan = Normalizer.Normalize(query);
+        var plan = Normalizer.Normalize(query, limits);
         var compiled = CountSql.Compile(plan, query.Limit, scopes?.ScopeFor(query.Collection));
 
         return await RunBoundedAsync(async statementTx =>
@@ -74,7 +79,7 @@ public sealed class QueryExecutor(
     {
         AggregateValidator.Validate(aggregations);
 
-        var plan = Normalizer.Normalize(query);
+        var plan = Normalizer.Normalize(query, limits);
         var compiled = AggregateSql.Compile(plan, aggregations, query.Limit, scopes?.ScopeFor(query.Collection));
 
         return await RunBoundedAsync(statementTx => ReadAggregateAsync(compiled, aggregations, statementTx, ct), ct);

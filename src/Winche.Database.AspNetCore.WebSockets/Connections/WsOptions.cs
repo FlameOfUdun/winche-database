@@ -27,4 +27,21 @@ public sealed class WsOptions
     /// Bounds teardown against a client that has stopped reading. Default: 5 seconds.
     /// </summary>
     public TimeSpan DrainTimeout { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Max concurrent live subscriptions (<c>listen</c>/<c>doc.listen</c>) a single connection may
+    /// hold at once — each one re-runs its query on every relevant change batch, so an unbounded
+    /// count lets one socket multiply server work without limit. A subscribe beyond this cap gets
+    /// that message's normal error response; the connection stays open. Default 100.
+    /// </summary>
+    public int MaxSubscriptionsPerConnection { get; set; } = 100;
+
+    /// <summary>
+    /// Max concurrent open transactions a single connection may hold at once. Checked on
+    /// <c>tx.begin</c>, after pruning ids the transaction ledger has already expired (so a
+    /// long-lived connection that begins-and-abandons transactions doesn't accumulate dead
+    /// entries against the cap). A begin beyond this cap gets that message's normal error
+    /// response; the connection stays open. Default 20.
+    /// </summary>
+    public int MaxTransactionsPerConnection { get; set; } = 20;
 }
