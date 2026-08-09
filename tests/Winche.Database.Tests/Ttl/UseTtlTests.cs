@@ -35,6 +35,7 @@ public class UseTtlTests
         var cfg = new TtlConfig();
         Assert.Equal(TimeSpan.FromMinutes(5), cfg.SweepInterval);
         Assert.Equal(500, cfg.BatchSize);
+        Assert.False(cfg.CascadeDelete);
     }
 
     [Fact]

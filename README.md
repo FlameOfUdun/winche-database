@@ -130,7 +130,7 @@ The built-in claims/exception filters are always applied internally and run oute
 - **Durable hooks** — Feed-driven, true at-least-once end-to-end; hooks execute inline+sequentially per batch; failed batches retried with capped backoff; hooks fire for writes from any node; cursor persisted across restarts; idempotency required
 - **Secondary indexes** — composite expression indexes declared by **collection ID** (the last path segment), covering every collection with that id under any parent; `IndexDefinition.Where` for filtered/partial indexes (agreement tested against engine) (see below)
 - **Access control** — in-memory rules engine (Winche.Rules); OR semantics with default-deny; for `list`/query operations the query must provably satisfy a read rule or it is rejected with PERMISSION_DENIED (rules are not post-filters)
-- **TTL (auto-expiry)** — Documents are automatically deleted once a registered timestamp field is in the past; configurable sweep interval (default 5 min) and batch size (default 500); collection-group scoped; TTL deletes emit change-feed events; bypass access rules; cascade to subcollections by default (opt out with `CascadeDelete = false`)
+- **TTL (auto-expiry)** — Documents are automatically deleted once a registered timestamp field is in the past; configurable sweep interval (default 5 min) and batch size (default 500); collection-group scoped; TTL deletes emit change-feed events; bypass access rules (writing the TTL field is therefore equivalent to deleting the document); deletes only the matched document by default (opt in to subcollection cascade with `CascadeDelete = true`)
 - **PostgreSQL backend** — All data stored as typed JSONB; queries compiled to native PostgreSQL SQL backed by a family of `winche_*` ordering helper functions (`winche_rank`, `winche_num`, `winche_text`, `winche_key`, …); `IMMUTABLE` functions back expression indexes
 
 ## Secondary Indexes
@@ -362,9 +362,11 @@ Multiple `UseTtl` calls accumulate — all registered policies are collected for
 - Policies apply per **collection group**: the policy's collection id matches documents in ALL collections sharing that id (e.g. a policy on `sessions` covers `users/u1/sessions/*` and `teams/t2/sessions/*`).
 - TTL deletes go through the normal write path, so they **emit change-feed events** — listeners and hooks observe the removals as ordinary `removed` events.
 - TTL is **system-initiated** and therefore **bypasses security rules**.
-- Deletes **cascade to subcollections by default**. Set `CascadeDelete = false` to delete only the matched document and leave its subcollection documents in place.
+- Deletes **only the matched document by default**. Set `CascadeDelete = true` to also delete its subcollection documents.
 
 > **Expiry is not instantaneous:** a document is removed on the next sweep after its field elapses, so the lag is bounded by `SweepInterval` (default 5 minutes).
+
+> **Access implication:** because the sweep bypasses security rules, it never checks who set the expiring field. Writing a registered TTL field is therefore equivalent to deleting that document (and, with `CascadeDelete = true`, its subtree) — access rules should restrict who may set the field accordingly.
 
 ### Tuning
 
@@ -374,7 +376,7 @@ Sweep behavior is controlled by `WincheDatabaseOptions.Ttl` (`TtlConfig`):
 | --- | --- | --- |
 | `SweepInterval` | 5 minutes | How often the TTL sweeper runs. Must be `> TimeSpan.Zero`. |
 | `BatchSize` | 500 | Maximum documents deleted per collection per sweep pass. Clamped to at most 500 (the write-batch cap). |
-| `CascadeDelete` | `true` | When `true`, a TTL delete also removes the document's subcollections. Set `false` to delete only the matched document. |
+| `CascadeDelete` | `false` | When `true`, a TTL delete also removes the document's subcollections. Defaults to deleting only the matched document. |
 
 ```csharp
 config.Ttl = new TtlConfig

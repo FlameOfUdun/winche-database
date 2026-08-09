@@ -16,6 +16,9 @@ namespace Winche.Database.Runtime.Hosting;
 /// depends on it. Deletes route through the write path (so change-feed "removed" rows emit and
 /// listeners/hooks observe them) and use the rule-free core (system-initiated, bypasses access rules).
 /// Whether a delete cascades to subcollections is controlled by <see cref="TtlConfig.CascadeDelete"/>.
+/// Because the sweep evaluates no rules, whoever can write a registered TTL field can effectively
+/// delete the document (and, with cascade enabled, its subtree) by backdating it — access rules
+/// should restrict who may set that field accordingly.
 /// </summary>
 public sealed class TtlSweeper(
     DocumentDatabase core,

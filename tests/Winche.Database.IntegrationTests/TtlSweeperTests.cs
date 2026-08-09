@@ -16,7 +16,7 @@ public class TtlSweeperTests(PostgresFixture fx) : QueryTestBase(fx)
         new(Fx.DataSource, Options.Create(new WincheDatabaseOptions { ConnectionString = Fx.ConnectionString }));
 
     private TtlSweeper Sweeper(DocumentDatabase core, int batchSize, params TtlPolicy[] policies) =>
-        Sweeper(core, batchSize, cascade: true, policies);
+        Sweeper(core, batchSize, cascade: false, policies);
 
     private TtlSweeper Sweeper(DocumentDatabase core, int batchSize, bool cascade, params TtlPolicy[] policies) =>
         new(core, Fx.DataSource, policies,
@@ -71,27 +71,27 @@ public class TtlSweeperTests(PostgresFixture fx) : QueryTestBase(fx)
     }
 
     [Fact]
-    public async Task CascadeDefault_DeletesSubcollection()
+    public async Task CascadeDefault_LeavesSubcollection()
     {
         await Seed("c/doc", TtlAt(DateTimeOffset.UtcNow.AddMinutes(-1)));
         await Seed("c/doc/sub/child", new() { ["x"] = new IntegerValue(1) });
 
-        await Sweeper(Core(), 500, TtlPolicy.For("c", "ttl")).SweepOnceAsync(default);   // CascadeDelete defaults true
+        await Sweeper(Core(), 500, TtlPolicy.For("c", "ttl")).SweepOnceAsync(default);   // CascadeDelete defaults false
 
         Assert.Null(await Get("c/doc"));
-        Assert.Null(await Get("c/doc/sub/child"));   // subtree removed by default cascade
+        Assert.NotNull(await Get("c/doc/sub/child"));   // subcollection survives by default
     }
 
     [Fact]
-    public async Task CascadeDisabled_LeavesSubcollection()
+    public async Task CascadeEnabled_DeletesSubcollection()
     {
         await Seed("c/doc", TtlAt(DateTimeOffset.UtcNow.AddMinutes(-1)));
         await Seed("c/doc/sub/child", new() { ["x"] = new IntegerValue(1) });
 
-        await Sweeper(Core(), 500, cascade: false, TtlPolicy.For("c", "ttl")).SweepOnceAsync(default);
+        await Sweeper(Core(), 500, cascade: true, TtlPolicy.For("c", "ttl")).SweepOnceAsync(default);
 
         Assert.Null(await Get("c/doc"));
-        Assert.NotNull(await Get("c/doc/sub/child"));   // subcollection survives when cascade is off
+        Assert.Null(await Get("c/doc/sub/child"));   // subtree removed when cascade is explicitly enabled
     }
 
     [Fact]

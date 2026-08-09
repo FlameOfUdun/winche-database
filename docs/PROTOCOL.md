@@ -1155,4 +1155,39 @@ The practical window for this race is the p99 write-transaction duration — typ
 
 TTL policies are configured entirely server-side via `AddWincheDatabase` (`UseTtl`) and have **no REST or WebSocket wire surface**. Clients cannot register, query, or cancel TTL policies over the API.
 
-The TTL sweeper runs on the configured `SweepInterval` (default 5 minutes) and deletes documents whose registered field holds a past `timestampValue`. Deletes are executed through the normal write path: they appear on the change feed as ordinary `removed` events and are therefore visible to live-query listeners and document lifecycle hooks. The sweeper is system-initiated and bypasses security rules. By default the delete cascades to the document's subcollections; set `CascadeDelete = false` to delete only the matched document.
+The TTL sweeper runs on the configured `SweepInterval` (default 5 minutes) and deletes documents whose registered field holds a past `timestampValue`. Deletes are executed through the normal write path: they appear on the change feed as ordinary `removed` events and are therefore visible to live-query listeners and document lifecycle hooks. The sweeper is system-initiated and bypasses security rules. By default the delete matches only the document itself; set `CascadeDelete = true` to also delete its subcollections.
+
+Because the sweep bypasses security rules, it does not check who set the expiring field or why. In practice, the ability to write a registered TTL field is equivalent to the ability to delete that document (and, with `CascadeDelete = true`, its subtree) — access rules should restrict who may set the field accordingly.
+
+### 8.8 Request-shape limits
+
+`WincheDatabaseOptions.QueryLimits` bounds how much work a single query/read request can force the planner, SQL compiler, and database to do, independent of authorization. Checked by `:runQuery`/`:count`/`:aggregate`/`:batchGet` (REST) and `query`/`count`/`aggregate`/`listen`/`doc.getAll` (WS) before the request reaches the database — violations are `INVALID_QUERY` (§5.4) for query-shape fields, `INVALID_ARGUMENT` for `MaxBatchGetSize`.
+
+| `QueryLimits` field | Default | Description |
+| - | - | - |
+| `MaxLimit` | 10,000 | Ceiling on `limit` and `limitToLast` |
+| `MaxOffset` | 10,000 | Ceiling on `offset` |
+| `MaxOrderByKeys` | 32 | Ceiling on the number of explicit `orderBy` keys |
+| `MaxFieldPathSegments` | 32 | Ceiling on the number of dotted segments in any field path in the query |
+| `MaxFieldPathSegmentLength` | 1,500 | Ceiling on the character length of any single field-path segment |
+| `MaxArrayOperandCount` | 100 | Ceiling on the element count of an `in`/`notIn`/`arrayContainsAny`/`arrayContainsAll` operand array |
+| `MaxBatchGetSize` | 500 | Ceiling on the number of document paths in a `:batchGet`/`doc.getAll` request (matches the `:commit` write-batch cap) |
+
+`Winche.Database.AspNetCore.WebSockets.Connections.WsOptions` additionally bounds per-connection resource use for the WS transport — a request beyond either cap gets that message's normal `error` frame; the connection is not closed:
+
+| `WsOptions` field | Default | Description |
+| - | - | - |
+| `MaxSubscriptionsPerConnection` | 100 | Max concurrent `listen`/`doc.listen` subscriptions held by one connection |
+| `MaxTransactionsPerConnection` | 20 | Max concurrent open transactions held by one connection. Checked on `tx.begin`, after pruning ids the transaction ledger has already expired (via `TransactionConfig.TotalTimeoutSpan`) so an abandoned begin-without-commit doesn't permanently consume a slot |
+
+### 8.9 Query timeout (server-side)
+
+`WincheDatabaseOptions.QueryConfig.StatementTimeout` (default 30 seconds) sets Postgres's `statement_timeout` for the statement backing `runQuery`, `count`, and `aggregate` (and a live query's requery on the change feed). Unlike a client-side ADO.NET command timeout, this bounds the **backend** — an expensive `where` clause (e.g. an unindexed `regex`/`contains` scan) or an uncapped `count`/`aggregate` is cancelled by the database engine itself, not merely abandoned by the client while the server keeps working. A cancelled statement surfaces as `DEADLINE_EXCEEDED` (§5.1).
+
+The timeout is applied per statement, inside a transaction opened and closed around that one statement — Postgres reverts a transaction-scoped setting when the transaction ends, so it never persists onto a pooled physical connection that a later, unrelated request reuses.
+
+`null`, `TimeSpan.Zero`, or a negative value disables the timeout (the statement runs unbounded).
+
+**Not bounded by `StatementTimeout`:** schema initialization and index creation (`InitializeWincheDatabaseAsync` / `ISchemaManager`), the TTL sweeper (§8.7), the change-feed pump, and the retention pruner (§8.2) — none of these run on the query path. Writes (`:commit`/`write`/`tx.commit`) are likewise unaffected; they run inside the write path's own short transaction and are bounded by `WriteLimits` and the write-batch cap, not by `QueryConfig`.
+
+As cheap defense in depth, a `regex` filter's pattern is capped at 512 characters (`REGEX_TOO_LONG`, §5.4) independent of `StatementTimeout` — but the cap alone does not bound match cost, since a short pattern can be as expensive to evaluate as a long one against a large or adversarial field value. `StatementTimeout` is what actually bounds the work.

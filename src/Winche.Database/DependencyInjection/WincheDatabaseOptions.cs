@@ -151,10 +151,13 @@ public sealed record TtlConfig
     public int BatchSize { get; init; } = 500;
 
     /// <summary>
-    /// Whether a TTL delete also deletes the document's subcollections (cascade). Defaults to <c>true</c>.
-    /// Set to <c>false</c> to delete only the matched document and leave its subcollection documents in place.
+    /// Whether a TTL delete also deletes the document's subcollections (cascade). Defaults to
+    /// <c>false</c> — only the matched document is deleted and its subcollection documents are left
+    /// in place. Set to <c>true</c> to opt into deleting the whole subtree. TTL deletes bypass access
+    /// rules (see <see cref="Hosting.TtlSweeper"/>), so enabling cascade means expiry can remove
+    /// descendant documents that rules would otherwise protect from the same caller.
     /// </summary>
-    public bool CascadeDelete { get; init; } = true;
+    public bool CascadeDelete { get; init; } = false;
 }
 
 public sealed record TransactionConfig
