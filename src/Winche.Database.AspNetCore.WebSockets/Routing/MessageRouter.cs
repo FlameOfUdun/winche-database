@@ -164,6 +164,7 @@ public sealed class MessageRouter(IOptions<WincheDatabaseOptions> dbOptions, IOp
 
     private ServerMessage HandleListen(ConnectionScope scope, WsConnection conn, string id, Query query, string? resumeToken, long? clientProtocol)
     {
+        RequireStringResumeTokenProtocol(clientProtocol, "listen");
         QueryShapeValidator.Validate(query, _queryLimits);
         EnsureSubscriptionCapacity(scope);
 
@@ -178,6 +179,7 @@ public sealed class MessageRouter(IOptions<WincheDatabaseOptions> dbOptions, IOp
     private async Task<ServerMessage> HandleDocListen(
         ConnectionScope scope, WsConnection conn, string id, string path, string? resumeToken, long? clientProtocol, CancellationToken ct)
     {
+        RequireStringResumeTokenProtocol(clientProtocol, "doc.listen");
         EnsureSubscriptionCapacity(scope);
 
         var options = ParseResumeToken(resumeToken);
@@ -201,6 +203,21 @@ public sealed class MessageRouter(IOptions<WincheDatabaseOptions> dbOptions, IOp
         if (!ChangeCursor.TryParse(resumeToken, out var cursor))
             throw new RuntimeException(RuntimeStatus.InvalidArgument, "Invalid resumeToken.");
         return new ListenOptions(ResumeFrom: cursor);
+    }
+
+    // Rejected up front, before any I/O: a client below protocol 3 cannot parse the string
+    // resumeToken this server sends on listen.snapshot/listen.delta/listen.current (see
+    // SubscriptionPump.StringResumeTokenMinProtocol) — even a subscribe request with no
+    // resumeToken of its own still receives those frames once live, so it fails either way.
+    // `clientProtocol` is nullable and `null >= 3` is false, which correctly rejects a client
+    // that omits `protocol` entirely (by definition older than 3) along with one that sends < 3.
+    private static void RequireStringResumeTokenProtocol(long? clientProtocol, string operationName)
+    {
+        if (clientProtocol >= SubscriptionPump.StringResumeTokenMinProtocol) return;
+        throw new RuntimeException(RuntimeStatus.InvalidArgument,
+            $"'{operationName}' requires protocol >= {SubscriptionPump.StringResumeTokenMinProtocol} " +
+            $"(got {(clientProtocol is { } p ? p.ToString() : "none")}): the resume token is an opaque " +
+            "string as of protocol 3, which a client on an older protocol cannot parse.");
     }
 
     private void EnsureSubscriptionCapacity(ConnectionScope scope)

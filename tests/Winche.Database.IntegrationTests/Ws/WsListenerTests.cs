@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Winche.Database.Runtime.ChangeFeed;
 using Winche.Rules;
@@ -50,7 +51,15 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
 
     private static JsonObject Listen(string collection, string? resume = null)
     {
-        var msg = new JsonObject { ["type"] = "listen", ["query"] = new JsonObject { ["collection"] = collection } };
+        // protocol 3 is the minimum the server accepts (see SubscriptionPump.StringResumeTokenMinProtocol) —
+        // every helper-built frame in this file opts in so tests exercise ordinary accepted-subscription
+        // behavior; the rejection path itself is covered by the Listen_*Protocol* tests below.
+        var msg = new JsonObject
+        {
+            ["type"] = "listen",
+            ["query"] = new JsonObject { ["collection"] = collection },
+            ["protocol"] = 3,
+        };
         if (resume is { } r) msg["resumeToken"] = r;
         return msg;
     }
@@ -84,7 +93,9 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         });
         var removal = await ws.WaitForAsync(f => (string?)f["type"] == "listen.delta");
         var removed = removal["changes"]!.AsArray().Single()!;
-        Assert.Equal(("removed", 0, -1), ((string?)removed["kind"], (int)removed["oldIndex"]!, (int)removed["newIndex"]!));
+        // Listen() now sends protocol 3 (mandatory floor), which always satisfies the >= 2
+        // gate for the `deleted` kind — a true delete is reported "deleted", not "removed".
+        Assert.Equal(("deleted", 0, -1), ((string?)removed["kind"], (int)removed["oldIndex"]!, (int)removed["newIndex"]!));
         Assert.Equal(1, (int)removal["count"]!);
     }
 
@@ -201,6 +212,7 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
                     ["value"] = new JsonObject { ["stringValue"] = "alice" },
                 },
             },
+            ["protocol"] = 3,
         });
         var bobSub = await bob.RequestAsync(new JsonObject
         {
@@ -214,6 +226,7 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
                     ["value"] = new JsonObject { ["stringValue"] = "bob" },
                 },
             },
+            ["protocol"] = 3,
         });
 
         var aliceSubId = (string?)aliceSub["result"]!["subscriptionId"];
@@ -247,7 +260,7 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
     }
 
     [Fact]
-    public async Task Listen_Delete_WithProtocol2_EmitsDeletedKind()
+    public async Task Listen_Delete_WithProtocol3_EmitsDeletedKind()
     {
         await using var host = await AllowAllHost();
         await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
@@ -257,7 +270,7 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         {
             ["type"] = "listen",
             ["query"] = new JsonObject { ["collection"] = "wsq" },
-            ["protocol"] = 2,
+            ["protocol"] = 3,
         });
         var subId = (string?)resp["result"]!["subscriptionId"];
         await ws.WaitForAsync(f => (string?)f["type"] == "listen.snapshot" && (string?)f["subscriptionId"] == subId);
@@ -271,30 +284,7 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
     }
 
     [Fact]
-    public async Task Listen_Delete_WithoutProtocol_EmitsRemovedKind()
-    {
-        await using var host = await AllowAllHost();
-        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
-
-        await ws.RequestAsync(Set("wsq2/a", 1));
-        var resp = await ws.RequestAsync(new JsonObject
-        {
-            ["type"] = "listen",
-            ["query"] = new JsonObject { ["collection"] = "wsq2" },
-        });
-        var subId = (string?)resp["result"]!["subscriptionId"];
-        await ws.WaitForAsync(f => (string?)f["type"] == "listen.snapshot" && (string?)f["subscriptionId"] == subId);
-
-        await ws.RequestAsync(Delete("wsq2/a"));
-
-        var delta = await ws.WaitForAsync(f =>
-            (string?)f["type"] == "listen.delta" && (string?)f["subscriptionId"] == subId);
-        var change = delta["changes"]!.AsArray()[0]!.AsObject();
-        Assert.Equal("removed", (string?)change["kind"]);
-    }
-
-    [Fact]
-    public async Task Listen_LimitWindowExit_WithProtocol2_EmitsRemovedNotDeleted()
+    public async Task Listen_LimitWindowExit_WithProtocol3_EmitsRemovedNotDeleted()
     {
         await using var host = await AllowAllHost();
         await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
@@ -309,7 +299,7 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
                 ["orderBy"] = new JsonArray(new JsonObject { ["field"] = "n", ["direction"] = "asc" }),
                 ["limit"] = 1,
             },
-            ["protocol"] = 2,
+            ["protocol"] = 3,
         });
         var subId = (string?)resp["result"]!["subscriptionId"];
         await ws.WaitForAsync(f => (string?)f["type"] == "listen.snapshot" && (string?)f["subscriptionId"] == subId);
@@ -336,6 +326,7 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         {
             ["type"] = "listen",
             ["query"] = new JsonObject { ["collection"] = "wscur" },
+            ["protocol"] = 3,
         });
         var sub1 = (string?)resp["result"]!["subscriptionId"];
         var snap = await ws.WaitForAsync(f =>
@@ -350,6 +341,7 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
             ["type"] = "listen",
             ["query"] = new JsonObject { ["collection"] = "wscur" },
             ["resumeToken"] = token,
+            ["protocol"] = 3,
         });
         var sub2 = (string?)resp2["result"]!["subscriptionId"];
 
@@ -370,7 +362,7 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         {
             ["type"] = "listen",
             ["query"] = new JsonObject { ["collection"] = "wsq4" },
-            ["protocol"] = 2,
+            ["protocol"] = 3,
         });
         var subId = (string?)resp["result"]!["subscriptionId"];
         await ws.WaitForAsync(f => (string?)f["type"] == "listen.snapshot" && (string?)f["subscriptionId"] == subId);
@@ -400,5 +392,68 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         var bChange = changes.First(c => (string?)c["document"]!["id"] == "b");
         Assert.Equal("deleted", (string?)aChange["kind"]);    // truly deleted
         Assert.Equal("modified", (string?)bChange["kind"]);   // still present, changed
+    }
+
+    // ── Protocol gate: resumeToken became an opaque string at protocol 3, so listen/doc.listen
+    // reject anything below it up front rather than sending frames an old client can't parse ──
+
+    [Fact]
+    public async Task Listen_Protocol2_RejectedWithoutClosingConnection()
+    {
+        await using var host = await AllowAllHost();
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
+
+        var rejected = await ws.RequestAsync(new JsonObject
+        {
+            ["type"] = "listen",
+            ["query"] = new JsonObject { ["collection"] = "wsprotogate" },
+            ["protocol"] = 2,
+        });
+        Assert.Equal(("error", "INVALID_ARGUMENT"), ((string?)rejected["type"], (string?)rejected["status"]));
+
+        // rejection must not kill the socket
+        var ping = await ws.RequestAsync(new JsonObject { ["type"] = "ping" });
+        Assert.Equal("response", (string?)ping["type"]);
+    }
+
+    [Fact]
+    public async Task Listen_NoProtocolField_RejectedWithoutClosingConnection()
+    {
+        await using var host = await AllowAllHost();
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
+
+        var rejected = await ws.RequestAsync(new JsonObject
+        {
+            ["type"] = "listen",
+            ["query"] = new JsonObject { ["collection"] = "wsprotogate2" },
+        });
+        Assert.Equal(("error", "INVALID_ARGUMENT"), ((string?)rejected["type"], (string?)rejected["status"]));
+
+        var ping = await ws.RequestAsync(new JsonObject { ["type"] = "ping" });
+        Assert.Equal("response", (string?)ping["type"]);
+    }
+
+    [Fact]
+    public async Task Listen_Protocol3_Succeeds_DeliversSnapshotWithStringResumeToken()
+    {
+        await using var host = await AllowAllHost();
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
+        await ws.RequestAsync(Set("wsprotogate3/a", 1));
+
+        var resp = await ws.RequestAsync(new JsonObject
+        {
+            ["type"] = "listen",
+            ["query"] = new JsonObject { ["collection"] = "wsprotogate3" },
+            ["protocol"] = 3,
+        });
+        Assert.Equal("response", (string?)resp["type"]);
+        var subId = (string?)resp["result"]!["subscriptionId"];
+        Assert.NotNull(subId);
+
+        var snap = await ws.WaitForAsync(f =>
+            (string?)f["type"] == "listen.snapshot" && (string?)f["subscriptionId"] == subId);
+        var token = snap["resumeToken"];
+        Assert.Equal(JsonValueKind.String, token!.GetValueKind());
+        Assert.True(ChangeCursor.Parse((string)token!).Xid > 0);
     }
 }

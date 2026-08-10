@@ -964,22 +964,30 @@ Server: {"type": "response", "id": "t5", "result": {}}
 #### Subscribe
 
 ```json
-Client: {"type": "listen", "id": "s1", "query": {"collection": "users"}}
+Client: {"type": "listen", "id": "s1", "query": {"collection": "users"}, "protocol": 3}
 Server: {"type": "response", "id": "s1", "result": {"subscriptionId": "sub-xyz"}}
 ```
 
 Optional resume:
 
 ```json
-Client: {"type": "listen", "id": "s1", "query": {"collection": "users"}, "resumeToken": "1234:42"}
+Client: {"type": "listen", "id": "s1", "query": {"collection": "users"}, "resumeToken": "1234:42", "protocol": 3}
 ```
 
 `resumeToken` is an **opaque string**, not a number — treat it as an opaque value you only ever
 echo back verbatim from a previously received frame, never construct or parse it. (It carries a
 transaction id that can exceed what a JSON number safely represents — see §8.3.)
 
-The optional `"protocol": <int>` field declares the client's wire protocol version
-(current: 2). It gates the `deleted` change kind (see Delta below).
+The `"protocol": <int>` field declares the client's wire protocol version (current: 3).
+**Required as of protocol 3:** `listen` rejects the subscribe request with `INVALID_ARGUMENT`
+when `protocol` is absent or `< 3`. The resume token became the opaque string above at
+protocol 3 (see §8.3); a client on an older protocol cannot parse the `resumeToken` on the
+`listen.snapshot`/`listen.delta`/`listen.current` frames the server would otherwise send it,
+so the server refuses the subscription up front rather than letting the client fail later at
+its own frame parser — this holds even for a subscribe request with no `resumeToken` of its
+own, since the frames sent once live still carry one. Protocol 3 also satisfies the
+`protocol >= 2` gate for the `deleted` change kind (see Delta below), so every accepted
+subscription now receives `deleted`.
 
 **Per-connection cap:** each connection may hold at most `WsOptions.MaxSubscriptionsPerConnection` (default 100; see §8.8) concurrent subscriptions (`listen` and `doc.listen` combined). A subscribe beyond the cap yields `{"type": "error", "status": "INVALID_ARGUMENT", ...}` without closing the connection or consuming a slot; `unlisten` frees one.
 
@@ -988,18 +996,19 @@ The optional `"protocol": <int>` field declares the client's wire protocol versi
 `doc.listen` subscribes to a single document by path. The server sends the same `response` → `listen.snapshot` → `listen.delta` sequence as `listen`; the `documents` array in each frame holds 0 or 1 elements (absent or present).
 
 ```json
-Client: {"type": "doc.listen", "id": "d1", "path": "users/u1"}
+Client: {"type": "doc.listen", "id": "d1", "path": "users/u1", "protocol": 3}
 Server: {"type": "response", "id": "d1", "result": {"subscriptionId": "sub-doc-abc"}}
 ```
 
 Optional resume:
 
 ```json
-Client: {"type": "doc.listen", "id": "d1", "path": "users/u1", "resumeToken": "1234:42"}
+Client: {"type": "doc.listen", "id": "d1", "path": "users/u1", "resumeToken": "1234:42", "protocol": 3}
 ```
 
-The optional `"protocol": <int>` field declares the client's wire protocol version
-(current: 2). It gates the `deleted` change kind (see Delta below).
+The `"protocol": <int>` field declares the client's wire protocol version (current: 3) and is
+**required as of protocol 3**, exactly as for `listen` (see §7.6 above) — `doc.listen`
+likewise rejects `protocol` absent or `< 3` with `INVALID_ARGUMENT`.
 
 First event — document present:
 
@@ -1094,10 +1103,12 @@ time, so it is reliable even across coalesced snapshots. Clients use `deleted` t
 document from any local cache; `removed` only drops it from this query's view.
 
 **Negotiation:** the `deleted` kind is sent **only** to clients that advertise
-`"protocol": >= 2` on the `listen` / `doc.listen` subscribe frame. Clients that omit
-`protocol` (or send `< 2`) receive `removed` for every removal, exactly as before. A
-single-document (`doc.listen`) removal is always a true deletion, so it is reported as
-`deleted` for protocol >= 2 clients and `removed` otherwise.
+`"protocol": >= 2` on the `listen` / `doc.listen` subscribe frame. Since protocol 3 is now the
+minimum accepted for any subscription (see §7.6), and 3 satisfies `>= 2`, every subscription
+that is accepted at all receives `deleted`; a client below protocol 2 is unreachable in
+practice — it would already have been rejected at subscribe time for being below the
+protocol-3 floor. A single-document (`doc.listen`) removal is always a true deletion, so it
+is reported as `deleted`.
 
 `count` is the result size **after** applying the delta. Use it as a checksum: if your local count differs from `count` after applying all changes, re-subscribe.
 

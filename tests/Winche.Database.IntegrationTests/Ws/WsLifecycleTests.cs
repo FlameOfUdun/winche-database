@@ -167,6 +167,7 @@ public class WsLifecycleTests(PostgresFixture fx) : QueryTestBase(fx)
         {
             ["type"] = "listen",
             ["query"] = new JsonObject { ["collection"] = "wsdeadline" },
+            ["protocol"] = 3,
         });
         var subId = (string)sub["result"]!["subscriptionId"]!;
         await ws.WaitForAsync(f => (string?)f["type"] == "listen.snapshot" && (string?)f["subscriptionId"] == subId);
@@ -181,6 +182,7 @@ public class WsLifecycleTests(PostgresFixture fx) : QueryTestBase(fx)
         {
             ["type"] = "listen",
             ["query"] = new JsonObject { ["collection"] = "wsdeadline" },
+            ["protocol"] = 3,
         });
         var subId2 = (string)sub2["result"]!["subscriptionId"]!;
         await ws2.WaitForAsync(f => (string?)f["type"] == "listen.snapshot" && (string?)f["subscriptionId"] == subId2);

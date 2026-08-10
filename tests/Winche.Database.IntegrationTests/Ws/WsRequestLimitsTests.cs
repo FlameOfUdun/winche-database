@@ -38,6 +38,7 @@ public class WsRequestLimitsTests(PostgresFixture fx) : QueryTestBase(fx)
                     new JsonObject { ["field"] = "a" },
                     new JsonObject { ["field"] = "b" }),
             },
+            ["protocol"] = 3,
         });
         Assert.Equal(("error", "INVALID_QUERY"), ((string?)rejected["type"], (string?)rejected["status"]));
         Assert.Equal("TOO_MANY_ORDER_BY_KEYS", (string?)rejected["details"]?["code"]);
@@ -87,6 +88,7 @@ public class WsRequestLimitsTests(PostgresFixture fx) : QueryTestBase(fx)
         {
             ["type"] = "listen",
             ["query"] = new JsonObject { ["collection"] = collection },
+            ["protocol"] = 3,
         };
 
         var sub1 = await ws.RequestAsync(Listen("c1"));

@@ -16,7 +16,7 @@ public class WsDocListenTests(PostgresFixture fx) : QueryTestBase(fx)
         await using var host = await AllowAllHost();
         await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
 
-        var resp = await ws.RequestAsync(new JsonObject { ["type"] = "doc.listen", ["path"] = "wsdl/a" });
+        var resp = await ws.RequestAsync(new JsonObject { ["type"] = "doc.listen", ["path"] = "wsdl/a", ["protocol"] = 3 });
         Assert.Equal("response", (string?)resp["type"]);
         var subId = (string?)resp["result"]!["subscriptionId"];
         Assert.NotNull(subId);
@@ -52,7 +52,7 @@ public class WsDocListenTests(PostgresFixture fx) : QueryTestBase(fx)
         await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
 
         // "not-a-doc-path" has no slash → not a valid document path.
-        var resp = await ws.RequestAsync(new JsonObject { ["type"] = "doc.listen", ["path"] = "not-a-doc-path" });
+        var resp = await ws.RequestAsync(new JsonObject { ["type"] = "doc.listen", ["path"] = "not-a-doc-path", ["protocol"] = 3 });
         Assert.Equal("error", (string?)resp["type"]);
         Assert.Equal("INVALID_ARGUMENT", (string?)resp["status"]);
     }
@@ -63,7 +63,7 @@ public class WsDocListenTests(PostgresFixture fx) : QueryTestBase(fx)
         await using var host = await WsTestHost.StartAsync(Fx.ConnectionString); // deny-all (no rules)
         await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
 
-        var resp = await ws.RequestAsync(new JsonObject { ["type"] = "doc.listen", ["path"] = "wsdl/a" });
+        var resp = await ws.RequestAsync(new JsonObject { ["type"] = "doc.listen", ["path"] = "wsdl/a", ["protocol"] = 3 });
         Assert.Equal("PERMISSION_DENIED", (string?)resp["status"]);
     }
 
@@ -75,7 +75,7 @@ public class WsDocListenTests(PostgresFixture fx) : QueryTestBase(fx)
                 b => b.Allow(RuleOperations.Of(RuleOperation.Get), Expr.Auth("uid").Eq(Expr.Param("userId"))))));
         await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server, "uid:alice");
 
-        var resp = await ws.RequestAsync(new JsonObject { ["type"] = "doc.listen", ["path"] = "userData/alice" });
+        var resp = await ws.RequestAsync(new JsonObject { ["type"] = "doc.listen", ["path"] = "userData/alice", ["protocol"] = 3 });
         Assert.Equal("response", (string?)resp["type"]);
         Assert.NotNull((string?)resp["result"]!["subscriptionId"]);
     }
@@ -99,7 +99,7 @@ public class WsDocListenTests(PostgresFixture fx) : QueryTestBase(fx)
             }),
         });
 
-        var resp = await ws.RequestAsync(new JsonObject { ["type"] = "doc.listen", ["path"] = "wsdcur/a" });
+        var resp = await ws.RequestAsync(new JsonObject { ["type"] = "doc.listen", ["path"] = "wsdcur/a", ["protocol"] = 3 });
         var sub1 = (string?)resp["result"]!["subscriptionId"];
         var snap = await ws.WaitForAsync(f =>
             (string?)f["type"] == "listen.snapshot" && (string?)f["subscriptionId"] == sub1);
@@ -109,7 +109,7 @@ public class WsDocListenTests(PostgresFixture fx) : QueryTestBase(fx)
 
         var resp2 = await ws.RequestAsync(new JsonObject
         {
-            ["type"] = "doc.listen", ["path"] = "wsdcur/a", ["resumeToken"] = token,
+            ["type"] = "doc.listen", ["path"] = "wsdcur/a", ["resumeToken"] = token, ["protocol"] = 3,
         });
         var sub2 = (string?)resp2["result"]!["subscriptionId"];
 
@@ -119,7 +119,7 @@ public class WsDocListenTests(PostgresFixture fx) : QueryTestBase(fx)
     }
 
     [Fact]
-    public async Task DocListen_Delete_WithProtocol2_EmitsDeletedKind()
+    public async Task DocListen_Delete_WithProtocol3_EmitsDeletedKind()
     {
         await using var host = await AllowAllHost();
         await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
@@ -139,7 +139,7 @@ public class WsDocListenTests(PostgresFixture fx) : QueryTestBase(fx)
 
         var resp = await ws.RequestAsync(new JsonObject
         {
-            ["type"] = "doc.listen", ["path"] = "wsdel/a", ["protocol"] = 2,
+            ["type"] = "doc.listen", ["path"] = "wsdel/a", ["protocol"] = 3,
         });
         var subId = (string?)resp["result"]!["subscriptionId"];
         await ws.WaitForAsync(f => (string?)f["type"] == "listen.snapshot" && (string?)f["subscriptionId"] == subId);
@@ -159,38 +159,22 @@ public class WsDocListenTests(PostgresFixture fx) : QueryTestBase(fx)
         Assert.Equal("deleted", (string?)change["kind"]);
     }
 
+    // ── Protocol gate: resumeToken became an opaque string at protocol 3, so doc.listen rejects
+    // anything below it up front rather than sending frames an old client can't parse ──
     [Fact]
-    public async Task DocListen_Delete_WithoutProtocol_EmitsRemovedKind()
+    public async Task DocListen_Protocol2_RejectedWithoutClosingConnection()
     {
         await using var host = await AllowAllHost();
         await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
 
-        await ws.RequestAsync(new JsonObject
+        var rejected = await ws.RequestAsync(new JsonObject
         {
-            ["type"] = "write",
-            ["writes"] = new JsonArray(new JsonObject
-            {
-                ["set"] = new JsonObject
-                {
-                    ["path"] = "wsdel/b",
-                    ["fields"] = new JsonObject { ["n"] = new JsonObject { ["integerValue"] = "1" } },
-                },
-            }),
+            ["type"] = "doc.listen", ["path"] = "wsdelprotogate/a", ["protocol"] = 2,
         });
+        Assert.Equal(("error", "INVALID_ARGUMENT"), ((string?)rejected["type"], (string?)rejected["status"]));
 
-        var resp = await ws.RequestAsync(new JsonObject { ["type"] = "doc.listen", ["path"] = "wsdel/b" });
-        var subId = (string?)resp["result"]!["subscriptionId"];
-        await ws.WaitForAsync(f => (string?)f["type"] == "listen.snapshot" && (string?)f["subscriptionId"] == subId);
-
-        await ws.RequestAsync(new JsonObject
-        {
-            ["type"] = "write",
-            ["writes"] = new JsonArray(new JsonObject { ["delete"] = new JsonObject { ["path"] = "wsdel/b" } }),
-        });
-
-        var delta = await ws.WaitForAsync(f =>
-            (string?)f["type"] == "listen.delta" && (string?)f["subscriptionId"] == subId);
-        var change = delta["changes"]!.AsArray()[0]!.AsObject();
-        Assert.Equal("removed", (string?)change["kind"]);
+        // rejection must not kill the socket
+        var ping = await ws.RequestAsync(new JsonObject { ["type"] = "ping" });
+        Assert.Equal("response", (string?)ping["type"]);
     }
 }

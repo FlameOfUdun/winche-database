@@ -22,8 +22,26 @@ namespace Winche.Database.AspNetCore.WebSockets.Connections;
 /// </summary>
 public static class SubscriptionPump
 {
-    /// <summary>Minimum client protocol version that receives the `deleted` change kind. v1 clients get `removed`.</summary>
+    /// <summary>
+    /// Minimum client protocol version that receives the `deleted` change kind. v1 clients get `removed`.
+    /// <para>
+    /// Kept for the record, but no longer reachable on its own: since
+    /// <see cref="StringResumeTokenMinProtocol"/> rejects a subscribe below 3, every live
+    /// subscription already clears this bar, so the `supportsDeletedKind` flag threaded through
+    /// this pump is always true today. It stays a separate constant so the two negotiations —
+    /// change-kind vocabulary and resume-token encoding — do not get conflated if either moves.
+    /// </para>
+    /// </summary>
     internal const long DeletedKindMinProtocol = 2;
+
+    /// <summary>
+    /// Minimum client protocol version accepted for `listen`/`doc.listen`. The resume token
+    /// became the opaque string <c>"{xid}:{seq}"</c> at protocol 3 (an xid8 exceeds what a JSON
+    /// number can safely carry — see docs/PROTOCOL.md §8.3); a client below this version cannot
+    /// parse the `resumeToken` on the `listen.snapshot`/`listen.delta`/`listen.current` frames
+    /// this server sends, so the subscribe request is rejected up front instead.
+    /// </summary>
+    internal const long StringResumeTokenMinProtocol = 3;
 
     public static async Task RunQueryAsync(
         string subscriptionId, IQueryListener listener, ConnectionScope scope, WsConnection conn,
