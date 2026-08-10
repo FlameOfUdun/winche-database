@@ -17,6 +17,16 @@ namespace Winche.Database.Runtime.Writes;
 /// causes affected-rows = 0, which is detected and turned into ABORTED before commit.
 /// For rows held under FOR UPDATE the guard always passes — no behavior change.
 ///
+/// That argument alone still leaves a gap: FOR UPDATE locks rows, and a path with no row
+/// locks nothing, so two batches that each read the same absent path see no contention and
+/// can both proceed as if they'd observed the same (empty) world — even though only one of
+/// them, if either, gets to keep believing it. Every write batch — singles, batches, and
+/// transaction commits alike — closes this by taking a transaction-scoped advisory lock over
+/// every path in play (see <see cref="WriteSql.AdvisoryLockAll"/>) BEFORE the row-locking
+/// query runs, in the same sorted order every writer uses. That serializes any two batches
+/// that touch the same path even while it's absent, so whichever one reads second sees the
+/// first one's write and its read-validation (or the guarded upsert) turns it into ABORTED.
+///
 /// <para><b>A null <c>authorizer</c> disables write authorization entirely</b> — every write is
 /// applied unchecked. That is only ever correct for the privileged, rule-free core, which is why
 /// that core is registered under a key rather than as a plain resolvable service. Anything serving
@@ -67,6 +77,11 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
                 .Distinct(StringComparer.Ordinal)
                 .OrderBy(p => p, StringComparer.Ordinal)
                 .ToList();
+
+            // Transaction-scoped advisory locks over every path, taken BEFORE any row lock and in
+            // the same sorted order every writer uses — closes the gap where FOR UPDATE cannot lock
+            // a path that has no row (see class doc). Released automatically at commit/rollback.
+            await AdvisoryLockPathsAsync(conn, tx, exactPaths, ct);
 
             // ONE combined locking query — global ORDER BY path prevents deadlock.
             var state = await LoadAllLockedAsync(conn, tx, exactPaths, cascadeWritePaths, ct);
@@ -351,6 +366,24 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
     }
 
     // ── Load / persist ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Acquires a transaction-scoped advisory lock per path in <paramref name="exactPaths"/>, in
+    /// array order, before any row lock is taken. See <see cref="WriteSql.AdvisoryLockAll"/> and the
+    /// class doc for why this is needed: hash collisions between distinct paths only cause harmless
+    /// extra serialization, never a missed conflict.
+    /// </summary>
+    private static async Task AdvisoryLockPathsAsync(
+        NpgsqlConnection conn, NpgsqlTransaction tx, IReadOnlyList<string> exactPaths, CancellationToken ct)
+    {
+        if (exactPaths.Count == 0) return;
+
+        await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        WriteSql.AdvisoryLockAll(exactPaths).Apply(cmd);
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct)) { }
+    }
 
     /// <summary>
     /// Single combined locking query covering exact paths and cascade subtrees.

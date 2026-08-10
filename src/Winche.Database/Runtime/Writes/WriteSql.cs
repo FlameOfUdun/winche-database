@@ -9,6 +9,23 @@ internal static class WriteSql
     private const string Columns = "document_path, document_id, collection_path, collection_id, data, created_at, updated_at, version";
 
     /// <summary>
+    /// Transaction-scoped advisory lock over every path in <paramref name="exactPaths"/>, acquired in
+    /// array order (the caller passes them pre-sorted, so every writer takes them in the same order —
+    /// no deadlock among these locks, and none against the row locks taken afterward since these are
+    /// always acquired first). FOR UPDATE only locks rows that exist, so on its own it leaves a path
+    /// with no row unprotected against a concurrent creator; hashing the path itself into
+    /// pg_advisory_xact_lock closes that gap without needing a row to hang the lock on. Released
+    /// automatically at commit/rollback.
+    /// </summary>
+    internal static CompiledSql AdvisoryLockAll(IReadOnlyList<string> exactPaths)
+    {
+        var bag = new ParameterBag();
+        var sql = $"SELECT pg_advisory_xact_lock(hashtextextended(p, 0)) " +
+                  $"FROM unnest({bag.Add(exactPaths.ToArray())}::text[]) WITH ORDINALITY AS t(p, ord)";
+        return new CompiledSql(sql, bag.ToArray());
+    }
+
+    /// <summary>
     /// Locks exact paths and cascade-subtree paths in a SINGLE statement with a global ORDER BY document_path,
     /// preventing deadlocks across concurrent batches that share overlapping lock sets.
     /// </summary>
