@@ -221,6 +221,17 @@ A document's own fields are exposed at the top level of `resource` (so `resource
 `data` wrapper). The storage columns are added as reserved siblings, so rules can condition on document
 metadata: `resource.id`, `resource.path`, `resource.collection`, `resource.createdAt`,
 `resource.updatedAt`, and `resource.version`. A reserved column wins over a field of the same name.
+`resource.__name__` is also reserved, bound to the document's path.
+
+> **Documented divergence:** because document fields share the `resource` namespace with these
+> reserved names instead of living under `resource.data` where no collision is possible, a `list`
+> query cannot use a filter on one of the six reserved names (`id`, `path`, `collection`,
+> `createdAt`, `updatedAt`, `version`) to help prove a rule safe — such a filter is resolved against
+> the document's stored data at query time, not the metadata column the rule reads, so it is ignored
+> when proving the query. A list rule that depends on one of these names for its authorization
+> therefore cannot be satisfied by filtering on that name, and the query is denied. `__name__` is
+> exempt from this: it is the one reserved name query execution also resolves to a storage column,
+> so filters on it remain usable for proving list rules.
 
 ### Semantics
 

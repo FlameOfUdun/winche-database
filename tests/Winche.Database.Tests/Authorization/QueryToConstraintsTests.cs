@@ -143,4 +143,59 @@ public class QueryToConstraintsTests
         Assert.Single(result.Constraints);
         Assert.Equal(new[] { "active" }, result.Constraints[0].Field);
     }
+
+    // ── Reserved-name filters are skipped (see ReservedResourceFields) ────────
+
+    [Theory]
+    [InlineData("id")]
+    [InlineData("path")]
+    [InlineData("collection")]
+    [InlineData("createdAt")]
+    [InlineData("updatedAt")]
+    [InlineData("version")]
+    public void ReservedNameFilter_IsSkipped(string reservedName)
+    {
+        var query = new Query("col",
+            Where: new FieldFilter(FP(reservedName), FilterOperator.Eq, new StringValue("x")));
+        var result = QueryToConstraints.Convert(query);
+        Assert.Empty(result.Constraints);
+    }
+
+    /// <summary>A filter whose FIRST segment is reserved is skipped even when nested deeper.</summary>
+    [Fact]
+    public void ReservedNameFilter_NestedSegment_IsSkipped()
+    {
+        var query = new Query("col",
+            Where: new FieldFilter(FieldPath.Parse("id.sub"), FilterOperator.Eq, new StringValue("x")));
+        var result = QueryToConstraints.Convert(query);
+        Assert.Empty(result.Constraints);
+    }
+
+    /// <summary>
+    /// "__name__" is the one reserved name query execution also resolves to a storage column
+    /// (see SchemaResolver), so it is NOT in ReservedResourceFields and stays usable.
+    /// </summary>
+    [Fact]
+    public void NameFilter_IsNotSkipped()
+    {
+        var query = new Query("col",
+            Where: new FieldFilter(FP("__name__"), FilterOperator.Eq, new ReferenceValue("col/doc1")));
+        var result = QueryToConstraints.Convert(query);
+        Assert.Single(result.Constraints);
+        Assert.Equal(new[] { "__name__" }, result.Constraints[0].Field);
+    }
+
+    [Fact]
+    public void AndWithReservedNameFilter_SkipsReserved_KeepsOrdinary()
+    {
+        var query = new Query("items",
+            Where: new CompositeFilter(CompositeOp.And, [
+                new FieldFilter(FP("ownerId"), FilterOperator.Eq, new StringValue("alice")),
+                new FieldFilter(FP("id"), FilterOperator.Eq, new StringValue("public")),
+            ]));
+        var result = QueryToConstraints.Convert(query);
+
+        Assert.Single(result.Constraints);
+        Assert.Equal(new[] { "ownerId" }, result.Constraints[0].Field);
+    }
 }

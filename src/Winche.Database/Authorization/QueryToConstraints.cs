@@ -18,6 +18,15 @@ namespace Winche.Database.Authorization;
 /// </list>
 /// </para>
 /// <para>
+/// A filter whose first field-path segment is one of <see cref="ReservedResourceFields.Names"/> is
+/// also skipped. <see cref="DocumentToResource"/> binds those names to storage columns in the
+/// <c>resource</c> map, but query execution resolves them against the user-writable data column
+/// instead — proving a rule safe against the column and then filtering on the data would let a
+/// document with a forged data field of that name defeat the rule. Matching on the first segment
+/// only means <c>id.sub</c> is skipped too: a rule on <c>resource.id.sub</c> would traverse the
+/// column-backed string while SQL traverses nested JSONB, the same disagreement one level down.
+/// </para>
+/// <para>
 /// Composite <see cref="CompositeOp.Or"/> or <see cref="CompositeOp.Not"/> top-level filters are also
 /// skipped entirely (no safe way to extract per-result guarantees from a disjunction).
 /// Only top-level AND-ed <see cref="FieldFilter"/>s, or a bare <see cref="FieldFilter"/>, are converted.
@@ -43,6 +52,11 @@ internal static class QueryToConstraints
                 break;
 
             case FieldFilter ff:
+                // A filter on a reserved name (see ReservedResourceFields) is skipped: the rule's
+                // resource.<name> resolves to a storage column, but SQL filters on the data column
+                // for that same name — proving safety off the constraint would be unsound.
+                if (ReservedResourceFields.Names.Contains(ff.Field.Segments[0]))
+                    break;
                 if (TryMapOperator(ff.Op, out var op))
                     // Fields are exposed at the top of the resource map (see DocumentToResource),
                     // so a query on field X maps directly to the rule path resource.X.

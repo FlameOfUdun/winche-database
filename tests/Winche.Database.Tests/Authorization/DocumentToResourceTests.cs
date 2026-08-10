@@ -43,8 +43,10 @@ public class DocumentToResourceTests
         Assert.Equal(RuleValueKind.Timestamp, map["updatedAt"].Kind);
         Assert.Equal(1L, map["version"].AsInt);
 
-        // "__name__" is gone.
-        Assert.False(map.ContainsKey("__name__"));
+        // "__name__" is bound to the document's path, same as "path" — the one reserved name
+        // query execution also resolves to a storage column, so it stays usable in list rules.
+        Assert.Equal(RuleValueKind.Path, map["__name__"].Kind);
+        Assert.Equal("users/u1", map["__name__"].AsPath);
     }
 
     [Fact]
@@ -60,7 +62,7 @@ public class DocumentToResourceTests
     {
         var map = DocumentToResource.Convert(MakeDocument("col/doc1", "doc1", "col")).AsMap;
         Assert.Equal(
-            new[] { "collection", "createdAt", "id", "path", "updatedAt", "version" },
+            new[] { "__name__", "collection", "createdAt", "id", "path", "updatedAt", "version" },
             map.Keys.OrderBy(k => k, StringComparer.Ordinal));
     }
 
