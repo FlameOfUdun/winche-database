@@ -9,6 +9,7 @@ using Winche.Database.Querying;
 using Winche.Database.Querying.Ast;
 using Winche.Database.Querying.Planning;
 using Winche.Database.Runtime;
+using Winche.Database.Runtime.ChangeFeed;
 using Winche.Database.Runtime.Listening;
 using Winche.Database.Runtime.Writes;
 using Winche.Database.Values;
@@ -161,12 +162,12 @@ public sealed class MessageRouter(IOptions<WincheDatabaseOptions> dbOptions, IOp
 
     // ── Listeners ────────────────────────────────────────────────────────────────
 
-    private ServerMessage HandleListen(ConnectionScope scope, WsConnection conn, string id, Query query, long? resumeToken, long? clientProtocol)
+    private ServerMessage HandleListen(ConnectionScope scope, WsConnection conn, string id, Query query, string? resumeToken, long? clientProtocol)
     {
         QueryShapeValidator.Validate(query, _queryLimits);
         EnsureSubscriptionCapacity(scope);
 
-        var listener = scope.Db.Listen(query, resumeToken is { } seq ? new ListenOptions(ResumeFrom: seq) : null);
+        var listener = scope.Db.Listen(query, ParseResumeToken(resumeToken));
         var subscriptionId = Guid.NewGuid().ToString("N");
         var cts = CancellationTokenSource.CreateLinkedTokenSource(conn.Closed);
         var supportsDeleted = clientProtocol >= SubscriptionPump.DeletedKindMinProtocol;
@@ -175,17 +176,31 @@ public sealed class MessageRouter(IOptions<WincheDatabaseOptions> dbOptions, IOp
     }
 
     private async Task<ServerMessage> HandleDocListen(
-        ConnectionScope scope, WsConnection conn, string id, string path, long? resumeToken, long? clientProtocol, CancellationToken ct)
+        ConnectionScope scope, WsConnection conn, string id, string path, string? resumeToken, long? clientProtocol, CancellationToken ct)
     {
         EnsureSubscriptionCapacity(scope);
 
-        var options = resumeToken is { } seq ? new ListenOptions(ResumeFrom: seq) : null;
+        var options = ParseResumeToken(resumeToken);
         var listener = await scope.Db.ListenToDocumentAsync(path, options, ct);   // get-authorized; throws → mapped to error frame
         var subscriptionId = Guid.NewGuid().ToString("N");
         var cts = CancellationTokenSource.CreateLinkedTokenSource(conn.Closed);
         var supportsDeleted = clientProtocol >= SubscriptionPump.DeletedKindMinProtocol;
         var pump = SubscriptionPump.RunDocumentAsync(subscriptionId, listener, scope, conn, supportsDeleted, cts.Token);
         return Register(scope, subscriptionId, listener, pump, cts, id);
+    }
+
+    // resumeToken travels as the opaque string ChangeCursor.ToString() produces (see ClientMessage) —
+    // a JSON number can't safely carry the full xid8 range. A malformed token is a client mistake,
+    // reported the same way as any other bad argument, not a server fault.
+    private static ListenOptions? ParseResumeToken(string? resumeToken)
+    {
+        if (resumeToken is null) return null;
+        // TryParse rather than catch: an over-range component overflows instead of mis-formatting,
+        // and letting that escape would turn a bad client argument into a server fault. The token is
+        // not echoed back — it is the caller's own input and carries no diagnostic value here.
+        if (!ChangeCursor.TryParse(resumeToken, out var cursor))
+            throw new RuntimeException(RuntimeStatus.InvalidArgument, "Invalid resumeToken.");
+        return new ListenOptions(ResumeFrom: cursor);
     }
 
     private void EnsureSubscriptionCapacity(ConnectionScope scope)

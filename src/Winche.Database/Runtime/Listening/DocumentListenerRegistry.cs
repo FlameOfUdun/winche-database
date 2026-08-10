@@ -62,18 +62,18 @@ public sealed class DocumentListenerRegistry(NpgsqlDataSource source)
         group.Current = next;
         if (unchanged) return Task.FromResult<(DocumentSnapshot?, bool)>((null, false));
 
-        var snap = new DocumentSnapshot(next, next is not null, batch.Records[^1].CommitTime, batch.Records[^1].Seq);
+        var snap = new DocumentSnapshot(next, next is not null, batch.Records[^1].CommitTime, new ChangeCursor(batch.Records[^1].Xid, batch.Records[^1].Seq));
         return Task.FromResult<(DocumentSnapshot?, bool)>((snap, true));
     }
 
     protected override DocumentSnapshot BuildInitialSnapshot(DocumentGroup group) =>
-        new(group.Current, group.Current is not null, DateTimeOffset.UtcNow, group.LastSeq);
+        new(group.Current, group.Current is not null, DateTimeOffset.UtcNow, group.LastCursor);
 
     protected override DocumentSnapshot BuildCurrentMarker(DocumentGroup group) =>
-        new(null, false, DateTimeOffset.UtcNow, group.LastSeq, Current: true);
+        new(null, false, DateTimeOffset.UtcNow, group.LastCursor, Current: true);
 
-    protected override Task<bool> HasRelevantChangesAfterAsync(DocumentGroup group, long resumeSeq, CancellationToken ct) =>
-        Reader.HasDocumentChangesAfterAsync(resumeSeq, group.Path, ct);
+    protected override Task<bool> HasRelevantChangesAfterAsync(DocumentGroup group, ChangeCursor resume, CancellationToken ct) =>
+        Reader.HasDocumentChangesAfterAsync(resume, group.Path, ct);
 
     protected override string IndexKeyOf(ChangeRecord record) => record.Path;
 

@@ -48,8 +48,8 @@ public abstract class LiveSubscriptionRegistry<TGroup, TSnapshot>(NpgsqlDataSour
     /// <summary>Build a "current" marker (no documents) for a covered resume.</summary>
     protected abstract TSnapshot BuildCurrentMarker(TGroup group);
 
-    /// <summary>True when the feed has a change relevant to this group after <paramref name="resumeSeq"/>.</summary>
-    protected abstract Task<bool> HasRelevantChangesAfterAsync(TGroup group, long resumeSeq, CancellationToken ct);
+    /// <summary>True when the feed has a change relevant to this group after <paramref name="resume"/>.</summary>
+    protected abstract Task<bool> HasRelevantChangesAfterAsync(TGroup group, ChangeCursor resume, CancellationToken ct);
 
     /// <summary>The relevance bucket a change record belongs to (collection, or document path).</summary>
     protected abstract string IndexKeyOf(ChangeRecord record);
@@ -130,16 +130,16 @@ public abstract class LiveSubscriptionRegistry<TGroup, TSnapshot>(NpgsqlDataSour
 
                 if (!group.Initialized)
                 {
-                    // I2: read LastSeq BEFORE the load so any concurrent write between the two is
+                    // I2: read LastCursor BEFORE the load so any concurrent write between the two is
                     // captured in the feed cursor; errs toward spurious-but-safe initial emission on resume.
-                    group.LastSeq = await Reader.GetMaxSeqAsync();
+                    group.LastCursor = await Reader.GetWatermarkAsync();
                     await InitializeStateAsync(group, CancellationToken.None);
                     group.Initialized = true;
                 }
 
                 // I1: provable resume suppression: suppress the initial snapshot only when
                 // we can prove nothing relevant happened since the resume token.
-                if (listenOptions?.ResumeFrom is { } seq && await IsResumeCoveredAsync(group, seq, CancellationToken.None))
+                if (listenOptions?.ResumeFrom is { } resume && await IsResumeCoveredAsync(group, resume, CancellationToken.None))
                 {
                     // I3: join the group silently so the handle still receives future diffs.
                     lock (group.Gate) group.Handles.Add(handle);
@@ -160,14 +160,16 @@ public abstract class LiveSubscriptionRegistry<TGroup, TSnapshot>(NpgsqlDataSour
         }
     }
 
-    private async Task<bool> IsResumeCoveredAsync(TGroup group, long resumeSeq, CancellationToken ct)
+    private async Task<bool> IsResumeCoveredAsync(TGroup group, ChangeCursor resume, CancellationToken ct)
     {
         var minSeq = await Reader.GetMinSeqAsync(ct);
         // minSeq == 0 means the feed is empty (never written or fully pruned); we cannot distinguish
         // "no rows ever" from "all rows pruned" — treat as not-covered to be safe.
         // tokenStillCovered: feed is non-empty AND the token falls within the retained window.
-        var tokenStillCovered = minSeq > 0 && resumeSeq >= minSeq - 1;
-        return tokenStillCovered && !await HasRelevantChangesAfterAsync(group, resumeSeq, ct);
+        // Retention prunes by commit_time/seq only (xid plays no part in pruning), so the seq
+        // component of the resume cursor is what this check compares against.
+        var tokenStillCovered = minSeq > 0 && resume.Seq >= minSeq - 1;
+        return tokenStillCovered && !await HasRelevantChangesAfterAsync(group, resume, ct);
     }
 
     // ── Feed consumption ───────────────────────────────────────────────────────
@@ -206,7 +208,13 @@ public abstract class LiveSubscriptionRegistry<TGroup, TSnapshot>(NpgsqlDataSour
                     continue;
                 }
 
-                group.LastSeq = batch.Records[^1].Seq;
+                // Monotonic advance only: the pump's cursor at boot can sit BEHIND a group's own
+                // watermark-derived initial cursor (a freshly-(re)subscribed group's I2 read is a
+                // synthetic upper bound, strictly above every already-settled row's own cursor — unlike
+                // the old bare-seq pin, which coincided exactly with the newest row's own seq). A
+                // stale/no-op replay of an already-reflected row must never regress LastCursor.
+                var batchCursor = new ChangeCursor(batch.Records[^1].Xid, batch.Records[^1].Seq);
+                if (batchCursor > group.LastCursor) group.LastCursor = batchCursor;
                 if (!result.Changed) continue;
 
                 List<SubscriptionHandleBase<TSnapshot>> handles;

@@ -60,14 +60,14 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         Assert.Equal("a", Assert.Single(initial.Documents).Id);
         Assert.Equal(ListenChangeType.Added, Assert.Single(initial.Changes).Type);
 
-        // ADD: b with n=0 → sorts FIRST
+        // ADD: b with n=0 â†’ sorts FIRST
         await rig.Db.WriteAsync([new SetWrite { Path = "c/b", Fields = Map(("n", new IntegerValue(0))) }]);
         var afterAdd = await NextAsync(e);
         Assert.Equal(["b", "a"], afterAdd.Documents.Select(d => d.Id));
         var add = Assert.Single(afterAdd.Changes);
         Assert.Equal((ListenChangeType.Added, -1, 0), (add.Type, add.OldIndex, add.NewIndex));
 
-        // MODIFY: a's n drops to -1 → moves to front
+        // MODIFY: a's n drops to -1 â†’ moves to front
         await rig.Db.WriteAsync([new SetWrite { Path = "c/a", Fields = Map(("n", new IntegerValue(-1))) }]);
         var afterMod = await NextAsync(e);
         Assert.Equal(["a", "b"], afterMod.Documents.Select(d => d.Id));
@@ -140,12 +140,12 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         await rig.Db.WriteAsync([new SetWrite { Path = "c/a", Fields = Map() }]);
 
         // first listener captures a resume token
-        long token;
+        ChangeCursor token;
         await using (var l = rig.Db.Listen(new Query("c")))
         await using (var e = l.Snapshots().GetAsyncEnumerator())
             token = (await NextAsync(e)).ResumeToken;
 
-        // resume with no changes since → a CURRENT marker (no documents) rather than
+        // resume with no changes since â†’ a CURRENT marker (no documents) rather than
         // a full snapshot; it carries the resume token so the client knows it is live.
         await using var resumed = rig.Db.Listen(new Query("c"), new ListenOptions(ResumeFrom: token));
         await using var er = resumed.Snapshots().GetAsyncEnumerator();
@@ -160,7 +160,7 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         Assert.Equal(2, snap.Documents.Count);
     }
 
-    // ── Tests: I1 resume paths ───────────────────────────────────────────────
+    // â”€â”€ Tests: I1 resume paths â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task Resume_WithChanges_InitialSnapshotArrives()
@@ -169,7 +169,7 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         await rig.Db.WriteAsync([new SetWrite { Path = "c/a", Fields = Map() }]);
 
         // capture a resume token; dispose the listener (completing the channel) BEFORE the enumerator
-        long token;
+        ChangeCursor token;
         var l0 = rig.Db.Listen(new Query("c"));
         var e0 = l0.Snapshots().GetAsyncEnumerator();
         token = (await NextAsync(e0)).ResumeToken;
@@ -180,7 +180,7 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         await rig.Db.WriteAsync([new SetWrite { Path = "c/b", Fields = Map() }]);
         await Task.Delay(600);                                                // let pump advance cursor
 
-        // resume → initial full snapshot must arrive (relevant change happened)
+        // resume â†’ initial full snapshot must arrive (relevant change happened)
         var resumed = rig.Db.Listen(new Query("c"), new ListenOptions(ResumeFrom: token));
         var er = resumed.Snapshots().GetAsyncEnumerator();
         var snap = await NextAsync(er);
@@ -208,7 +208,7 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         var reader = new ChangeFeedReader(Fx.DataSource);
         await reader.PruneBeforeAsync(DateTimeOffset.UtcNow.AddMinutes(1));
 
-        // resume with too-old token → must NOT be suppressed (initial snapshot arrives)
+        // resume with too-old token â†’ must NOT be suppressed (initial snapshot arrives)
         var resumed = rig.Db.Listen(new Query("c"), new ListenOptions(ResumeFrom: token));
         var er = resumed.Snapshots().GetAsyncEnumerator();
         var snap = await NextAsync(er, timeoutMs: 5000);
@@ -217,7 +217,7 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         await er.DisposeAsync();
     }
 
-    // ── Test: ExistingAsync batch probe ─────────────────────────────────────
+    // â”€â”€ Test: ExistingAsync batch probe â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task ExistingAsync_ReflectsStorage()
@@ -236,7 +236,7 @@ public class ListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         Assert.DoesNotContain("c/missing", existing);
     }
 
-    // ── Test: coalescing ─────────────────────────────────────────────────────
+    // â”€â”€ Test: coalescing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task Coalescing_TwoWritesBeforeRead_OnlyLatestStateDelivered()

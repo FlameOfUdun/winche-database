@@ -313,6 +313,8 @@ WebSocket transports. DI services are available inside the delegate via `http.Re
 
 Hooks let you react to document mutations. Implement `DocumentStoreHook` (behavior only) and register it against a path with `UseHooks(h => h.Add<MyHook>(path))` — mirroring how `UseIndexes` binds a collection id. Hooks execute **inline and sequentially** inside `HookFeedConsumer`, which is driven by a durable feed runner. Delivery is **true at-least-once end-to-end** — the cursor advances only after all hooks in a batch succeed, and failed batches are retried with capped backoff (1 s → 30 s). Implementations **must be idempotent** (use the document `version` as an idempotency key).
 
+> **Feed fencing and its tradeoff:** the change feed is fenced on transaction id, not just the row's `seq` — a row is only delivered once its writing transaction is provably settled (see `ChangeFeedReader`), which is what makes "at-least-once" above actually true (earlier versions could silently drop a record that committed out of `seq` order). The tradeoff: the feed cannot advance past the oldest still-**writing** transaction, so one long-running write transaction delays delivery for every consumer (hooks and listeners alike) until it commits or rolls back. Read-only transactions never hold this back — they are not assigned a transaction id. **Breaking change:** the durable cursor format changed from a bare `seq` to an `(xid, seq)` pair; a cursor persisted before upgrading is treated as "before all retained history" and redelivers every row still in the feed once (bounded by your retention window) — expect a one-time replay after upgrading a deployment with existing durable consumers.
+
 The path supplied at registration is a **trigger pattern** (the same grammar as the rules engine): literal segments, `{id}` single-segment captures, and a trailing `{document=**}` recursive wildcard. Use `"{document=**}"` to match every document. Bare `*`/`**` are not valid. Because the path lives in the registration (not the class), the same hook type can be bound to multiple paths.
 
 ```csharp
@@ -1004,7 +1006,7 @@ existing databases. The code/API changes you must make:
 ## Requirements
 
 - .NET 10.0
-- PostgreSQL (any recent version with JSONB support)
+- PostgreSQL 13+ (the change feed's transaction fencing uses `xid8`/`pg_snapshot_xmin`, added in PG 13; tested against 17)
 
 ## License
 

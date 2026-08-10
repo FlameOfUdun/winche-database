@@ -971,8 +971,12 @@ Server: {"type": "response", "id": "s1", "result": {"subscriptionId": "sub-xyz"}
 Optional resume:
 
 ```json
-Client: {"type": "listen", "id": "s1", "query": {"collection": "users"}, "resumeToken": 42}
+Client: {"type": "listen", "id": "s1", "query": {"collection": "users"}, "resumeToken": "1234:42"}
 ```
+
+`resumeToken` is an **opaque string**, not a number — treat it as an opaque value you only ever
+echo back verbatim from a previously received frame, never construct or parse it. (It carries a
+transaction id that can exceed what a JSON number safely represents — see §8.3.)
 
 The optional `"protocol": <int>` field declares the client's wire protocol version
 (current: 2). It gates the `deleted` change kind (see Delta below).
@@ -991,7 +995,7 @@ Server: {"type": "response", "id": "d1", "result": {"subscriptionId": "sub-doc-a
 Optional resume:
 
 ```json
-Client: {"type": "doc.listen", "id": "d1", "path": "users/u1", "resumeToken": 42}
+Client: {"type": "doc.listen", "id": "d1", "path": "users/u1", "resumeToken": "1234:42"}
 ```
 
 The optional `"protocol": <int>` field declares the client's wire protocol version
@@ -1005,7 +1009,7 @@ First event — document present:
   "subscriptionId": "sub-doc-abc",
   "documents":      [{"path": "users/u1", "fields": {...}, ...}],
   "readTime":       "2026-06-22T10:00:00+00:00",
-  "resumeToken":    101
+  "resumeToken":    "1234:101"
 }
 ```
 
@@ -1017,7 +1021,7 @@ First event — document absent:
   "subscriptionId": "sub-doc-abc",
   "documents":      [],
   "readTime":       "2026-06-22T10:00:00+00:00",
-  "resumeToken":    101
+  "resumeToken":    "1234:101"
 }
 ```
 
@@ -1053,7 +1057,7 @@ The **first** event after subscribing is always a full snapshot:
   "subscriptionId": "sub-xyz",
   "documents":      [{…}, {…}],
   "readTime":       "2026-06-07T12:00:00+00:00",
-  "resumeToken":    57
+  "resumeToken":    "1234:57"
 }
 ```
 
@@ -1072,7 +1076,7 @@ The **first** event after subscribing is always a full snapshot:
   ],
   "count":       3,
   "readTime":    "2026-06-07T12:00:01+00:00",
-  "resumeToken": 58
+  "resumeToken": "1234:58"
 }
 ```
 
@@ -1101,7 +1105,9 @@ The WS layer tracks the last document list it actually **sent** per subscription
 
 #### Resume semantics
 
-The `resumeToken` on every listener event is the feed sequence watermark.
+The `resumeToken` on every listener event is a change-feed cursor: the writing transaction's id
+paired with its intra-transaction sequence, encoded as the opaque string `"{xid}:{seq}"`. It is
+NOT simply a sequence watermark — see §8.3 for why the pairing matters and what it costs.
 
 | Scenario | Result |
 | - | - |
@@ -1118,7 +1124,7 @@ no longer stays silent: it sends a single `listen.current` frame so the client k
 subscription is live and its cached data is up to date.
 
 ```json
-{"type": "listen.current", "subscriptionId": "sub-xyz", "resumeToken": 57}
+{"type": "listen.current", "subscriptionId": "sub-xyz", "resumeToken": "1234:57"}
 ```
 
 It carries no documents — the client keeps its existing state and clears its "from cache"
@@ -1142,10 +1148,10 @@ Document lifecycle hooks (`DocumentStoreHook`) are invoked **inline and sequenti
 
 - **Feed-driven:** hooks fire from every node reading the shared feed, not from the write path directly. A write on any node triggers hook delivery on all nodes that have a `HookFeedConsumer` running.
 - **Inline and sequential execution:** within each batch, hooks execute inline in the `HookFeedConsumer`. A hook that throws propagates the failure to the `DurableConsumerRunner`.
-- **True at-least-once end-to-end:** the cursor is persisted **only after all hooks in a batch succeed**. On failure the runner retries the **same batch** with capped exponential backoff (1 s → 30 s). A poison hook blocks only the hooks consumer; it does not affect other consumers or listeners.
-- **Idempotency required:** because delivery is at-least-once (and because the seq/commit-order race described below can cause redelivery), hook implementations must be idempotent. The document `version` field is a reliable idempotency key — hooks can record the last-processed version per path.
-- **Durable cursor:** the cursor (`HookFeedConsumer.DurableName = "hooks"`) is persisted in `winche_feed_cursors`. On restart, the consumer resumes from the saved position and catches up on any writes that occurred while it was down.
-- **First boot:** on first deploy, the cursor is initialized to `MAX(seq)` at startup — historical documents are not replayed.
+- **True at-least-once end-to-end:** the cursor is persisted **only after all hooks in a batch succeed**. On failure the runner retries the **same batch** with capped exponential backoff (1 s → 30 s). A poison hook blocks only the hooks consumer; it does not affect other consumers or listeners. This is accurate because the feed is fenced on transaction id (§8.3) — a row can no longer be silently skipped by a consumer that drains between two out-of-order commits.
+- **Idempotency required:** delivery is at-least-once, and a retried batch after a transient failure redelivers, so hook implementations must be idempotent. The document `version` field is a reliable idempotency key — hooks can record the last-processed version per path.
+- **Durable cursor:** the cursor (`HookFeedConsumer.DurableName = "hooks"`) is persisted in `winche_documents_feed_cursors` as an `(xid, seq)` pair. On restart, the consumer resumes from the saved position and catches up on any writes that occurred while it was down.
+- **First boot:** on first deploy, the cursor is initialized to the boot-time watermark at startup — historical documents are not replayed, and any transaction still in flight at boot is still delivered once it settles (see §8.3).
 
 ### 8.2 Feed retention and pruning
 
@@ -1158,13 +1164,15 @@ The `changes` table is pruned automatically. Feed rows older than the configured
 | `PollInterval` | 2 seconds | Poll fallback (in addition to `pg_notify` wake-ups) |
 | `BatchSize` | 500 | Maximum feed rows read per pump batch |
 
-### 8.3 Seq/commit-order caveat
+### 8.3 Transaction-fenced delivery (and its tradeoff)
 
-PostgreSQL assigns `BIGSERIAL` sequence values (`seq`) **before** a transaction commits. Two concurrent write transactions can therefore commit out of `seq` order: transaction A (seq 5) may commit **after** transaction B (seq 6). A consumer that advances past seq 6 immediately after B commits will permanently miss seq 5 when A later commits.
+PostgreSQL assigns `BIGSERIAL` sequence values (`seq`) **before** a transaction commits, so two concurrent write transactions can commit out of `seq` order: transaction A (seq 5) may commit **after** transaction B (seq 6). Earlier versions of this feed read strictly by `seq`, so a consumer that drained immediately after B committed would advance past seq 6 and never revisit seq 5 once A committed — a silent, permanent skip despite the feed's "at-least-once" contract.
 
-The practical window for this race is the p99 write-transaction duration — typically sub-millisecond on a healthy cluster. The cursor save uses `GREATEST(current, incoming)` so a backwards-advancing cursor can only cause redelivery, never an additional skip.
+**The fix:** every feed row also carries `xid` — the `xid8` id of the transaction that wrote it — and the cursor is the pair `(xid, seq)`, not a bare `seq`. A row is only returned once its writing transaction is provably settled: `xid < pg_snapshot_xmin(pg_current_snapshot())` means no transaction with that id (or lower) can still be in flight. The cursor comparison `(xid, seq) > (cursorXid, cursorSeq)` never advances past an xid that could still produce more rows, so transaction A committing late is still delivered on a later poll, in `(xid, seq)` order — the row-constructor comparison also makes pagination exact even when one transaction's change set spans more than one batch.
 
-**Consequence:** the feed delivers mutations in `seq` order, which is **close to** but **not guaranteed to be** commit order. Hook implementations and feed consumers must tolerate occasional out-of-order delivery and should use idempotency keys (e.g. document `version`) rather than assuming strict ordering.
+**The tradeoff:** the feed cannot advance past the oldest **write** transaction still open anywhere on the cluster. A single long-running write transaction therefore delays delivery for every consumer (hooks and listeners alike) until it commits or rolls back. Read-only transactions never hold this back — `pg_snapshot_xmin` only tracks transactions that were assigned an xid, and a read-only transaction is not.
+
+**Breaking change:** the durable cursor format changed from a bare `seq` to an `(xid, seq)` pair (`winche_documents_feed_cursors` gained an `xid` column). A cursor persisted before upgrading has no valid `xid`, is treated as "before all retained history," and causes every row still in the feed to be redelivered once — bounded by your retention window (§8.2), and a one-time cost per durable consumer. The wire `resumeToken` is now an opaque string (`"{xid}:{seq}"`) rather than a JSON number, for the same reason (§7.6).
 
 ### 8.4 Listener delivery is per-node
 

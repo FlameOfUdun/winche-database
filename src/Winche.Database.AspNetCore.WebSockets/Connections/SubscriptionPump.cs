@@ -11,7 +11,7 @@ namespace Winche.Database.AspNetCore.WebSockets.Connections;
 /// (<see cref="RunDocumentAsync"/>) listeners: the FIRST frame is always a full listen.snapshot
 /// (REPLACES client state — including the reset after resume-with-changes); afterwards each
 /// runtime snapshot is RE-DIFFED against the last state actually SENT, so deltas are exact
-/// relative to client state across runtime coalescing. Empty re-diff ⇒ no frame.
+/// relative to client state across runtime coalescing. Empty re-diff â‡’ no frame.
 ///
 /// Claims note: claims are constant for the connection lifetime (fixed at the HTTP upgrade).
 /// Under the Winche.Rules guard a listener re-authorizes on every emission, but against the claims
@@ -45,7 +45,7 @@ public static class SubscriptionPump
                     conn.TrySend(new ListenCurrentMessage
                     {
                         SubscriptionId = subscriptionId,
-                        ResumeToken = snapshot.ResumeToken,
+                        ResumeToken = snapshot.ResumeToken.ToString(),
                     });
                     continue;
                 }
@@ -57,7 +57,7 @@ public static class SubscriptionPump
                         SubscriptionId = subscriptionId,
                         Documents = snapshot.Documents,
                         ReadTime = snapshot.ReadTime,
-                        ResumeToken = snapshot.ResumeToken,
+                        ResumeToken = snapshot.ResumeToken.ToString(),
                     });
                     sent = snapshot.Documents;
                     continue;
@@ -84,7 +84,7 @@ public static class SubscriptionPump
                         try { existing = await listener.ExistingAsync(removedPaths, ct); }
                         catch (Exception) when (!ct.IsCancellationRequested)
                         {
-                            existing = removedPaths.ToHashSet(); // degrade → all "removed"
+                            existing = removedPaths.ToHashSet(); // degrade â†’ all "removed"
                         }
                     }
                 }
@@ -109,7 +109,7 @@ public static class SubscriptionPump
                     Changes = wireChanges,
                     Count = snapshot.Documents.Count,
                     ReadTime = snapshot.ReadTime,
-                    ResumeToken = snapshot.ResumeToken,
+                    ResumeToken = snapshot.ResumeToken.ToString(),
                 });
             }
         }
@@ -142,7 +142,7 @@ public static class SubscriptionPump
                     conn.TrySend(new ListenCurrentMessage
                     {
                         SubscriptionId = subscriptionId,
-                        ResumeToken = snapshot.ResumeToken,
+                        ResumeToken = snapshot.ResumeToken.ToString(),
                     });
                     continue;
                 }
@@ -156,7 +156,7 @@ public static class SubscriptionPump
                         SubscriptionId = subscriptionId,
                         Documents = docs,
                         ReadTime = snapshot.ReadTime,
-                        ResumeToken = snapshot.ResumeToken,
+                        ResumeToken = snapshot.ResumeToken.ToString(),
                     });
                     sent = snapshot.Document;
                     sentAny = true;
@@ -173,7 +173,7 @@ public static class SubscriptionPump
                     Changes = [change],
                     Count = docs.Count,
                     ReadTime = snapshot.ReadTime,
-                    ResumeToken = snapshot.ResumeToken,
+                    ResumeToken = snapshot.ResumeToken.ToString(),
                 });
             }
         }

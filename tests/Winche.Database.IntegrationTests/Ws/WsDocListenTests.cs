@@ -103,7 +103,7 @@ public class WsDocListenTests(PostgresFixture fx) : QueryTestBase(fx)
         var sub1 = (string?)resp["result"]!["subscriptionId"];
         var snap = await ws.WaitForAsync(f =>
             (string?)f["type"] == "listen.snapshot" && (string?)f["subscriptionId"] == sub1);
-        var token = (long)snap["resumeToken"]!;
+        var token = (string)snap["resumeToken"]!;
 
         await ws.RequestAsync(new JsonObject { ["type"] = "unlisten", ["subscriptionId"] = sub1 });
 
@@ -115,7 +115,7 @@ public class WsDocListenTests(PostgresFixture fx) : QueryTestBase(fx)
 
         var current = await ws.WaitForAsync(f =>
             (string?)f["type"] == "listen.current" && (string?)f["subscriptionId"] == sub2);
-        Assert.Equal(token, (long)current["resumeToken"]!);
+        Assert.Equal(token, (string)current["resumeToken"]!);
     }
 
     [Fact]

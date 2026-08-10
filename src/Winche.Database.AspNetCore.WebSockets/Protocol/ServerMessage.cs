@@ -39,14 +39,16 @@ public sealed record ListenSnapshotMessage : ServerMessage
     [JsonPropertyName("subscriptionId")] public required string SubscriptionId { get; init; }
     [JsonPropertyName("documents")] public required IReadOnlyList<Document> Documents { get; init; }
     [JsonPropertyName("readTime")] public required DateTimeOffset ReadTime { get; init; }
-    [JsonPropertyName("resumeToken")] public required long ResumeToken { get; init; }
+    // Opaque cursor token (see ChangeCursor) — round-trip via listen/doc.listen's resumeToken.
+    [JsonPropertyName("resumeToken")] public required string ResumeToken { get; init; }
 }
 
 public sealed record ListenCurrentMessage : ServerMessage
 {
     [JsonPropertyName("type")] public string Type { get; } = "listen.current";
     [JsonPropertyName("subscriptionId")] public required string SubscriptionId { get; init; }
-    [JsonPropertyName("resumeToken")] public required long ResumeToken { get; init; }
+    // Opaque cursor token (see ChangeCursor) — round-trip via listen/doc.listen's resumeToken.
+    [JsonPropertyName("resumeToken")] public required string ResumeToken { get; init; }
 }
 
 public sealed record WireChange(
@@ -62,5 +64,6 @@ public sealed record ListenDeltaMessage : ServerMessage
     [JsonPropertyName("changes")] public required IReadOnlyList<WireChange> Changes { get; init; }
     [JsonPropertyName("count")] public required int Count { get; init; }
     [JsonPropertyName("readTime")] public required DateTimeOffset ReadTime { get; init; }
-    [JsonPropertyName("resumeToken")] public required long ResumeToken { get; init; }
+    // Opaque cursor token (see ChangeCursor) — round-trip via listen/doc.listen's resumeToken.
+    [JsonPropertyName("resumeToken")] public required string ResumeToken { get; init; }
 }

@@ -1,4 +1,5 @@
 using Winche.Database.Documents;
+using Winche.Database.Runtime.ChangeFeed;
 
 namespace Winche.Database.Runtime.Listening;
 
@@ -23,10 +24,10 @@ public sealed record QuerySnapshot(
     IReadOnlyList<Document> Documents,
     IReadOnlyList<DocumentChangeInfo> Changes,
     DateTimeOffset ReadTime,
-    long ResumeToken,
+    ChangeCursor ResumeToken,
     bool Current = false);
 
-public sealed record ListenOptions(long? ResumeFrom = null);
+public sealed record ListenOptions(ChangeCursor? ResumeFrom = null);
 
 /// <summary>
 /// A live query subscription. Snapshot semantics are documented on

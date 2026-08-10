@@ -119,14 +119,16 @@ public sealed record TxRollbackMessage : ClientMessage
 public sealed record ListenMessage : ClientMessage
 {
     [JsonPropertyName("query")] public required Query Query { get; init; }
-    [JsonPropertyName("resumeToken")] public long? ResumeToken { get; init; }
+    // Opaque cursor token (see ChangeCursor) — a JSON number can't safely carry the full xid8 range,
+    // so this crosses the wire as the string ChangeCursor.ToString() produces, not a number.
+    [JsonPropertyName("resumeToken")] public string? ResumeToken { get; init; }
     [JsonPropertyName("protocol")] public long? Protocol { get; init; }
 }
 
 public sealed record DocListenMessage : ClientMessage
 {
     [JsonPropertyName("path")] public required string Path { get; init; }
-    [JsonPropertyName("resumeToken")] public long? ResumeToken { get; init; }
+    [JsonPropertyName("resumeToken")] public string? ResumeToken { get; init; }
     [JsonPropertyName("protocol")] public long? Protocol { get; init; }
 }
 

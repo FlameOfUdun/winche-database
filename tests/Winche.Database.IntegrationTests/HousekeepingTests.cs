@@ -18,7 +18,7 @@ public class HousekeepingTests(PostgresFixture fx) : QueryTestBase(fx)
 
         var reader = new ChangeFeedReader(Fx.DataSource);
         Assert.Equal(0, await reader.PruneBeforeAsync(DateTimeOffset.UtcNow.AddDays(-7))); // nothing that old
-        Assert.Single(await reader.ReadAfterAsync(0, 10));
+        Assert.Single(await reader.ReadAfterAsync(ChangeCursor.Zero, 10));
         Assert.Equal(1, await reader.PruneBeforeAsync(DateTimeOffset.UtcNow.AddMinutes(1)));
     }
 

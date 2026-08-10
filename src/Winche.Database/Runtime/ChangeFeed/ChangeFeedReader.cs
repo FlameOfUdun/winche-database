@@ -8,23 +8,34 @@ namespace Winche.Database.Runtime.ChangeFeed;
 public sealed class ChangeFeedReader(NpgsqlDataSource source)
 {
     /// <summary>
-    /// Reads up to <paramref name="limit"/> change records with seq &gt; <paramref name="afterSeq"/>, ordered by seq.
+    /// Reads up to <paramref name="limit"/> change records after <paramref name="cursor"/>, ordered by
+    /// (xid, seq).
     ///
-    /// <para><b>Known seq/commit-order race:</b> PostgreSQL assigns <c>seq</c> values from a sequence before
-    /// a transaction commits. Two concurrent write transactions can therefore commit out of seq order:
-    /// transaction A (seq 5) may commit <em>after</em> transaction B (seq 6). A reader that drains
-    /// immediately after B commits will process seq 6 and advance its cursor past 5; when A subsequently
-    /// commits, seq 5 is never re-read and the cursor permanently skips it (the skip is persisted via
-    /// <see cref="SaveCursorAsync"/>). The window is the p99 write transaction duration — typically
-    /// sub-millisecond on a healthy cluster. Proper fencing (e.g. snapshot-xmin) is out of scope;
-    /// consumers that require strict exactly-once semantics must perform idempotency checks by version.</para>
+    /// <para><b>Fencing guarantee:</b> a row is returned only once its writing transaction is provably
+    /// settled — <c>xid &lt; pg_snapshot_xmin(pg_current_snapshot())</c> means no transaction with that
+    /// xid (or lower) can still be in flight, so the row can never be followed by a same-or-lower-xid
+    /// row committing later. The cursor comparison <c>(xid, seq) &gt; ($1, $2)</c> never advances past
+    /// an xid that could still produce more rows, so a transaction that committed late (after a
+    /// higher-xid transaction was already read) is still delivered on a later poll — this is what
+    /// closes the seq/commit-order race described in the old version of this doc comment: two
+    /// concurrent writers assigning seq 5 and seq 6 could commit out of order, and a reader that
+    /// advanced past 6 immediately would never see 5. The row-constructor comparison also makes
+    /// pagination exact even when one transaction's change set is larger than <paramref name="limit"/>
+    /// — the next page resumes mid-transaction with no truncation special-casing.</para>
     /// </summary>
-    public async Task<IReadOnlyList<ChangeRecord>> ReadAfterAsync(long afterSeq, int limit, CancellationToken ct = default)
+    public async Task<IReadOnlyList<ChangeRecord>> ReadAfterAsync(ChangeCursor cursor, int limit, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT seq, type, document_path, collection_path, version, commit_time FROM {WincheDatabaseTables.Changes} WHERE seq > $1 ORDER BY seq LIMIT $2";
-        cmd.Parameters.AddWithValue(afterSeq);
+        cmd.CommandText = $"""
+            SELECT xid::text, seq, type, document_path, collection_path, version, commit_time
+            FROM {WincheDatabaseTables.Changes}
+            WHERE (xid, seq) > ($1::text::xid8, $2) AND xid < pg_snapshot_xmin(pg_current_snapshot())
+            ORDER BY xid, seq
+            LIMIT $3
+            """;
+        cmd.Parameters.AddWithValue(cursor.Xid.ToString());
+        cmd.Parameters.AddWithValue(cursor.Seq);
         cmd.Parameters.AddWithValue(limit);
 
         var records = new List<ChangeRecord>();
@@ -32,50 +43,69 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source)
         while (await reader.ReadAsync(ct))
         {
             records.Add(new ChangeRecord(
-                reader.GetInt64(0),
-                reader.GetString(1) switch
+                ulong.Parse(reader.GetString(0)),
+                reader.GetInt64(1),
+                reader.GetString(2) switch
                 {
                     "added" => ChangeType.Added,
                     "modified" => ChangeType.Modified,
                     "removed" => ChangeType.Removed,
                     var other => throw new InvalidOperationException($"Unknown change type '{other}'"),
                 },
-                reader.GetString(2),
                 reader.GetString(3),
-                reader.GetInt64(4),
-                reader.GetFieldValue<DateTimeOffset>(5)));
+                reader.GetString(4),
+                reader.GetInt64(5),
+                reader.GetFieldValue<DateTimeOffset>(6)));
         }
         return records;
     }
 
-    public async Task<long> GetMaxSeqAsync(CancellationToken ct = default)
+    /// <summary>
+    /// The cursor a fresh consumer should boot from: "live from here" without a bare-MAX(seq) pin,
+    /// which would skip any transaction still in flight at boot. <c>pg_snapshot_xmin</c> is the
+    /// oldest xid that might still be in flight, so a row from that (or a later) transaction has
+    /// not necessarily been observed yet; pairing it with seq 0 means "nothing at or after this xid
+    /// has been consumed" — the very next poll's fencing filter (<see cref="ReadAfterAsync"/>) picks
+    /// up such a row once its transaction actually settles.
+    /// </summary>
+    public async Task<ChangeCursor> GetWatermarkAsync(CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT COALESCE(MAX(seq), 0) FROM {WincheDatabaseTables.Changes}";
-        return (long)(await cmd.ExecuteScalarAsync(ct))!;
+        cmd.CommandText = "SELECT pg_snapshot_xmin(pg_current_snapshot())::text";
+        var xmin = (string)(await cmd.ExecuteScalarAsync(ct))!;
+        return new ChangeCursor(ulong.Parse(xmin), 0);
     }
 
-    /// <summary>True when any feed row after <paramref name="afterSeq"/> touches the collection.</summary>
-    public Task<bool> HasQueryChangesAfterAsync(long afterSeq, string collection, CancellationToken ct = default) =>
-        ExistsAfterAsync(afterSeq, "collection_path", collection, ct);
+    /// <summary>True when any settled feed row after <paramref name="cursor"/> touches the collection.</summary>
+    public Task<bool> HasQueryChangesAfterAsync(ChangeCursor cursor, string collection, CancellationToken ct = default) =>
+        ExistsAfterAsync(cursor, "collection_path", collection, ct);
 
-    /// <summary>True when any feed row after <paramref name="afterSeq"/> touches the exact document path.</summary>
-    public Task<bool> HasDocumentChangesAfterAsync(long afterSeq, string documentPath, CancellationToken ct = default) =>
-        ExistsAfterAsync(afterSeq, "document_path", documentPath, ct);
+    /// <summary>True when any settled feed row after <paramref name="cursor"/> touches the exact document path.</summary>
+    public Task<bool> HasDocumentChangesAfterAsync(ChangeCursor cursor, string documentPath, CancellationToken ct = default) =>
+        ExistsAfterAsync(cursor, "document_path", documentPath, ct);
 
     // column MUST be a trusted constant (never user input) — it is interpolated into the SQL text.
-    private async Task<bool> ExistsAfterAsync(long afterSeq, string column, string value, CancellationToken ct)
+    private async Task<bool> ExistsAfterAsync(ChangeCursor cursor, string column, string value, CancellationToken ct)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT EXISTS(SELECT 1 FROM {WincheDatabaseTables.Changes} WHERE seq > $1 AND {column} = $2)";
-        cmd.Parameters.AddWithValue(afterSeq);
+        // Same settled filter as ReadAfterAsync — an unsettled row must not be reported as a pending
+        // change here either, or a resuming listener would wrongly conclude it needs to reset/requery
+        // for a row it still cannot actually see (and would see correctly on a later poll instead).
+        cmd.CommandText = $"""
+            SELECT EXISTS(
+                SELECT 1 FROM {WincheDatabaseTables.Changes}
+                WHERE (xid, seq) > ($1::text::xid8, $2) AND xid < pg_snapshot_xmin(pg_current_snapshot()) AND {column} = $3
+            )
+            """;
+        cmd.Parameters.AddWithValue(cursor.Xid.ToString());
+        cmd.Parameters.AddWithValue(cursor.Seq);
         cmd.Parameters.AddWithValue(value);
         return (bool)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
-    /// <summary>Smallest seq still in the feed, or 0 when empty.</summary>
+    /// <summary>Smallest seq still in the feed, or 0 when empty. Retention-window check only — unaffected by xid fencing.</summary>
     public async Task<long> GetMinSeqAsync(CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
@@ -84,27 +114,37 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source)
         return (long)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
-    public async Task<long?> GetCursorAsync(string consumer, CancellationToken ct = default)
+    public async Task<ChangeCursor?> GetCursorAsync(string consumer, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT seq FROM {WincheDatabaseTables.FeedCursors} WHERE consumer = $1";
+        cmd.CommandText = $"SELECT xid::text, seq FROM {WincheDatabaseTables.FeedCursors} WHERE consumer = $1";
         cmd.Parameters.AddWithValue(consumer);
-        return await cmd.ExecuteScalarAsync(ct) is long seq ? seq : null;
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct)) return null;
+        return new ChangeCursor(ulong.Parse(reader.GetString(0)), reader.GetInt64(1));
     }
 
-    public async Task SaveCursorAsync(string consumer, long seq, CancellationToken ct = default)
+    public async Task SaveCursorAsync(string consumer, ChangeCursor cursor, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
-        // GREATEST guard: a backwards save (due to the seq/commit-order race) can only cause
-        // redelivery (cursor stays at the higher value), never a permanent skip.
+        // Monotonic guard, generalized to the (xid, seq) pair via row-constructor comparison: a
+        // backwards save can only cause redelivery (cursor stays at the higher pair), never a
+        // permanent skip.
         cmd.CommandText = $"""
-            INSERT INTO {WincheDatabaseTables.FeedCursors} (consumer, seq, updated_at) VALUES ($1, $2, now())
-            ON CONFLICT (consumer) DO UPDATE SET seq = GREATEST({WincheDatabaseTables.FeedCursors}.seq, EXCLUDED.seq), updated_at = now()
+            INSERT INTO {WincheDatabaseTables.FeedCursors} (consumer, xid, seq, updated_at)
+            VALUES ($1, $2::text::xid8, $3, now())
+            ON CONFLICT (consumer) DO UPDATE SET
+                xid = CASE WHEN (EXCLUDED.xid, EXCLUDED.seq) > ({WincheDatabaseTables.FeedCursors}.xid, {WincheDatabaseTables.FeedCursors}.seq)
+                           THEN EXCLUDED.xid ELSE {WincheDatabaseTables.FeedCursors}.xid END,
+                seq = CASE WHEN (EXCLUDED.xid, EXCLUDED.seq) > ({WincheDatabaseTables.FeedCursors}.xid, {WincheDatabaseTables.FeedCursors}.seq)
+                           THEN EXCLUDED.seq ELSE {WincheDatabaseTables.FeedCursors}.seq END,
+                updated_at = now()
             """;
         cmd.Parameters.AddWithValue(consumer);
-        cmd.Parameters.AddWithValue(seq);
+        cmd.Parameters.AddWithValue(cursor.Xid.ToString());
+        cmd.Parameters.AddWithValue(cursor.Seq);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 

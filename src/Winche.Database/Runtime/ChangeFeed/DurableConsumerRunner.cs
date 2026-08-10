@@ -8,7 +8,8 @@ namespace Winche.Database.Runtime.ChangeFeed;
 /// Delivery loop for ONE durable consumer (spec A): read after the persisted cursor →
 /// deliver → persist AFTER success. Failure retries the SAME batch with capped backoff
 /// (1s→30s) — true at-least-once; a poison batch blocks only this consumer (logged each retry).
-/// First run without a cursor row pins to MAX(seq) (no historical replay).
+/// First run without a cursor row pins to the boot-time watermark (no historical replay; see
+/// <see cref="ChangeFeedReader.GetWatermarkAsync"/>).
 /// </summary>
 public sealed class DurableConsumerRunner(
     NpgsqlDataSource source,
@@ -22,7 +23,7 @@ public sealed class DurableConsumerRunner(
 
     public async Task RunAsync(Func<CancellationToken, Task> waitForWake, CancellationToken ct)
     {
-        long? cursor = null;
+        ChangeCursor? cursor = null;
         var failures = 0;
         while (!ct.IsCancellationRequested)
         {
@@ -43,7 +44,7 @@ public sealed class DurableConsumerRunner(
                 var batch = new ChangeBatch(records, await _reader.FetchDocumentsAsync(records, ct));
                 await consumer.OnBatchAsync(batch, ct);                 // throws → retry same batch
 
-                cursor = records[^1].Seq;
+                cursor = new ChangeCursor(records[^1].Xid, records[^1].Seq);
                 // Persist cursor AFTER successful delivery; persist failures log a warning
                 // but do NOT count as delivery failure — redelivery possible after restart.
                 try
@@ -75,14 +76,14 @@ public sealed class DurableConsumerRunner(
         }
     }
 
-    private async Task<long> BootstrapAsync(CancellationToken ct)
+    private async Task<ChangeCursor> BootstrapAsync(CancellationToken ct)
     {
         var cursor = await _reader.GetCursorAsync(_name, ct);
         if (cursor is not null) return cursor.Value;
 
-        var max = await _reader.GetMaxSeqAsync(ct);
-        await _reader.SaveCursorAsync(_name, max, ct);
-        return max;
+        var watermark = await _reader.GetWatermarkAsync(ct);
+        await _reader.SaveCursorAsync(_name, watermark, ct);
+        return watermark;
     }
 
 }

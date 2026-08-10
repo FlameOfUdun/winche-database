@@ -4,9 +4,14 @@ namespace Winche.Database.Runtime.ChangeFeed;
 
 public enum ChangeType { Added, Modified, Removed }
 
-/// <summary>One durable feed row (winche_changes).</summary>
+/// <summary>
+/// One durable feed row (winche_documents_changes). <see cref="Xid"/> is the writing transaction's
+/// id — together with <see cref="Seq"/> it forms the row's <see cref="ChangeCursor"/>; <see cref="Seq"/>
+/// alone remains the intra-transaction order (still useful for logging/diagnostics) but is no longer
+/// a safe cursor by itself — see ChangeFeedReader.
+/// </summary>
 public sealed record ChangeRecord(
-    long Seq, ChangeType Type, string Path, string Collection, long Version, DateTimeOffset CommitTime);
+    ulong Xid, long Seq, ChangeType Type, string Path, string Collection, long Version, DateTimeOffset CommitTime);
 
 /// <summary>
 /// A pump delivery: ordered records + the still-existing documents for added/modified paths,

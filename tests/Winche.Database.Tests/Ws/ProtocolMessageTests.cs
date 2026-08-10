@@ -30,8 +30,8 @@ public class ProtocolMessageTests
         Assert.IsType<TxBeginMessage>(In("""{"type":"tx.begin","id":"1"}"""));
         var commit = Assert.IsType<TxCommitMessage>(In("""{"type":"tx.commit","id":"1","transactionId":"t","writes":[]}"""));
         Assert.Equal("t", commit.TransactionId);
-        var listen = Assert.IsType<ListenMessage>(In("""{"type":"listen","id":"1","query":{"collection":"c"},"resumeToken":42}"""));
-        Assert.Equal(42, listen.ResumeToken);
+        var listen = Assert.IsType<ListenMessage>(In("""{"type":"listen","id":"1","query":{"collection":"c"},"resumeToken":"3:42"}"""));
+        Assert.Equal("3:42", listen.ResumeToken);
         Assert.Equal("s1", Assert.IsType<UnlistenMessage>(In("""{"type":"unlisten","id":"1","subscriptionId":"s1"}""")).SubscriptionId);
     }
 
@@ -60,16 +60,16 @@ public class ProtocolMessageTests
             CreateTime = DateTimeOffset.UnixEpoch, UpdateTime = DateTimeOffset.UnixEpoch, Version = 1,
         };
         var snap = Out(new ListenSnapshotMessage
-            { SubscriptionId = "s1", Documents = [doc], ReadTime = DateTimeOffset.UnixEpoch, ResumeToken = 7 });
+            { SubscriptionId = "s1", Documents = [doc], ReadTime = DateTimeOffset.UnixEpoch, ResumeToken = "0:7" });
         Assert.Equal("listen.snapshot", (string)snap["type"]!);
         Assert.Equal("1", (string)snap["documents"]![0]!["fields"]!["x"]!["integerValue"]!);
-        Assert.Equal(7, (long)snap["resumeToken"]!);
+        Assert.Equal("0:7", (string)snap["resumeToken"]!);
 
         var delta = Out(new ListenDeltaMessage
         {
             SubscriptionId = "s1",
             Changes = [new WireChange("added", doc, -1, 0)],
-            Count = 1, ReadTime = DateTimeOffset.UnixEpoch, ResumeToken = 8,
+            Count = 1, ReadTime = DateTimeOffset.UnixEpoch, ResumeToken = "0:8",
         });
         Assert.Equal("listen.delta", (string)delta["type"]!);
         Assert.Equal(("added", -1, 0),

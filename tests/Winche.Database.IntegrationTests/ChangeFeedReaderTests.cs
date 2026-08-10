@@ -19,22 +19,14 @@ public class ChangeFeedReaderTests(PostgresFixture fx) : QueryTestBase(fx)
         await applier.ApplyAsync([new SetWrite { Path = "c/a", Fields = Map() }]);   // modified
         await applier.ApplyAsync([new DeleteWrite { Path = "c/a" }]);                // removed
 
-        var all = await Reader().ReadAfterAsync(0, limit: 10);
+        var all = await Reader().ReadAfterAsync(ChangeCursor.Zero, limit: 10);
         Assert.Equal(3, all.Count);
         Assert.Equal([ChangeType.Added, ChangeType.Modified, ChangeType.Removed], all.Select(r => r.Type));
         Assert.True(all[0].Seq < all[1].Seq && all[1].Seq < all[2].Seq);
         Assert.All(all, r => Assert.Equal(("c/a", "c"), (r.Path, r.Collection)));
 
-        var page2 = await Reader().ReadAfterAsync(all[0].Seq, limit: 1);
+        var page2 = await Reader().ReadAfterAsync(new ChangeCursor(all[0].Xid, all[0].Seq), limit: 1);
         Assert.Equal(ChangeType.Modified, Assert.Single(page2).Type);
-
-        Assert.Equal(all[2].Seq, await Reader().GetMaxSeqAsync());
-    }
-
-    [Fact]
-    public async Task GetMaxSeq_EmptyFeed_IsZero()
-    {
-        Assert.Equal(0, await Reader().GetMaxSeqAsync());
     }
 
     [Fact]
@@ -43,6 +35,6 @@ public class ChangeFeedReaderTests(PostgresFixture fx) : QueryTestBase(fx)
         var applier = Applier();
         await applier.ApplyAsync([new SetWrite { Path = "c/a", Fields = Map() }]);
         Assert.Equal(1, await Reader().PruneBeforeAsync(DateTimeOffset.UtcNow.AddMinutes(1)));
-        Assert.Empty(await Reader().ReadAfterAsync(0, 10));
+        Assert.Empty(await Reader().ReadAfterAsync(ChangeCursor.Zero, 10));
     }
 }

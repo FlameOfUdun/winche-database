@@ -10,7 +10,9 @@ namespace Winche.Database.Runtime.ChangeFeed;
 /// One per node: LISTEN winche_changes as wake-up + poll fallback; reads feed rows after
 /// the cursor in seq order; fetches changed docs once per batch; delivers sequentially to
 /// ephemeral consumers (at-least-once for the feed; a consumer exception is logged and skipped —
-/// no redelivery — so consumers must self-heal). Cursor starts at MAX(seq) — live-only from boot.
+/// no redelivery — so consumers must self-heal). Cursor starts at the boot-time watermark (see
+/// <see cref="ChangeFeedReader.GetWatermarkAsync"/>) — live-only from boot, including any
+/// transaction still in flight at boot time.
 /// Durable consumers (DurableName != null) run in their own DurableConsumerRunner tasks that
 /// share the same wake signal — they receive no-replay, at-least-once delivery with cursor
 /// persistence and failure retry.
@@ -25,13 +27,17 @@ public sealed class ChangeFeedPump(
     private readonly IReadOnlyList<IChangeFeedConsumer> _ephemeral = consumers.Where(c => c.DurableName is null).ToList();
     private readonly IReadOnlyList<IChangeFeedConsumer> _durable = ValidateDurableNames(consumers);
     private readonly List<SemaphoreSlim> _wakeSignals = [];
-    private long _cursor;
+    private readonly object _cursorGate = new();
+    private ChangeCursor _cursor;
 
-    public long Cursor => Interlocked.Read(ref _cursor);
+    // ChangeCursor is a 16-byte struct — not writable/readable atomically as a single field, so a
+    // small lock replaces the old Interlocked.Read/Exchange pair on the bare long.
+    public ChangeCursor Cursor { get { lock (_cursorGate) return _cursor; } }
+    private void SetCursor(ChangeCursor value) { lock (_cursorGate) _cursor = value; }
 
     public async Task RunAsync(CancellationToken ct)
     {
-        Interlocked.Exchange(ref _cursor, await _reader.GetMaxSeqAsync(ct));
+        SetCursor(await _reader.GetWatermarkAsync(ct));
 
         // Spawn one DurableConsumerRunner per durable consumer, each with its own wake semaphore.
         var runnerTasks = new List<Task>();
@@ -146,7 +152,7 @@ public sealed class ChangeFeedPump(
                         consumer.GetType().Name, records[^1].Seq);
                 }
             }
-            Interlocked.Exchange(ref _cursor, records[^1].Seq);
+            SetCursor(new ChangeCursor(records[^1].Xid, records[^1].Seq));
 
             // Wake all durable runners — they read their own cursors independently.
             foreach (var sem in _wakeSignals)

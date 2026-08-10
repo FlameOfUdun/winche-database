@@ -100,6 +100,38 @@ public static class SchemaSql
                 DROP TRIGGER IF EXISTS winche_changes_trigger ON winche_documents_changes;
             END IF;
             ALTER INDEX IF EXISTS idx_winche_changes_commit_time RENAME TO idx_winche_documents_changes_commit_time;
+
+            -- Change-feed cursor fencing fix: the changes table now carries the writing transaction's
+            -- xid8 alongside seq (see ChangeFeedReader), so a cursor is the pair (xid, seq) rather than
+            -- a bare seq. These use the CURRENT object names (unlike the legacy-rename steps above,
+            -- which predate the winche_documents_ prefix) because the fencing fix ships after that rename.
+            IF to_regclass('winche_documents_changes') IS NOT NULL THEN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                               WHERE table_schema = current_schema() AND table_name = 'winche_documents_changes' AND column_name = 'xid') THEN
+                    -- The DEFAULT is volatile (pg_current_xact_id() is evaluated per row), so it also
+                    -- backfills every existing row with THIS ALTER's own xid. That collapses their
+                    -- individual commit-order history into one value, but that is fine: every existing
+                    -- row is by definition already committed, and once this ALTER's transaction commits
+                    -- that shared xid is itself settled (< the post-migration snapshot xmin), so none of
+                    -- the backfilled rows are ever misread as "still in flight".
+                    ALTER TABLE winche_documents_changes ADD COLUMN xid xid8 NOT NULL DEFAULT pg_current_xact_id();
+                END IF;
+                -- Inside the table-exists guard: this block runs BEFORE the additive
+                -- CREATE-IF-NOT-EXISTS DDL, so on a fresh schema there is no table to index yet —
+                -- ChangesDdl creates the same index there.
+                CREATE INDEX IF NOT EXISTS idx_winche_documents_changes_xid_seq ON winche_documents_changes (xid, seq);
+            END IF;
+
+            IF to_regclass('winche_documents_feed_cursors') IS NOT NULL THEN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                               WHERE table_schema = current_schema() AND table_name = 'winche_documents_feed_cursors' AND column_name = 'xid') THEN
+                    -- '0' sorts below every real xid8 (transaction ids start well above zero), so a
+                    -- cursor persisted before this migration is treated as "before all retained
+                    -- history" and every row still in the feed is redelivered once — a one-time,
+                    -- intentional breaking change for any consumer with a persisted cursor (see README).
+                    ALTER TABLE winche_documents_feed_cursors ADD COLUMN xid xid8 NOT NULL DEFAULT '0';
+                END IF;
+            END IF;
         END
         $migrate$;
         """;
@@ -112,6 +144,11 @@ public static class SchemaSql
     public static string ChangesDdl() => $$"""
         CREATE TABLE IF NOT EXISTS {{WincheDatabaseTables.Changes}} (
             seq             BIGSERIAL PRIMARY KEY,
+            -- xid8: the writing transaction's id. Paired with seq, this is the fencing cursor a reader
+            -- uses to tell a settled row from one whose transaction might still be in flight — see
+            -- ChangeFeedReader. The default is volatile (evaluated per row at insert time, inside the
+            -- writing transaction), which is exactly what makes it a correct fence.
+            xid             xid8 NOT NULL DEFAULT pg_current_xact_id(),
             type            TEXT NOT NULL,
             document_path   TEXT NOT NULL,
             collection_path TEXT NOT NULL,
@@ -122,8 +159,12 @@ public static class SchemaSql
         CREATE INDEX IF NOT EXISTS idx_{{WincheDatabaseTables.Changes}}_commit_time
             ON {{WincheDatabaseTables.Changes}} (commit_time);
 
+        CREATE INDEX IF NOT EXISTS idx_{{WincheDatabaseTables.Changes}}_xid_seq
+            ON {{WincheDatabaseTables.Changes}} (xid, seq);
+
         CREATE TABLE IF NOT EXISTS {{WincheDatabaseTables.FeedCursors}} (
             consumer   TEXT PRIMARY KEY,
+            xid        xid8 NOT NULL DEFAULT '0',
             seq        BIGINT NOT NULL,
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         );

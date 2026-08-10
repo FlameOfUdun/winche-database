@@ -105,22 +105,22 @@ public class DocumentListenerRegistryTests(PostgresFixture fx) : QueryTestBase(f
         await rig.Db.WriteAsync([new SetWrite { Path = "dlr3/a", Fields = Map(("n", new IntegerValue(1))) }]);
 
         // Capture a resume token from a first listener on the target.
-        long token;
+        ChangeCursor token;
         await using (var l = await db.ListenToDocumentAsync("dlr3/a"))
         await using (var e0 = l.Snapshots().GetAsyncEnumerator())
             token = (await NextAsync(e0)).ResumeToken;
 
-        // Resume with no change to the target → a CURRENT marker (no document) instead of
+        // Resume with no change to the target â†’ a CURRENT marker (no document) instead of
         // a full snapshot.
         await using var resumed = await db.ListenToDocumentAsync("dlr3/a", new ListenOptions(ResumeFrom: token));
         await using var er = resumed.Snapshots().GetAsyncEnumerator();
         var marker = await NextAsync(er);
         Assert.True(marker.Current);
 
-        // A SIBLING write is irrelevant (path-scoped resume) → no further frame.
+        // A SIBLING write is irrelevant (path-scoped resume) â†’ no further frame.
         var pending = er.MoveNextAsync().AsTask();
         await rig.Db.WriteAsync([new SetWrite { Path = "dlr3/b", Fields = Map(("n", new IntegerValue(9))) }]);
-        Assert.NotSame(pending, await Task.WhenAny(pending, Task.Delay(1500)));   // still pending → suppressed
+        Assert.NotSame(pending, await Task.WhenAny(pending, Task.Delay(1500)));   // still pending â†’ suppressed
 
         // A write to the TARGET delivers a snapshot with the latest state.
         await rig.Db.WriteAsync([new SetWrite { Path = "dlr3/a", Fields = Map(("n", new IntegerValue(2))) }]);
@@ -152,7 +152,7 @@ public class DocumentListenerRegistryTests(PostgresFixture fx) : QueryTestBase(f
         await rig.Db.WriteAsync([new SetWrite { Path = "dlr4/a", Fields = Map(("n", new IntegerValue(2))) }]);
         await Task.Delay(600);
 
-        // Resume → relevant change happened, so the initial snapshot arrives with the latest state.
+        // Resume â†’ relevant change happened, so the initial snapshot arrives with the latest state.
         await using var resumed = await db.ListenToDocumentAsync("dlr4/a", new ListenOptions(ResumeFrom: token));
         await using var er = resumed.Snapshots().GetAsyncEnumerator();
         var snap = await NextAsync(er);

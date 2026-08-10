@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using Winche.Database.Runtime.ChangeFeed;
 using Winche.Rules;
 using Winche.Rules.Expressions;
 
@@ -47,7 +48,7 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
     private static JsonObject Int(long n) => new() { ["integerValue"] = n.ToString() };
     private static JsonObject Str(string s) => new() { ["stringValue"] = s };
 
-    private static JsonObject Listen(string collection, long? resume = null)
+    private static JsonObject Listen(string collection, string? resume = null)
     {
         var msg = new JsonObject { ["type"] = "listen", ["query"] = new JsonObject { ["collection"] = collection } };
         if (resume is { } r) msg["resumeToken"] = r;
@@ -67,7 +68,7 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         var initial = await ws.WaitForAsync(f => (string?)f["type"] == "listen.snapshot"
                                               && (string?)f["subscriptionId"] == subId);
         Assert.Single(initial["documents"]!.AsArray());
-        Assert.True((long)initial["resumeToken"]! > 0);
+        Assert.True(ChangeCursor.Parse((string)initial["resumeToken"]!).Xid > 0);
 
         await ws.RequestAsync(Set("wsd/b", ("n", Int(2))));
         var delta = await ws.WaitForAsync(f => (string?)f["type"] == "listen.delta");
@@ -110,7 +111,7 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
 
         var sub1 = await ws.RequestAsync(Listen("wsr"));
         var snap = await ws.WaitForAsync(f => (string?)f["type"] == "listen.snapshot");
-        var token = (long)snap["resumeToken"]!;
+        var token = (string)snap["resumeToken"]!;
         await ws.RequestAsync(new JsonObject
             { ["type"] = "unlisten", ["subscriptionId"] = (string)sub1["result"]!["subscriptionId"]! });
 
@@ -119,7 +120,7 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         var subId2 = (string)sub2["result"]!["subscriptionId"]!;
         var current = await ws.WaitForAsync(f =>
             (string?)f["type"] == "listen.current" && (string?)f["subscriptionId"] == subId2);
-        Assert.Equal(token, (long)current["resumeToken"]!);
+        Assert.Equal(token, (string)current["resumeToken"]!);
 
         await ws.RequestAsync(Set("wsr/b", ("n", Int(2))));
         var reset = await ws.WaitForAsync(f =>
@@ -339,7 +340,7 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         var sub1 = (string?)resp["result"]!["subscriptionId"];
         var snap = await ws.WaitForAsync(f =>
             (string?)f["type"] == "listen.snapshot" && (string?)f["subscriptionId"] == sub1);
-        var token = (long)snap["resumeToken"]!;
+        var token = (string)snap["resumeToken"]!;
 
         await ws.RequestAsync(new JsonObject { ["type"] = "unlisten", ["subscriptionId"] = sub1 });
 
@@ -354,7 +355,7 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
 
         var current = await ws.WaitForAsync(f =>
             (string?)f["type"] == "listen.current" && (string?)f["subscriptionId"] == sub2);
-        Assert.Equal(token, (long)current["resumeToken"]!);
+        Assert.Equal(token, (string)current["resumeToken"]!);
     }
 
     [Fact]
