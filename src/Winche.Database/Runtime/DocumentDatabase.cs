@@ -17,6 +17,17 @@ namespace Winche.Database.Runtime;
 /// every mutation via WriteApplier, transactions via the ledger + read-validations.
 /// Access rules live in RuleGuardedDocumentDatabase; hooks/listeners consume the change feed (Plan 3).
 /// </summary>
+/// <remarks>
+/// <b>Danger:</b> this type performs NO read authorization at all, and constructing it with
+/// <c>writeAuthorizer: null</c> (the default) means it performs NO write authorization either —
+/// see the <c>writeAuthorizer</c> parameter below and <see cref="Writes.WriteApplier"/>. That is
+/// only ever correct for the privileged, rule-free core (registered under the keyed service
+/// <see cref="Constants.WincheDatabaseKeys.PrivilegedCore"/> — never resolvable via a plain
+/// <c>GetService&lt;DocumentDatabase&gt;()</c>). Application code must depend on
+/// <see cref="IDocumentDatabase"/> (bound to <see cref="Authorization.RuleGuardedDocumentDatabase"/>),
+/// never construct or resolve this type directly, unless it is deliberately implementing a
+/// trusted, server-side, rule-bypassing operation.
+/// </remarks>
 public sealed class DocumentDatabase : IDocumentDatabase
 {
     private readonly NpgsqlDataSource _source;
@@ -28,6 +39,17 @@ public sealed class DocumentDatabase : IDocumentDatabase
     private readonly TimeSpan? _statementTimeout;
     private readonly QueryLimits _queryLimits;
 
+    /// <param name="source">The pooled connection source.</param>
+    /// <param name="options">Store-wide configuration (write limits, transaction config, query config/limits).</param>
+    /// <param name="listeners">Query-change-feed registry; omit only for non-listening usages.</param>
+    /// <param name="scopes">Secondary-index resolver used to plan queries.</param>
+    /// <param name="writeAuthorizer">
+    /// <b>DANGER:</b> <see langword="null"/> (the default) means writes through this instance are
+    /// NOT authorized at all — every create/update/delete is allowed unconditionally. That is only
+    /// correct for the privileged, rule-free core. Pass a real <see cref="IWriteAuthorizer"/> for
+    /// any instance whose writes must be governed by access rules.
+    /// </param>
+    /// <param name="docListeners">Single-document change-feed registry; omit only for non-listening usages.</param>
     public DocumentDatabase(NpgsqlDataSource source, IOptions<WincheDatabaseOptions> options,
         QueryListenerRegistry? listeners = null, CollectionIndexResolver? scopes = null,
         IWriteAuthorizer? writeAuthorizer = null, DocumentListenerRegistry? docListeners = null)

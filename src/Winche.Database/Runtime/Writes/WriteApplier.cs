@@ -16,6 +16,11 @@ namespace Winche.Database.Runtime.Writes;
 /// ON CONFLICT clause) together ensure that a concurrent creator racing on an absent row
 /// causes affected-rows = 0, which is detected and turned into ABORTED before commit.
 /// For rows held under FOR UPDATE the guard always passes — no behavior change.
+///
+/// <para><b>A null <c>authorizer</c> disables write authorization entirely</b> — every write is
+/// applied unchecked. That is only ever correct for the privileged, rule-free core, which is why
+/// that core is registered under a key rather than as a plain resolvable service. Anything serving
+/// caller-supplied writes must pass a real <see cref="IWriteAuthorizer"/>.</para>
 /// </summary>
 public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? authorizer = null, WriteLimits? limits = null)
 {

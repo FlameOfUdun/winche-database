@@ -21,7 +21,7 @@ namespace Winche.Database.Runtime.Hosting;
 /// should restrict who may set that field accordingly.
 /// </summary>
 public sealed class TtlSweeper(
-    DocumentDatabase core,
+    [FromKeyedServices(WincheDatabaseKeys.PrivilegedCore)] DocumentDatabase core,
     [FromKeyedServices(WincheDatabaseKeys.DataSource)] NpgsqlDataSource source,
     IEnumerable<TtlPolicy> policies,
     IOptions<WincheDatabaseOptions> options,

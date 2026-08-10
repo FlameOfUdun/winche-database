@@ -1,13 +1,15 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Winche.Database.Constants;
 using Winche.Database.DependencyInjection;
 
 namespace Winche.Database.Runtime.Hosting;
 
 /// <summary>Sweeps expired ledger entries (spec §3). Correctness never depends on it.</summary>
 public sealed class TransactionSweeper(
-    DocumentDatabase core,
+    [FromKeyedServices(WincheDatabaseKeys.PrivilegedCore)] DocumentDatabase core,
     IOptions<WincheDatabaseOptions> options,
     ILogger<TransactionSweeper> logger) : BackgroundService
 {

@@ -401,7 +401,7 @@ The sweeper loops within each collection until it fetches a short batch (fewer t
 
 The primary service. Inject `IDocumentDatabase` to interact with the store from application code.
 
-> **Guarded vs. core.** `IDocumentDatabase` is bound in DI to `RuleGuardedDocumentDatabase`, which enforces access rules on every operation. The concrete `DocumentDatabase` is the **rule-free core** that the guard decorates — inject it *only* in trusted server-side code (seeding, migrations, internal jobs) that should deliberately bypass authorization. Application code subject to access rules must depend on `IDocumentDatabase`, **never** the concrete `DocumentDatabase`.
+> **Guarded vs. core.** `IDocumentDatabase` is bound in DI to `RuleGuardedDocumentDatabase`, which enforces access rules on every operation. The concrete `DocumentDatabase` is the **rule-free core** that the guard decorates — it performs NO read or write authorization at all. To keep it from being injected by accident (a one-word typo — asking for the concrete type instead of the interface — would silently bypass every access rule), it is registered as a **keyed** singleton under `WincheDatabaseKeys.PrivilegedCore` rather than a plain one: `provider.GetService<DocumentDatabase>()` always returns `null`. Trusted server-side code that must deliberately bypass authorization (seeding, migrations, internal jobs) resolves it explicitly with `[FromKeyedServices(WincheDatabaseKeys.PrivilegedCore)] DocumentDatabase core`. Application code subject to access rules must depend on `IDocumentDatabase`, **never** the concrete `DocumentDatabase`.
 
 ```csharp
 public interface IDocumentDatabase
@@ -552,10 +552,15 @@ string id = DocumentId.NewId();  // 20-char base62 string
 The concrete `DocumentDatabase` exposes one capability that `IDocumentDatabase` does **not**: enumerating the
 subcollection ids directly under a document (or the top-level collections at the database root). This is a
 privileged, admin-only operation — so it lives on the **rule-free core**, is intentionally absent from
-`IDocumentDatabase`, and is **not** exposed over the REST/WebSocket transports. Inject the concrete
-`DocumentDatabase` (trusted server-side code only) to use it.
+`IDocumentDatabase`, and is **not** exposed over the REST/WebSocket transports. Resolve it by key (trusted
+server-side code only) to use it:
 
 ```csharp
+public sealed class MyMigrationJob([FromKeyedServices(WincheDatabaseKeys.PrivilegedCore)] DocumentDatabase db)
+{
+    // ...
+}
+
 var sub   = await db.ListCollectionIdsAsync("users/u1");   // subcollections under a document
 var roots = await db.ListCollectionIdsAsync(null);         // top-level collections (null/empty = root)
 

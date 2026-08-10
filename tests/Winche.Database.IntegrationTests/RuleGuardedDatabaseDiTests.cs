@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Winche.Database.Authorization;
+using Winche.Database.Constants;
 using Winche.Database.DependencyInjection;
 using Winche.Database.Runtime;
 using Winche.Database.Runtime.Writes;
@@ -102,7 +103,7 @@ public class RuleGuardedDatabaseDiTests(PostgresFixture fx) : IAsyncLifetime
         Assert.NotNull(rulesGuard);
 
         // Seed via the CORE unguarded db so we bypass the rules guard
-        var core = provider.GetRequiredService<DocumentDatabase>();
+        var core = provider.GetRequiredKeyedService<DocumentDatabase>(WincheDatabaseKeys.PrivilegedCore);
         await core.WriteAsync([new SetWrite
         {
             Path = "di/doc1",
@@ -143,7 +144,7 @@ public class RuleGuardedDatabaseDiTests(PostgresFixture fx) : IAsyncLifetime
 
         await using var provider = BuildProvider(ruleset, out var accessor);
         var rulesGuard = provider.GetRequiredService<RuleGuardedDocumentDatabase>();
-        var core = provider.GetRequiredService<DocumentDatabase>();
+        var core = provider.GetRequiredKeyedService<DocumentDatabase>(WincheDatabaseKeys.PrivilegedCore);
 
         await core.WriteAsync([new SetWrite
         {
@@ -202,7 +203,7 @@ public class RuleGuardedDatabaseDiTests(PostgresFixture fx) : IAsyncLifetime
             out _);
 
         var rulesGuard = provider.GetRequiredService<RuleGuardedDocumentDatabase>();
-        var core = provider.GetRequiredService<DocumentDatabase>();
+        var core = provider.GetRequiredKeyedService<DocumentDatabase>(WincheDatabaseKeys.PrivilegedCore);
 
         await core.WriteAsync([new SetWrite
         {
@@ -225,7 +226,7 @@ public class RuleGuardedDatabaseDiTests(PostgresFixture fx) : IAsyncLifetime
         services.AddWincheDatabase(opts => opts.ConnectionString = fx.ConnectionString);
         await using var provider = services.BuildServiceProvider();
 
-        var core = provider.GetRequiredService<DocumentDatabase>();
+        var core = provider.GetRequiredKeyedService<DocumentDatabase>(WincheDatabaseKeys.PrivilegedCore);
         await core.WriteAsync([new SetWrite
         {
             Path = "deny/doc1",
@@ -261,7 +262,7 @@ public class RuleGuardedDatabaseDiTests(PostgresFixture fx) : IAsyncLifetime
         });
         await using var provider = services.BuildServiceProvider();
 
-        var core = provider.GetRequiredService<DocumentDatabase>();
+        var core = provider.GetRequiredKeyedService<DocumentDatabase>(WincheDatabaseKeys.PrivilegedCore);
         var guard = provider.GetRequiredService<RuleGuardedDocumentDatabase>();
 
         await core.WriteAsync([new SetWrite
@@ -291,5 +292,73 @@ public class RuleGuardedDatabaseDiTests(PostgresFixture fx) : IAsyncLifetime
         }]);
         await Assert.ThrowsAsync<Authorization.AccessDeniedException>(
             () => guard.GetAsync("gamma/doc1"));
+    }
+
+    // ── Privileged-core DI guard (security hardening) ───────────────────────────
+
+    /// <summary>
+    /// THE regression guard for the unguarded-core-is-publicly-injectable fix: the privileged,
+    /// rule-free <see cref="DocumentDatabase"/> is registered as a KEYED singleton
+    /// (<see cref="WincheDatabaseKeys.PrivilegedCore"/>), never a plain one. A consumer that
+    /// asks for the concrete type without the key — the exact typo/mistake that used to grant a
+    /// silent access-rule bypass — must get <see langword="null"/>, not a working database.
+    /// </summary>
+    [Fact]
+    public void GetService_ConcreteDocumentDatabase_Unkeyed_ReturnsNull()
+    {
+        var services = new ServiceCollection();
+        services.AddWincheDatabase(opts => opts.ConnectionString = fx.ConnectionString);
+        using var provider = services.BuildServiceProvider();
+
+        Assert.Null(provider.GetService<DocumentDatabase>());
+    }
+
+    /// <summary>
+    /// The privileged core is still available on purpose — deliberately opting in with the
+    /// documented key resolves a working, functional rule-free core.
+    /// </summary>
+    [Fact]
+    public async Task GetRequiredKeyedService_PrivilegedCore_ResolvesWorkingCore()
+    {
+        var services = new ServiceCollection();
+        services.AddWincheDatabase(opts => opts.ConnectionString = fx.ConnectionString);
+        await using var provider = services.BuildServiceProvider();
+
+        var core = provider.GetRequiredKeyedService<DocumentDatabase>(WincheDatabaseKeys.PrivilegedCore);
+        Assert.NotNull(core);
+
+        // Rule-free core: writes and reads succeed with no rules configured (would be default-deny
+        // under the guard).
+        await core.WriteAsync([new SetWrite
+        {
+            Path = "privileged/doc1",
+            Fields = Fields(("v", new IntegerValue(1))),
+        }]);
+        var doc = await core.GetAsync("privileged/doc1");
+        Assert.NotNull(doc);
+    }
+
+    /// <summary>
+    /// The rule-GUARDED core (the second, inline <c>DocumentDatabase</c> wrapped by
+    /// <see cref="RuleGuardedDocumentDatabase"/>) stays un-registered as its own resolvable
+    /// service — it is reachable only through the guard / <see cref="IDocumentDatabase"/>.
+    /// Together with <see cref="GetService_ConcreteDocumentDatabase_Unkeyed_ReturnsNull"/> and
+    /// <see cref="GetRequiredKeyedService_PrivilegedCore_ResolvesWorkingCore"/>, this proves
+    /// there is exactly one resolvable concrete <c>DocumentDatabase</c> — the keyed privileged
+    /// core — and it is not accidentally the same instance backing the guard.
+    /// </summary>
+    [Fact]
+    public void GuardedCore_IsNotTheKeyedPrivilegedCore()
+    {
+        var services = new ServiceCollection();
+        services.AddWincheDatabase(opts => opts.ConnectionString = fx.ConnectionString);
+        using var provider = services.BuildServiceProvider();
+
+        var privilegedCore = provider.GetRequiredKeyedService<DocumentDatabase>(WincheDatabaseKeys.PrivilegedCore);
+        var guard = provider.GetRequiredService<RuleGuardedDocumentDatabase>();
+
+        // The guard wraps a SEPARATE inner DocumentDatabase (its own transaction ledger etc.) —
+        // not the keyed privileged core.
+        Assert.NotSame(privilegedCore, guard);
     }
 }

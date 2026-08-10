@@ -49,7 +49,11 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredKeyedService<NpgsqlDataSource>(WincheDatabaseKeys.DataSource)));
         // Plain (unguarded) core — for privileged reads (e.g. ListCollectionIdsAsync). Its TransactionLedger
         // is NOT shared with the guarded core registered below; do not cross transaction handles between them.
-        services.AddSingleton(sp => new DocumentDatabase(
+        // Registered under a KEYED service (WincheDatabaseKeys.PrivilegedCore) rather than a plain singleton
+        // so it is un-gettable BY ACCIDENT: an unkeyed provider.GetService<DocumentDatabase>() returns null,
+        // and only a consumer that deliberately asks for the key (or the interface IDocumentDatabase, which
+        // resolves to the RULE-GUARDED core below) gets a working database.
+        services.AddKeyedSingleton(WincheDatabaseKeys.PrivilegedCore, (sp, _) => new DocumentDatabase(
             sp.GetRequiredKeyedService<NpgsqlDataSource>(WincheDatabaseKeys.DataSource),
             sp.GetRequiredService<IOptions<WincheDatabaseOptions>>(),
             sp.GetRequiredService<QueryListenerRegistry>(),
