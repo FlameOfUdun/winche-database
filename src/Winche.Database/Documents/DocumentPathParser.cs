@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace Winche.Database.Documents;
 
 /// <summary>
@@ -7,6 +9,9 @@ public readonly record struct PathInfo(string Collection, string? Id, string Col
 
 public static class DocumentPathParser
 {
+    /// <summary>Matches the reference document-database's per-segment id limit.</summary>
+    private const int MaxSegmentBytes = 1500;
+
     /// <summary>
     /// Parses the specified path string into a collection segment and an optional identifier segment.
     /// </summary>
@@ -15,6 +20,9 @@ public static class DocumentPathParser
         if (string.IsNullOrEmpty(fullPath))
             throw new ArgumentException("Path cannot be null or empty.", nameof(fullPath));
 
+        // RemoveEmptyEntries is safe here ONLY because callers validate with IsValid*Path first,
+        // which rejects a leading/trailing/doubled '/' outright rather than normalizing it away.
+        // Do not let this drift from the validators — an empty segment must never reach here silently.
         var segments = fullPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
 
         if (segments.Length == 0)
@@ -28,33 +36,22 @@ public static class DocumentPathParser
         return new PathInfo(collection, id, CollectionIdOf(collection));
     }
 
-    public static bool IsValidDocumentPath(string path, out string? error)
-    {
-        var slashCount = path.Count(c => c == '/');
-        if (!int.IsOddInteger(slashCount))
-        {
-            error = "Invalid path to document. Expected format is {collection/document/collection/...}";
-            return false;
-        }
+    /// <summary>A document path: an even number of well-formed segments (collection/document/collection/document/...).</summary>
+    public static bool IsValidDocumentPath(string path, out string? error) =>
+        TryValidateShape(path, static n => int.IsEvenInteger(n),
+            "Invalid path to document. Expected format is {collection/document/collection/...}", out error);
 
-        error = null;
-        return true;
-    }
+    /// <summary>A collection path: an odd number of well-formed segments (collection/document/collection/...).</summary>
+    public static bool IsValidCollectionPath(string path, out string? error) =>
+        TryValidateShape(path, static n => int.IsOddInteger(n),
+            "Invalid path to collection. Expected format is {collection/document/collection/...}", out error);
 
-    public static bool IsValidCollectionPath(string path, out string? error)
-    {
-        var slashCount = path.Count(c => c == '/');
-        if (!int.IsEvenInteger(slashCount))
-        {
-            error = "Invalid path to collection. Expected format is {collection/document/collection/...}";
-            return false;
-        }
+    /// <summary>Either shape (document or collection) — used where callers accept both, e.g. cascade deletes.</summary>
+    public static bool IsValidPath(string path, out string? error) =>
+        TryValidateShape(path, static n => n >= 1,
+            "Path must contain at least one segment.", out error);
 
-        error = null;
-        return true;
-    }
-
-    public static bool IsValidPath(string path, out string? error)
+    private static bool TryValidateShape(string path, Func<int, bool> segmentCountOk, string shapeError, out string? error)
     {
         if (string.IsNullOrEmpty(path))
         {
@@ -62,10 +59,47 @@ public static class DocumentPathParser
             return false;
         }
 
-        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (segments.Length == 0)
+        // Split WITHOUT RemoveEmptyEntries: a leading '/', a trailing '/', or a doubled '/' all
+        // produce an empty segment here, which is rejected below instead of silently dropped —
+        // that silent drop is exactly what let a non-canonical path masquerade as a canonical one.
+        var segments = path.Split('/');
+        foreach (var segment in segments)
         {
-            error = "Path must contain at least one segment.";
+            if (!IsValidSegment(segment, out error))
+                return false;
+        }
+
+        if (!segmentCountOk(segments.Length))
+        {
+            error = shapeError;
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static bool IsValidSegment(string segment, out string? error)
+    {
+        if (segment.Length == 0)
+        {
+            error = "Path segments cannot be empty (no leading, trailing, or doubled '/').";
+            return false;
+        }
+        if (segment is "." or "..")
+        {
+            error = "Path segments '.' and '..' are not allowed.";
+            return false;
+        }
+        // Reserved namespace, matches the reference document-database's __*__ convention.
+        if (segment.Length >= 4 && segment.StartsWith("__", StringComparison.Ordinal) && segment.EndsWith("__", StringComparison.Ordinal))
+        {
+            error = "Path segments matching '__*__' are reserved.";
+            return false;
+        }
+        if (Encoding.UTF8.GetByteCount(segment) > MaxSegmentBytes)
+        {
+            error = $"Path segment exceeds the {MaxSegmentBytes}-byte limit.";
             return false;
         }
 
