@@ -793,6 +793,8 @@ await db.CommitTransactionAsync(handle.Id, [new SetWrite { ... }]);
 
 > **Authorization:** under the rule guard, reads inside a `RunTransactionAsync` body — and the manual `GetAsync(transactionId, …)` / `QueryAsync(transactionId, …)` reads — are authorized as `get`/`list` exactly like non-transactional reads; a denied read throws `PERMISSION_DENIED` and aborts the transaction. Writes are authorized at commit.
 
+> **Ownership.** A transaction id is a bearer token unless something binds it to the caller who began it — REST has no per-connection gate the way the WebSocket transport does (`ConnectionScope.Transactions`). The rule guard closes this: it records the caller's identity (the authenticated `uid` — same rule as `request.auth`, see [Access rules](#access-rules)) when a transaction begins, and every subsequent `GetAsync(transactionId, …)`, `QueryAsync(transactionId, …)`, and `CommitTransactionAsync` for that id verifies the SAME caller is asking. A mismatch throws `ABORTED` — indistinguishable from committing an unknown id, so a caller can't probe for the existence of someone else's transaction. `RollbackTransactionAsync` on someone else's live transaction is a silent no-op instead (a real rollback would be a denial-of-service on the true owner). **Known limitation:** callers with no usable `uid` (anonymous requests) have no identity to bind to, so ALL anonymous callers share one bucket — an anonymous transaction is protected only by its id being an unguessable GUID, not by caller identity.
+
 Transaction configuration (`WincheDatabaseOptions.TransactionConfig`):
 
 | Field | Default | Description |

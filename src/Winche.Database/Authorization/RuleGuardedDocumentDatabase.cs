@@ -1,3 +1,6 @@
+using System.Collections.Concurrent;
+using Microsoft.Extensions.Options;
+using Winche.Database.DependencyInjection;
 using Winche.Database.Documents;
 using Winche.Database.Querying;
 using Winche.Database.Querying.Ast;
@@ -24,13 +27,38 @@ namespace Winche.Database.Authorization;
 /// Constructor arguments are intentionally decoupled from the transport layer:
 /// <paramref name="claimsAccessor"/> is an <see cref="IRuleClaimsAccessor"/> so the caller controls
 /// how auth claims are sourced (HTTP context, test fixture, etc.).
+/// <para>
+/// <b>Transaction ownership.</b> This is also the only layer that knows caller identity, so it is
+/// the right place to close a bearer-token gap: without it, any caller who learns or guesses
+/// another caller's transaction id could commit or roll back a transaction they never began — REST
+/// has no per-connection gate (unlike the WebSocket transport's <c>ConnectionScope.Transactions</c>).
+/// This decorator records the caller's owner key (see <see cref="OwnerKey"/>) for every id it mints
+/// in <see cref="BeginTransactionAsync"/> and verifies it on every subsequent
+/// transactional operation — see <see cref="VerifyOwner"/> and <see cref="RollbackTransactionAsync"/>
+/// for exactly what "verify" means on each operation.
+/// </para>
 /// </remarks>
 public sealed class RuleGuardedDocumentDatabase(
     IDocumentDatabase inner,
     RuleEngine engine,
-    IRuleClaimsAccessor claimsAccessor)
+    IRuleClaimsAccessor claimsAccessor,
+    IOptions<WincheDatabaseOptions> options)
     : IDocumentDatabase
 {
+    /// <summary>
+    /// Transaction id → (owner key, begun-at). Populated by <see cref="BeginTransactionAsync"/> for
+    /// every id this guard hands out; consulted by every other transactional operation. An id with
+    /// NO entry here delegates through unchanged — see the "unrecorded id" reasoning on
+    /// <see cref="VerifyOwner"/>.
+    /// <para>
+    /// A null owner key means "no usable uid" (see <see cref="OwnerKey"/>). Null rather than a
+    /// sentinel string on purpose: a uid is a caller-supplied value, so any in-band sentinel could
+    /// in principle be supplied as a real uid and collide with the anonymous bucket.
+    /// </para>
+    /// </summary>
+    private readonly ConcurrentDictionary<string, (string? OwnerKey, DateTimeOffset BegunAt)> _owners = new();
+
+
     // ── Reads ─────────────────────────────────────────────────────────────────
 
     public async Task<Document?> GetAsync(string path, CancellationToken ct = default)
@@ -81,11 +109,22 @@ public sealed class RuleGuardedDocumentDatabase(
 
     // ── Transactions ──────────────────────────────────────────────────────────
 
-    public Task<TransactionHandle> BeginTransactionAsync(CancellationToken ct = default) =>
-        inner.BeginTransactionAsync(ct);
+    public async Task<TransactionHandle> BeginTransactionAsync(CancellationToken ct = default)
+    {
+        // Amortized maintenance: prune stale owner entries here rather than on a timer, so the
+        // map cannot grow without bound. Safe against the ledger's own absolute lifetime cap
+        // (TransactionConfig.TotalTimeoutSpan) — an entry is only pruned once the ledger itself
+        // would already treat that id as expired, so we never drop an owner record the ledger
+        // still considers live.
+        PruneExpiredOwners();
+        var handle = await inner.BeginTransactionAsync(ct);
+        _owners[handle.Id] = (OwnerKey(), DateTimeOffset.UtcNow);
+        return handle;
+    }
 
     public async Task<Document?> GetAsync(string transactionId, string path, CancellationToken ct = default)
     {
+        VerifyOwner(transactionId);
         // Mirror the non-transactional get: read, then authorize against the read document.
         // Denied → throw before returning, so the caller never sees a document it cannot read.
         var doc = await inner.GetAsync(transactionId, path, ct);
@@ -95,16 +134,37 @@ public sealed class RuleGuardedDocumentDatabase(
 
     public Task<QueryResult> QueryAsync(string transactionId, Query query, CancellationToken ct = default)
     {
+        VerifyOwner(transactionId);
         AuthorizeListQuery(query);
         return inner.QueryAsync(transactionId, query, ct);
     }
 
-    public Task<IReadOnlyList<WriteResult>> CommitTransactionAsync(
-        string transactionId, IReadOnlyList<Write> writes, CancellationToken ct = default) =>
-        inner.CommitTransactionAsync(transactionId, writes, ct);   // authorized inside the write transaction
+    public async Task<IReadOnlyList<WriteResult>> CommitTransactionAsync(
+        string transactionId, IReadOnlyList<Write> writes, CancellationToken ct = default)
+    {
+        VerifyOwner(transactionId);
+        try
+        {
+            return await inner.CommitTransactionAsync(transactionId, writes, ct);   // authorized inside the write transaction
+        }
+        finally
+        {
+            // The inner ledger consumes (removes) the id on every CommitTransactionAsync call,
+            // success or failure — mirror that here so the owner map never outlives the ledger entry.
+            _owners.TryRemove(transactionId, out _);
+        }
+    }
 
-    public Task RollbackTransactionAsync(string transactionId, CancellationToken ct = default) =>
-        inner.RollbackTransactionAsync(transactionId, ct);
+    public async Task RollbackTransactionAsync(string transactionId, CancellationToken ct = default)
+    {
+        if (_owners.TryGetValue(transactionId, out var entry))
+        {
+            if (entry.OwnerKey != OwnerKey())
+                return;   // owned by someone else: silent no-op — a real rollback would be a DoS on the true owner
+            _owners.TryRemove(transactionId, out _);
+        }
+        await inner.RollbackTransactionAsync(transactionId, ct);
+    }
 
     public Task<T> RunTransactionAsync<T>(
         Func<TransactionContext, Task<T>> body,
@@ -187,5 +247,64 @@ public sealed class RuleGuardedDocumentDatabase(
         };
         if (!engine.Allows(constraints, request))
             throw new AccessDeniedException(query.Collection, "list");
+    }
+
+    // ── Transaction-ownership helpers ────────────────────────────────────────
+
+    /// <summary>
+    /// The current caller's owner key: the authenticated <c>uid</c> (same rule as
+    /// <see cref="RequestBuilder.TryGetUid"/> — present, non-null, non-blank), or <c>null</c>,
+    /// the bucket shared by every unauthenticated caller.
+    /// <para>
+    /// <b>Anonymous callers are a known, documented limitation.</b> With no usable <c>uid</c> there
+    /// is no identity to bind a transaction to, so ALL anonymous callers share one bucket and are
+    /// protected only by the transaction id being an unguessable GUID minted by
+    /// <see cref="Runtime.Transactions.TransactionLedger.Begin"/> — not by caller identity. Any
+    /// anonymous caller who learns another anonymous caller's transaction id can still commit or
+    /// roll it back. This is intentional (there is nothing else to key on) and not silently
+    /// pretended away — see the anonymous-bucket test on <see cref="RuleGuardedDocumentDatabase"/>.
+    /// </para>
+    /// </summary>
+    private string? OwnerKey() =>
+        RequestBuilder.TryGetUid(claimsAccessor.GetClaims(), out var uid) ? uid : null;
+
+    /// <summary>
+    /// Throws if <paramref name="transactionId"/> is recorded under a DIFFERENT owner than the
+    /// current caller. Used by every transactional read and by commit; rollback has its own,
+    /// non-throwing variant (see <see cref="RollbackTransactionAsync"/>) because a real rollback of
+    /// someone else's live transaction would be a denial-of-service on its true owner.
+    /// <para>
+    /// An id with NO recorded owner delegates through unchanged — this is load-bearing, not an
+    /// oversight: every id this guard ever hands out is recorded in <see cref="BeginTransactionAsync"/>,
+    /// so an unrecorded id is either bogus (the inner ledger will itself reject it) or was minted
+    /// directly by a privileged, rule-free core server-side (which never goes through this guard's
+    /// <see cref="BeginTransactionAsync"/> and so has no owner to check against).
+    /// </para>
+    /// <para>
+    /// On mismatch this throws the IDENTICAL exception type and message the inner ledger already
+    /// uses for an unknown/expired id (see <see cref="Runtime.Transactions.TransactionLedger"/>) —
+    /// deliberately, so a caller cannot distinguish "exists but isn't yours" from "does not exist".
+    /// Revealing that distinction would let a caller probe for the existence of other callers'
+    /// transaction ids.
+    /// </para>
+    /// </summary>
+    private void VerifyOwner(string transactionId)
+    {
+        if (_owners.TryGetValue(transactionId, out var entry) && entry.OwnerKey != OwnerKey())
+            throw new TransactionAbortedException($"Transaction '{transactionId}' is not active.");
+    }
+
+    /// <summary>
+    /// Removes owner entries begun longer ago than <see cref="TransactionConfig.TotalTimeoutSpan"/> —
+    /// the ledger's own absolute lifetime cap, so an id this old is already dead there regardless of
+    /// idle activity. Called from <see cref="BeginTransactionAsync"/> (amortized cost of every new
+    /// transaction) rather than on a timer, keeping this type free of its own background work.
+    /// </summary>
+    private void PruneExpiredOwners()
+    {
+        var cutoff = DateTimeOffset.UtcNow - options.Value.TransactionConfig.TotalTimeoutSpan;
+        foreach (var (id, entry) in _owners)
+            if (entry.BegunAt < cutoff)
+                _owners.TryRemove(id, out _);
     }
 }

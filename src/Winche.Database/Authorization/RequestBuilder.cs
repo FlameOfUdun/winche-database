@@ -60,22 +60,43 @@ internal static class RequestBuilder
         });
     }
 
+    /// <summary>
+    /// Extracts a usable <c>uid</c> from <paramref name="claims"/>, applying the SAME
+    /// authenticated-caller rule this class uses to populate <c>request.auth</c>: a <c>"uid"</c>
+    /// claim must be present, non-null, and non-blank — anything else (no claims, missing uid,
+    /// null uid, blank uid) is unauthenticated. Shared with
+    /// <see cref="RuleGuardedDocumentDatabase"/>'s transaction-ownership tracking so the two
+    /// notions of "authenticated" cannot drift apart.
+    /// </summary>
+    /// <param name="claims">Authentication claims — pass <c>null</c> or an empty dictionary for unauthenticated.</param>
+    /// <param name="uid">The extracted uid, or <see cref="string.Empty"/> when unauthenticated.</param>
+    /// <returns><see langword="true"/> if a usable uid was found; otherwise <see langword="false"/>.</returns>
+    internal static bool TryGetUid(IReadOnlyDictionary<string, object?>? claims, out string uid)
+    {
+        uid = string.Empty;
+        if (claims is null || claims.Count == 0)
+            return false;
+
+        if (!claims.TryGetValue("uid", out var rawUid) || rawUid is null)
+            return false;
+
+        var s = rawUid.ToString();
+        if (string.IsNullOrWhiteSpace(s))
+            return false;
+
+        uid = s;
+        return true;
+    }
+
     // ── Internals ─────────────────────────────────────────────────────────────
 
     private static RuleValue BuildAuth(IReadOnlyDictionary<string, object?>? claims)
     {
-        if (claims is null || claims.Count == 0)
-            return RuleValue.Null;
-
-        if (!claims.TryGetValue("uid", out var rawUid) || rawUid is null)
-            return RuleValue.Null;
-
-        var uid = rawUid.ToString();
-        if (string.IsNullOrWhiteSpace(uid))
+        if (!TryGetUid(claims, out var uid))
             return RuleValue.Null;
 
         var token = RuleValue.Map(
-            claims.ToDictionary(kv => kv.Key, kv => ConvertClaimValue(kv.Value)));
+            claims!.ToDictionary(kv => kv.Key, kv => ConvertClaimValue(kv.Value)));
 
         return RuleValue.Map(new Dictionary<string, RuleValue>
         {

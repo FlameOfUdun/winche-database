@@ -101,7 +101,8 @@ public static class ServiceCollectionExtensions
                     docListeners: sp.GetRequiredService<DocumentListenerRegistry>()
                 ),
                 sp.GetRequiredKeyedService<RuleEngine>(WincheDatabaseKeys.RuleEngine),
-                sp.GetRequiredService<IRuleClaimsAccessor>())
+                sp.GetRequiredService<IRuleClaimsAccessor>(),
+                sp.GetRequiredService<IOptions<WincheDatabaseOptions>>())
             );
 
         services.AddSingleton<IDocumentDatabase>(sp =>

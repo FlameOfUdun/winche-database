@@ -33,7 +33,7 @@ public class RuleGuardedListenReauthTests(PostgresFixture fx) : QueryTestBase(fx
         entries.ToDictionary(e => e.K, e => e.V);
 
     private static RuleGuardedDocumentDatabase Guard(DocumentDatabase core, RuleSet ruleset, IReadOnlyDictionary<string, object?>? claims) =>
-        new(core, new RuleEngine(new StaticRuleSetRepository(ruleset), WincheRuleValueComparer.Instance), new StaticClaimsAccessor(claims));
+        new(core, new RuleEngine(new StaticRuleSetRepository(ruleset), WincheRuleValueComparer.Instance), new StaticClaimsAccessor(claims), Options.Create(new WincheDatabaseOptions()));
 
     /// <summary>
     /// Same as <see cref="Guard"/>, but backed by a <see cref="MutableRuleSetRepository"/> so the test can
@@ -45,7 +45,7 @@ public class RuleGuardedListenReauthTests(PostgresFixture fx) : QueryTestBase(fx
         DocumentDatabase core, RuleSet initial, IReadOnlyDictionary<string, object?>? claims)
     {
         var repo = new MutableRuleSetRepository(initial);
-        var guard = new RuleGuardedDocumentDatabase(core, new RuleEngine(repo, WincheRuleValueComparer.Instance), new StaticClaimsAccessor(claims));
+        var guard = new RuleGuardedDocumentDatabase(core, new RuleEngine(repo, WincheRuleValueComparer.Instance), new StaticClaimsAccessor(claims), Options.Create(new WincheDatabaseOptions()));
         return (guard, repo);
     }
 

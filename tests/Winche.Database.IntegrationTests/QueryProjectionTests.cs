@@ -244,7 +244,8 @@ public class QueryProjectionTests(PostgresFixture fx) : QueryTestBase(fx)
 
         var aliceGuard = new RuleGuardedDocumentDatabase(
             core, new RuleEngine(new StaticRuleSetRepository(ruleset), WincheRuleValueComparer.Instance),
-            new StaticClaimsAccessor(new Dictionary<string, object?> { ["uid"] = "alice" }));
+            new StaticClaimsAccessor(new Dictionary<string, object?> { ["uid"] = "alice" }),
+            Options.Create(new WincheDatabaseOptions()));
 
         // Query with WHERE ownerId == "alice" AND Select: ["name"]
         // Authorization must pass (constraint satisfies the rule).
@@ -288,7 +289,8 @@ public class QueryProjectionTests(PostgresFixture fx) : QueryTestBase(fx)
 
         var aliceGuard = new RuleGuardedDocumentDatabase(
             core, new RuleEngine(new StaticRuleSetRepository(ruleset), WincheRuleValueComparer.Instance),
-            new StaticClaimsAccessor(new Dictionary<string, object?> { ["uid"] = "alice" }));
+            new StaticClaimsAccessor(new Dictionary<string, object?> { ["uid"] = "alice" }),
+            Options.Create(new WincheDatabaseOptions()));
 
         // Unconstrained query + Select: ["ownerId"] → still denied (rules are not filters)
         var query = new Query("private", Select: [FieldPath.Parse("ownerId")]);

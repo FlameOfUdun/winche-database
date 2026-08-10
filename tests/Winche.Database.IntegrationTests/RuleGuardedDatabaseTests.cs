@@ -45,7 +45,7 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
         DocumentDatabase core,
         RuleSet ruleset,
         IReadOnlyDictionary<string, object?>? claims) =>
-        new(core, new RuleEngine(new StaticRuleSetRepository(ruleset), WincheRuleValueComparer.Instance), new StaticClaimsAccessor(claims));
+        new(core, new RuleEngine(new StaticRuleSetRepository(ruleset), WincheRuleValueComparer.Instance), new StaticClaimsAccessor(claims), Options.Create(new WincheDatabaseOptions()));
 
     private static Dictionary<string, Value> Fields(params (string K, Value V)[] entries) =>
         entries.ToDictionary(e => e.K, e => e.V);
