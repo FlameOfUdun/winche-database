@@ -5,6 +5,10 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  id-token: write   # NuGet trusted publishing (OIDC)
+  contents: read
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -30,5 +34,12 @@ jobs:
           dotnet pack src/Winche.Database.AspNetCore.Rest/Winche.Database.AspNetCore.Rest.csproj -c Release --no-build -o ./packages
           dotnet pack src/Winche.Database.AspNetCore.WebSockets/Winche.Database.AspNetCore.WebSockets.csproj -c Release --no-build -o ./packages
 
+      # Exchange the GitHub OIDC token for a short-lived NuGet.org API key.
+      - name: NuGet login (trusted publishing)
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: FlameOfUdun
+
       - name: Push
-        run: dotnet nuget push ./packages/*.nupkg ./packages/*.snupkg --source https://api.nuget.org/v3/index.json --api-key ${{ secrets.NUGET_API_KEY }} --skip-duplicate
+        run: dotnet nuget push ./packages/*.nupkg ./packages/*.snupkg --source https://api.nuget.org/v3/index.json --api-key ${{ steps.login.outputs.NUGET_API_KEY }} --skip-duplicate
