@@ -9,6 +9,11 @@ namespace Winche.Database.Runtime.ChangeFeed;
 /// deliver → persist AFTER success. Failure retries the SAME batch with capped backoff
 /// (1s→30s) — true at-least-once; a poison batch blocks only this consumer (logged each retry).
 /// First run without a cursor row pins to MAX(seq) (no historical replay).
+///
+/// Every node runs a runner, but only the one holding the consumer's advisory lock delivers; the rest
+/// retry every <see cref="ChangeFeedConfig.LeaderRetryInterval"/>. Without this, each node delivered
+/// every change (hooks fired once per node, concurrently). A node that takes over re-reads the
+/// persisted cursor, so delivery continues where the previous holder stopped.
 /// </summary>
 public sealed class DurableConsumerRunner(
     NpgsqlDataSource source,
@@ -21,6 +26,43 @@ public sealed class DurableConsumerRunner(
         ?? throw new ArgumentException("Runner requires a durable consumer.");
 
     public async Task RunAsync(Func<CancellationToken, Task> waitForWake, CancellationToken ct)
+    {
+        var lockName = $"durable-consumer:{_name}";
+        while (!ct.IsCancellationRequested)
+        {
+            Coordination.AdvisoryLease? lease = null;
+            try
+            {
+                lease = await Coordination.AdvisoryLease.TryAcquireAsync(source, lockName, config.LeaseHeartbeat, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Durable consumer '{Consumer}' could not try for its lock", _name);
+            }
+
+            if (lease is null)
+            {
+                try { await Task.Delay(config.LeaderRetryInterval, ct); } catch (OperationCanceledException) { break; }
+                continue;
+            }
+
+            await using (lease)
+            {
+                logger.LogInformation("Durable consumer '{Consumer}' is active on this node", _name);
+                using var active = CancellationTokenSource.CreateLinkedTokenSource(ct, lease.Lost);
+                await DeliverAsync(waitForWake, active.Token);
+                if (!ct.IsCancellationRequested)
+                    logger.LogWarning("Durable consumer '{Consumer}' lost its lock; standing by", _name);
+            }
+        }
+    }
+
+    /// <summary>Delivers until <paramref name="ct"/> trips (shutdown or a lost lock).</summary>
+    private async Task DeliverAsync(Func<CancellationToken, Task> waitForWake, CancellationToken ct)
     {
         long? cursor = null;
         var failures = 0;

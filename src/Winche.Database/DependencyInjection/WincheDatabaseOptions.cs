@@ -133,6 +133,16 @@ public sealed record ChangeFeedConfig
     /// <summary>Poll fallback for missed notifies.</summary>
     public TimeSpan PollInterval { get; init; } = TimeSpan.FromSeconds(2);
     public int BatchSize { get; init; } = 500;
+
+    /// <summary>
+    /// Durable consumers (hooks) run on one node at a time, elected with a Postgres advisory lock.
+    /// Nodes that don't hold it retry this often, so a new node takes over within about this long
+    /// after the holder stops.
+    /// </summary>
+    public TimeSpan LeaderRetryInterval { get; init; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>How often the elected node checks that its lock connection is still alive.</summary>
+    public TimeSpan LeaseHeartbeat { get; init; } = TimeSpan.FromSeconds(10);
 }
 
 public sealed record TtlConfig
