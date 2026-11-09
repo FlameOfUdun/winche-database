@@ -112,6 +112,8 @@ The built-in claims/exception filters are always applied internally and run oute
 
 > **WebSocket authentication is at the HTTP upgrade.** Browsers cannot set `Authorization` headers on WebSocket upgrades, so the library provides `app.UseWincheWsQueryToken()` — middleware that promotes a `?access_token=<jwt>` query parameter to an `Authorization: Bearer …` header so your existing auth scheme (JWT bearer, etc.) can validate it at the upgrade. Place it **before** `app.UseAuthentication()`. The library does **not** validate the token; that is the responsibility of your registered authentication handler. Once the upgrade succeeds, `HttpContext.User` is populated for the lifetime of the connection and the server sends a `welcome` frame immediately — there is no in-band `hello` handshake or `auth.refresh` message. Gate with `.RequireAuthorization()` to reject unauthenticated upgrades before the socket is accepted. Connect at `/documents/ws?access_token=<jwt>`.
 >
+> **Revoking open connections.** A connection keeps the identity it was opened with. When a user is deleted or disabled, call `WsConnectionRegistry.CloseUserConnectionsAsync(userId)` (inject `WsConnectionRegistry`): every connection that user has open, on every node, is closed with code `4401` (the node that receives the call notifies the others over Postgres `NOTIFY`). A client that is still entitled reconnects with a fresh token. The user is identified by the `sub` claim by default (`WsOptions.UserIdClaimType`).
+>
 > **Security notes:** always require TLS in production (tokens in query strings appear in server logs and proxies); use short-lived tokens and reconnect on expiry.
 
 ## Features

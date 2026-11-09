@@ -60,6 +60,29 @@ public sealed class WsConnection(WebSocket socket, WsOptions options) : IAsyncDi
         catch (Exception) { }
     }
 
+    /// <summary>
+    /// Ends the connection from outside its message loop (access revoked): drains queued frames, sends the
+    /// close frame without waiting for the reply, and aborts the socket if the client hasn't completed the
+    /// close within <paramref name="grace"/>, so an unresponsive client can't hold it open.
+    /// </summary>
+    public async Task RevokeAsync(Task sendLoop, WebSocketCloseStatus status, string reason, TimeSpan grace)
+    {
+        _completed = true;
+        _closed.Cancel();
+        _send.Writer.TryComplete();
+        await sendLoop;
+        try
+        {
+            if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
+                await socket.CloseOutputAsync(status, reason, CancellationToken.None);
+        }
+        catch (Exception) { }
+        _ = Task.Delay(grace).ContinueWith(_ =>
+        {
+            if (socket.State is not (WebSocketState.Closed or WebSocketState.Aborted)) socket.Abort();
+        }, TaskScheduler.Default);
+    }
+
     /// <summary>Reads one full text frame. Returns null on close/limit violation (socket then closing).</summary>
     public async Task<JsonDocument?> ReceiveAsync(CancellationToken ct)
     {

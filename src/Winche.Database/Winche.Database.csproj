@@ -16,6 +16,10 @@
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
       <_Parameter1>Winche.Database.IntegrationTests</_Parameter1>
     </AssemblyAttribute>
+    <!-- The WebSocket package reads the keyed NpgsqlDataSource (for revocation notifications). -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>Winche.Database.AspNetCore.WebSockets</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
 
   <ItemGroup>

@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -26,7 +27,12 @@ public static class WebApplicationExtensions
     /// and the resulting <c>HttpContext.User</c> provides the caller's identity for the entire
     /// connection lifetime. There is no in-band hello handshake or token refresh — if a token
     /// expires the client reconnects. <c>.RequireAuthorization()</c> on this builder is the
-    /// recommended gate (rejects the upgrade before the socket is accepted).
+    /// recommended gate (rejects the upgrade before the socket is accepted); without it a missing
+    /// or expired token yields an anonymous connection rather than a 401.
+    /// </para>
+    /// <para>
+    /// To withdraw access from connections that are already open (a deleted or disabled user), call
+    /// <see cref="WsConnectionRegistry.CloseUserConnectionsAsync"/>.
     /// </para>
     /// </summary>
     public static IEndpointConventionBuilder MapWincheDatabaseWsApi(this WebApplication app, string prefix = "documents") =>
@@ -75,6 +81,13 @@ public static class WebApplicationExtensions
         using var sendLoopCts = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, conn.Closed);
         var sendLoop = conn.RunSendLoopAsync(sendLoopCts.Token);
 
+        var userId = context.User.FindFirst(options.UserIdClaimType)?.Value
+                     ?? context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        using var registration = userId is null
+            ? null
+            : context.RequestServices.GetService<WsConnectionRegistry>()?.Register(userId,
+                reason => conn.RevokeAsync(sendLoop, (WebSocketCloseStatus)WsConnectionRegistry.RevokedCloseCode, reason, TimeSpan.FromSeconds(5)));
+
         var scope = new ConnectionScope(Guid.NewGuid().ToString("N"), db, claimsAccessor);
         try
         {
@@ -90,6 +103,12 @@ public static class WebApplicationExtensions
             {
                 var doc = await conn.ReceiveAsync(context.RequestAborted);
                 if (doc is null) break;
+                if (conn.Closed.IsCancellationRequested)
+                {
+                    // Closing (revoked, or the send queue overflowed): nothing more runs under this identity.
+                    doc.Dispose();
+                    break;
+                }
 
                 ClientMessage? message;
                 using (doc)
