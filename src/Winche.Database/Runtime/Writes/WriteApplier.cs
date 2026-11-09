@@ -66,6 +66,16 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
             // ONE combined locking query — global ORDER BY path prevents deadlock.
             var state = await LoadAllLockedAsync(conn, tx, exactPaths, cascadeWritePaths, ct);
 
+            // Compute cascade victims in C# from already-loaded state.
+            var cascadeVictims = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+            foreach (var root in cascadeWritePaths)
+            {
+                cascadeVictims[root] = state.Keys
+                    .Where(p => p == root || p.StartsWith(root + "/", StringComparison.Ordinal))
+                    .Where(p => state[p].ExistedBefore)
+                    .ToList();
+            }
+
             // Pre-write snapshots for authorization (taken before the apply loop mutates state).
             Dictionary<string, Document?>? before = null;
             if (authorizer is not null)
@@ -75,16 +85,14 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
                     before[w.Path] = state.TryGetValue(w.Path, out var s) && s.ExistedBefore
                         ? ToDocument(w.Path, s.Fields, s.CreatedAt, s.UpdatedAt, s.Version)
                         : null;
-            }
 
-            // Compute cascade victims in C# from already-loaded state.
-            var cascadeVictims = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
-            foreach (var root in cascadeWritePaths)
-            {
-                cascadeVictims[root] = state.Keys
-                    .Where(p => p == root || p.StartsWith(root + "/", StringComparison.Ordinal))
-                    .Where(p => state[p].ExistedBefore)
-                    .ToList();
+                // Cascade victims too: each is authorised as its own delete (below).
+                foreach (var victim in cascadeVictims.Values.SelectMany(v => v))
+                {
+                    if (before.ContainsKey(victim)) continue;
+                    var v = state[victim];
+                    before[victim] = ToDocument(victim, v.Fields, v.CreatedAt, v.UpdatedAt, v.Version);
+                }
             }
 
             if (readValidations is not null)
@@ -124,6 +132,16 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
                         ? ToDocument(w.Path, post.Fields, post.CreatedAt, post.UpdatedAt, post.Version)
                         : null;
                     pending.Add(new PendingWrite(w, before![w.Path], after));
+                }
+
+                // A cascade delete removes every document beneath its root, so each one must pass the
+                // delete rule for its own path. Authorising only the root let a client delete documents
+                // the rules otherwise protect (e.g. server-written collections under a user's root).
+                var direct = writes.Select(w => w.Path).ToHashSet(StringComparer.Ordinal);
+                foreach (var victim in cascadeVictims.Values.SelectMany(v => v).Distinct(StringComparer.Ordinal))
+                {
+                    if (direct.Contains(victim)) continue;
+                    pending.Add(new PendingWrite(new DeleteWrite { Path = victim }, before![victim], null));
                 }
                 // Throws on denial → tx disposes without commit → rolled back.
                 await authorizer.AuthorizeAsync(pending, new TxDocumentReader(conn, tx), commitTime, ct);
