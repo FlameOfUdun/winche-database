@@ -1,26 +1,37 @@
 using Npgsql;
+using Winche.Database.DependencyInjection;
 using Winche.Database.Documents;
 using Winche.Database.Querying;
 using Winche.Database.Querying.Ast;
 using Winche.Database.Querying.Matching;
+using Winche.Database.Querying.Planning;
 using Winche.Database.Runtime.ChangeFeed;
 
 namespace Winche.Database.Runtime.Listening;
 
 /// <summary>
 /// Live-query registry: groups keyed by <see cref="QueryKey"/>; relevance bucket is the collection.
-/// Each relevant batch triggers ONE requery; the ordered result is diffed and broadcast.
+/// A relevant batch is applied to the group's result in memory when that gives the exact result (the
+/// changed documents are in the batch; the filter and sort order are evaluated here, as the SQL does);
+/// otherwise — and every <see cref="ListenerConfig.ResyncInterval"/> — the query is re-run. The ordered
+/// result is diffed and broadcast.
 /// </summary>
-public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionIndexResolver? scopes = null)
-    : LiveSubscriptionRegistry<QueryListenerRegistry.QueryGroup, QuerySnapshot>(source)
+public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionIndexResolver? scopes = null, ListenerConfig? config = null)
+    : LiveSubscriptionRegistry<QueryListenerRegistry.QueryGroup, QuerySnapshot>(source, config?.MaxParallelUpdates ?? 8)
 {
+    private readonly ListenerConfig _config = config ?? new ListenerConfig();
+
     public IQueryListener Listen(Query query, ListenOptions? listenOptions = null) =>
         (IQueryListener)Subscribe(
             QueryKey.Compute(query), query.Collection,
             (key, indexKey) =>
             {
                 var ok = ChangeMatcher.TryPreparePredicate(query, out var predicate);
-                return new QueryGroup { Key = key, IndexKey = indexKey, Query = query, Predicate = predicate, PredicateFailed = !ok };
+                return new QueryGroup
+                {
+                    Key = key, IndexKey = indexKey, Query = query, Predicate = predicate, PredicateFailed = !ok,
+                    SortKeys = ok ? InMemoryQuery.SortKeysFor(query) : null,
+                };
             },
             listenOptions);
 
@@ -30,8 +41,11 @@ public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionInd
         QueryGroup group, Func<SubscriptionHandleBase<QuerySnapshot>, ValueTask> onDispose) =>
         new QueryHandle(onDispose, ExistingAsync);
 
-    protected override async Task InitializeStateAsync(QueryGroup group, CancellationToken ct) =>
+    protected override async Task InitializeStateAsync(QueryGroup group, CancellationToken ct)
+    {
         group.State = (await RunQueryAsync(group.Query, ct)).Documents;
+        group.LastQueried = DateTimeOffset.UtcNow;
+    }
 
     protected override bool IsRelevant(QueryGroup group, ChangeBatch batch)
     {
@@ -64,7 +78,16 @@ public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionInd
     protected override async Task<(QuerySnapshot? Snapshot, bool Changed)> RecomputeAsync(
         QueryGroup group, ChangeBatch batch, CancellationToken ct)
     {
-        var newState = (await RunQueryAsync(group.Query, ct)).Documents;
+        IReadOnlyList<Document>? newState = null;
+        if (_config.ApplyChangesInMemory
+            && group.SortKeys is { } keys
+            && DateTimeOffset.UtcNow - group.LastQueried < _config.ResyncInterval)
+            newState = InMemoryQuery.TryApply(group.Query, group.Predicate, keys, group.State, batch);
+        if (newState is null)
+        {
+            newState = (await RunQueryAsync(group.Query, ct)).Documents;
+            group.LastQueried = DateTimeOffset.UtcNow;
+        }
         var changes = SnapshotDiff.Compute(group.State, newState);
         group.State = newState;
         if (changes.Count == 0) return (null, false);
@@ -82,8 +105,14 @@ public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionInd
 
     protected override string IndexKeyOf(ChangeRecord record) => record.Collection;
 
+    private int _queriesRun;
+
+    /// <summary>How many times this registry has run a live query against the database (diagnostics).</summary>
+    internal int QueriesRun => Volatile.Read(ref _queriesRun);
+
     private async Task<QueryResult> RunQueryAsync(Query query, CancellationToken ct = default)
     {
+        Interlocked.Increment(ref _queriesRun);
         await using var conn = await Source.OpenConnectionAsync(ct);
         return await new QueryExecutor(conn, null, scopes).ExecuteAsync(query, ct);
     }
@@ -108,6 +137,12 @@ public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionInd
         public required Query Query { get; init; }
         public Filter? Predicate { get; init; }
         public bool PredicateFailed { get; init; }
+
+        /// <summary>The sort order, when this query's result can be kept up to date in memory; else null.</summary>
+        internal IReadOnlyList<SortKey>? SortKeys { get; init; }
+
+        /// <summary>When the query was last run against the database.</summary>
+        internal DateTimeOffset LastQueried { get; set; }
 
         private IReadOnlyList<Document> _state = [];
         private HashSet<string> _statePaths = new(StringComparer.Ordinal);

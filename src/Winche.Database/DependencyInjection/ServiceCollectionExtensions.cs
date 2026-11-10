@@ -41,10 +41,12 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<CollectionIndexResolver>();
         services.AddSingleton(sp => new QueryListenerRegistry(
             sp.GetRequiredKeyedService<NpgsqlDataSource>(WincheDatabaseKeys.DataSource),
-            sp.GetRequiredService<CollectionIndexResolver>())
+            sp.GetRequiredService<CollectionIndexResolver>(),
+            options.Listeners)
         );
         services.AddSingleton(sp => new DocumentListenerRegistry(
-            sp.GetRequiredKeyedService<NpgsqlDataSource>(WincheDatabaseKeys.DataSource)));
+            sp.GetRequiredKeyedService<NpgsqlDataSource>(WincheDatabaseKeys.DataSource),
+            options.Listeners));
         // Plain (unguarded) core — for privileged reads (e.g. ListCollectionIdsAsync). Its TransactionLedger
         // is NOT shared with the guarded core registered below; do not cross transaction handles between them.
         services.AddSingleton(sp => new DocumentDatabase(

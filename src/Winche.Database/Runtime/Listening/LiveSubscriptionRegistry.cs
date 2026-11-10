@@ -6,10 +6,12 @@ namespace Winche.Database.Runtime.Listening;
 /// <summary>
 /// Generic live-subscription engine: groups keyed by <see cref="SubscriptionGroup{TSnapshot}.Key"/>
 /// (identical subscriptions share state + work), dispatched per change batch by relevance bucket,
-/// recomputed once per relevant batch, diffed, and broadcast over coalescing channels.
+/// recomputed once per relevant batch, diffed, and broadcast over coalescing channels. The groups a batch
+/// touches are updated concurrently (up to <paramref name="maxParallelUpdates"/>), so one slow query doesn't
+/// hold up the others; each group still sees batches one at a time, in order.
 /// Subclasses supply the query- or document-specific behaviour through the abstract hooks.
 /// </summary>
-public abstract class LiveSubscriptionRegistry<TGroup, TSnapshot>(NpgsqlDataSource source) : IChangeFeedConsumer
+public abstract class LiveSubscriptionRegistry<TGroup, TSnapshot>(NpgsqlDataSource source, int maxParallelUpdates = 8) : IChangeFeedConsumer
     where TGroup : SubscriptionGroup<TSnapshot>
 {
     private readonly Dictionary<string, TGroup> _groups = new(StringComparer.Ordinal);
@@ -186,34 +188,40 @@ public abstract class LiveSubscriptionRegistry<TGroup, TSnapshot>(NpgsqlDataSour
             candidates = [.. keys.Select(k => _groups.GetValueOrDefault(k)).OfType<TGroup>()];
         }
 
-        foreach (var group in candidates)
+        await Parallel.ForEachAsync(
+            candidates,
+            new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, maxParallelUpdates), CancellationToken = ct },
+            (group, token) => new ValueTask(UpdateGroupAsync(group, batch, token)));
+    }
+
+    private async Task UpdateGroupAsync(TGroup group, ChangeBatch batch, CancellationToken ct)
+    {
+        await group.Semaphore.WaitAsync(ct);
+        try
         {
-            await group.Semaphore.WaitAsync(ct);
-            try
+            // I5: a group marked Dirty (from a previous processing error) is always recomputed,
+            // so it heals on the next relevant batch rather than waiting for a matching change.
+            if (!group.Initialized) return;
+            if (!group.Dirty && !IsRelevant(group, batch)) return;
+            group.Dirty = false;   // clear before recompute; set again on failure
+
+            (TSnapshot? Snapshot, bool Changed) result;
+            try { result = await RecomputeAsync(group, batch, ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception)
             {
-                // I5: a group marked Dirty (from a previous processing error) is always recomputed,
-                // so it heals on the next relevant batch rather than waiting for a matching change.
-                if (!group.Initialized) continue;
-                if (!group.Dirty && !IsRelevant(group, batch)) continue;
-                group.Dirty = false;   // clear before recompute; set again on failure
-
-                (TSnapshot? Snapshot, bool Changed) result;
-                try { result = await RecomputeAsync(group, batch, ct); }
-                catch (Exception)
-                {
-                    // I5: mark dirty so the group retries on the next batch.
-                    group.Dirty = true;
-                    continue;
-                }
-
-                group.LastSeq = batch.Records.Max(r => r.Seq);
-                if (!result.Changed) continue;
-
-                List<SubscriptionHandleBase<TSnapshot>> handles;
-                lock (group.Gate) handles = [.. group.Handles];
-                foreach (var handle in handles) handle.Push(result.Snapshot!);
+                // I5: mark dirty so the group retries on the next batch.
+                group.Dirty = true;
+                return;
             }
-            finally { group.Semaphore.Release(); }
+
+            group.LastSeq = batch.Records.Max(r => r.Seq);
+            if (!result.Changed) return;
+
+            List<SubscriptionHandleBase<TSnapshot>> handles;
+            lock (group.Gate) handles = [.. group.Handles];
+            foreach (var handle in handles) handle.Push(result.Snapshot!);
         }
+        finally { group.Semaphore.Release(); }
     }
 }

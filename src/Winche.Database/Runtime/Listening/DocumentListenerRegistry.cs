@@ -1,4 +1,5 @@
 using Npgsql;
+using Winche.Database.DependencyInjection;
 using Winche.Database.Documents;
 using Winche.Database.Runtime.ChangeFeed;
 
@@ -9,8 +10,8 @@ namespace Winche.Database.Runtime.Listening;
 /// path. The initial snapshot is one point read; each relevant batch reads the changed document
 /// straight from <see cref="ChangeBatch.Documents"/> (or treats a removal as absent) — no requery.
 /// </summary>
-public sealed class DocumentListenerRegistry(NpgsqlDataSource source)
-    : LiveSubscriptionRegistry<DocumentListenerRegistry.DocumentGroup, DocumentSnapshot>(source)
+public sealed class DocumentListenerRegistry(NpgsqlDataSource source, ListenerConfig? config = null)
+    : LiveSubscriptionRegistry<DocumentListenerRegistry.DocumentGroup, DocumentSnapshot>(source, config?.MaxParallelUpdates ?? 8)
 {
     public IDocumentListener ListenToDocument(string path, ListenOptions? listenOptions = null)
     {

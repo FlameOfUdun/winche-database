@@ -40,6 +40,7 @@ public sealed class WincheDatabaseOptions
 
     public TransactionConfig TransactionConfig { get; set; } = new();
     public ChangeFeedConfig ChangeFeed { get; set; } = new();
+    public ListenerConfig Listeners { get; set; } = new();
     public WriteLimits WriteLimits { get; set; } = new();
     public TtlConfig Ttl { get; set; } = new();
 
@@ -162,6 +163,25 @@ public sealed record ChangeFeedConfig
 
     /// <summary>How often the elected node checks that its lock connection is still alive.</summary>
     public TimeSpan LeaseHeartbeat { get; init; } = TimeSpan.FromSeconds(10);
+}
+
+public sealed record ListenerConfig
+{
+    /// <summary>
+    /// Apply a change to a live query's result in memory when that gives the exact result, instead of
+    /// re-running the query (default true). Queries with select, offset, limitToLast or cursors are always
+    /// re-run, as are limited queries whose full window loses or changes a member.
+    /// </summary>
+    public bool ApplyChangesInMemory { get; init; } = true;
+
+    /// <summary>
+    /// A live query updated in memory re-runs its real query on the first change after this long
+    /// (default 5 minutes), so any drift from the database is corrected.
+    /// </summary>
+    public TimeSpan ResyncInterval { get; init; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>How many live queries (and document listeners) a node updates at once per change batch (default 8).</summary>
+    public int MaxParallelUpdates { get; init; } = 8;
 }
 
 public sealed record TtlConfig
