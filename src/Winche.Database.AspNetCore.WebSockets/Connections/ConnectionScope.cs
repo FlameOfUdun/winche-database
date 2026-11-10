@@ -32,6 +32,15 @@ public sealed class ConnectionScope(
     public IDocumentDatabase Db { get; } = db;
     public HashSet<string> Transactions { get; } = [];
     public Dictionary<string, Subscription> Subscriptions { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>The most subscriptions this connection may hold (0 = unlimited); see <see cref="WsOptions.MaxSubscriptionsPerConnection"/>.</summary>
+    public int MaxSubscriptions { get; init; }
+
+    /// <summary>True when the connection already holds as many subscriptions as it may.</summary>
+    public bool AtSubscriptionLimit
+    {
+        get { lock (Gate) return MaxSubscriptions > 0 && Subscriptions.Count >= MaxSubscriptions; }
+    }
     public object Gate { get; } = new();
 
     public void SetClaims(IReadOnlyDictionary<string, object?> claims) => _claims = claims;

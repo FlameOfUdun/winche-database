@@ -911,6 +911,14 @@ Connect at `/documents/ws?access_token=<jwt>`. The connection authenticates at t
 
 See [PROTOCOL](docs/PROTOCOL.md#7-websocket-protocol) for full message shapes, close codes, and listener protocol details.
 
+**Limits (10.5.0)**, per node, in `AddWincheDatabaseWsApi(o => …)` (0 turns one off):
+
+| Option | Default | Past it |
+| --- | --- | --- |
+| `MaxSubscriptionsPerConnection` | 100 | `listen` / `doc.listen` gets `RESOURCE_EXHAUSTED`; the connection stays open |
+| `MaxConnectionsPerUser` | 10 | the user's **oldest** connection is closed with code 4429 (the new one stays) |
+| `RequestsPerSecond` / `RequestBurst` | 50 / 100 | the connection's next request is read later — slowed, never refused, so an offline write queue never has a write rejected |
+
 ## Upgrading to 10.5.0
 
 Cascade deletes and subtree reads (TTL, deleting a document with `Cascade = true`) used `LIKE 'path/%'`, which can't use an index under the usual en_US-style database collation, so each one scanned the whole documents table. They now match the path as a byte-order range, served by a new index `idx_winche_documents_path_c` on `document_path COLLATE "C"`, which also speeds up collection listing. The first start builds the index with `CREATE INDEX CONCURRENTLY`, so writes carry on meanwhile; on a large table that start takes a little longer. An index left invalid by an interrupted build is dropped and rebuilt on the next start.
@@ -926,6 +934,8 @@ Rules: Winche.Rules 3.1.0 adds functions (`keys`, `hasOnly`/`hasAll`/`hasAny`, `
 Collection group queries: `Query.CollectionGroup` (wire `"collectionGroup": true`) reads every collection with an id under any parent; `ib.AddGroup(...)` indexes them; rules govern them through `match {path=**}/<id>/{doc}`.
 
 Hooks: `h.Add<MyHook>(path, withSnapshots: true)` + `OnChangeAsync(DocumentChange)` give the document before and after each change. Startup adds `before`/`after` columns to the change feed.
+
+WebSocket limits: at most 100 subscriptions per connection, 10 connections per user (the oldest is closed with 4429), and 50 requests/s per connection (excess is delayed, not refused) — see `WsOptions`. Raise them if your clients need more (e.g. a large offline queue drains at the request rate).
 
 `select` no longer fails on a selected field that holds `null` (or contains one): the projection used `jsonb_strip_nulls`, which emptied the stored `{"nullValue": null}` into an undecodable `{}`.
 

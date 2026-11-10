@@ -774,6 +774,8 @@ The connection's identity is fixed for its lifetime. On token expiry the client 
 | - | - |
 | `4400` | Protocol violation (binary frame or other connection-level protocol error) |
 | `4413` | Incoming frame too large (default 1 MiB; configurable via `WsOptions.MaxFrameBytes`) |
+| `4401` | Access revoked (the user was deleted, disabled or signed out everywhere) — reconnect with a fresh token |
+| `4429` | The user opened more connections than `WsOptions.MaxConnectionsPerUser`; this, their oldest, was closed |
 | `1013` | Send queue overflow — server could not drain outbound frames (queue limit 64; configurable via `WsOptions.SendQueueLimit`) |
 | `1000` | Normal closure (server-initiated clean shutdown) |
 

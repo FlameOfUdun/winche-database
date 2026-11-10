@@ -93,8 +93,16 @@ public sealed class MessageRouter
         return Ok(id, []);
     }
 
+    private static ErrorMessage TooManySubscriptions(ConnectionScope scope, string id) => new()
+    {
+        Id = id,
+        Status = "RESOURCE_EXHAUSTED",
+        Message = $"This connection already has {scope.MaxSubscriptions} live subscriptions (the limit); unlisten some first.",
+    };
+
     private static ServerMessage HandleListen(ConnectionScope scope, WsConnection conn, string id, Query query, long? resumeToken, long? clientProtocol)
     {
+        if (scope.AtSubscriptionLimit) return TooManySubscriptions(scope, id);
         var listener = scope.Db.Listen(query, resumeToken is { } seq ? new ListenOptions(ResumeFrom: seq) : null);
         var subscriptionId = Guid.NewGuid().ToString("N");
         var cts = CancellationTokenSource.CreateLinkedTokenSource(conn.Closed);
@@ -106,6 +114,7 @@ public sealed class MessageRouter
     private static async Task<ServerMessage> HandleDocListen(
         ConnectionScope scope, WsConnection conn, string id, string path, long? resumeToken, long? clientProtocol, CancellationToken ct)
     {
+        if (scope.AtSubscriptionLimit) return TooManySubscriptions(scope, id);
         var options = resumeToken is { } seq ? new ListenOptions(ResumeFrom: seq) : null;
         var listener = await scope.Db.ListenToDocumentAsync(path, options, ct);   // get-authorized; throws → mapped to error frame
         var subscriptionId = Guid.NewGuid().ToString("N");

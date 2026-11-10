@@ -24,9 +24,12 @@ public sealed class WsConnectionRegistry(NpgsqlDataSource source, ILogger<WsConn
     /// <summary>Close code sent to revoked connections: re-authenticate.</summary>
     public const int RevokedCloseCode = 4401;
 
+    /// <summary>Close code sent to a user's oldest connection when they open more than allowed.</summary>
+    public const int TooManyConnectionsCloseCode = 4429;
+
     private static readonly TimeSpan CloseTimeout = TimeSpan.FromSeconds(5);
 
-    private readonly ConcurrentDictionary<string, ConcurrentDictionary<long, Func<string, Task>>> _byUser = new();
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<long, Func<int, string, Task>>> _byUser = new();
     private long _next;
 
     /// <summary>Open connections on this node for <paramref name="userId"/>.</summary>
@@ -45,15 +48,34 @@ public sealed class WsConnectionRegistry(NpgsqlDataSource source, ILogger<WsConn
         await command.ExecuteNonQueryAsync(ct);
     }
 
-    internal IDisposable Register(string userId, Func<string, Task> close)
+    /// <summary>
+    /// Tracks a connection. <paramref name="close"/> closes it with a code and reason. With
+    /// <paramref name="maxPerUser"/> &gt; 0, the user's oldest connections beyond that many are closed
+    /// (<see cref="TooManyConnectionsCloseCode"/>) — the new one always stays.
+    /// </summary>
+    internal IDisposable Register(string userId, Func<int, string, Task> close, int maxPerUser = 0)
     {
         var id = Interlocked.Increment(ref _next);
-        _byUser.GetOrAdd(userId, _ => new()).TryAdd(id, close);
+        var connections = _byUser.GetOrAdd(userId, _ => new());
+        connections.TryAdd(id, close);
+        if (maxPerUser > 0)
+        {
+            foreach (var oldest in connections.Keys.Where(k => k != id).Order().Take(Math.Max(0, connections.Count - maxPerUser)).ToList())
+            {
+                if (!connections.TryRemove(oldest, out var evict)) continue;
+                logger.LogInformation("Closing a user's oldest WebSocket connection: more than {Max} open", maxPerUser);
+                _ = Task.Run(async () =>
+                {
+                    try { await evict(TooManyConnectionsCloseCode, "too many connections").WaitAsync(CloseTimeout); }
+                    catch (Exception ex) { logger.LogWarning(ex, "Closing a surplus WebSocket connection did not finish cleanly"); }
+                });
+            }
+        }
         return new Registration(() =>
         {
             if (!_byUser.TryGetValue(userId, out var connections)) return;
             connections.TryRemove(id, out _);
-            if (connections.IsEmpty) _byUser.TryRemove(new KeyValuePair<string, ConcurrentDictionary<long, Func<string, Task>>>(userId, connections));
+            if (connections.IsEmpty) _byUser.TryRemove(new KeyValuePair<string, ConcurrentDictionary<long, Func<int, string, Task>>>(userId, connections));
         });
     }
 
@@ -62,7 +84,7 @@ public sealed class WsConnectionRegistry(NpgsqlDataSource source, ILogger<WsConn
         if (!_byUser.TryGetValue(userId, out var connections)) return 0;
         var closing = connections.Values.Select(async close =>
         {
-            try { await close(reason).WaitAsync(CloseTimeout); }
+            try { await close(RevokedCloseCode, reason).WaitAsync(CloseTimeout); }
             catch (Exception ex) { logger.LogWarning(ex, "Closing a revoked WebSocket connection did not finish cleanly"); }
         }).ToList();
         await Task.WhenAll(closing);

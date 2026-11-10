@@ -86,9 +86,14 @@ public static class WebApplicationExtensions
         using var registration = userId is null
             ? null
             : context.RequestServices.GetService<WsConnectionRegistry>()?.Register(userId,
-                reason => conn.RevokeAsync(sendLoop, (WebSocketCloseStatus)WsConnectionRegistry.RevokedCloseCode, reason, TimeSpan.FromSeconds(5)));
+                (code, reason) => conn.RevokeAsync(sendLoop, (WebSocketCloseStatus)code, reason, TimeSpan.FromSeconds(5)),
+                options.MaxConnectionsPerUser);
 
-        var scope = new ConnectionScope(Guid.NewGuid().ToString("N"), db, claimsAccessor);
+        var scope = new ConnectionScope(Guid.NewGuid().ToString("N"), db, claimsAccessor)
+        {
+            MaxSubscriptions = options.MaxSubscriptionsPerConnection,
+        };
+        var throttle = new RequestThrottle(options.RequestsPerSecond, options.RequestBurst);
         try
         {
             // ── authenticate from the already-validated HttpContext.User ─────────
@@ -134,6 +139,8 @@ public static class WebApplicationExtensions
                 }
                 if (message is null) continue;
 
+                // Over the request rate: handle it later rather than reject it (see WsOptions.RequestsPerSecond).
+                await throttle.WaitAsync(context.RequestAborted);
                 conn.TrySend(await router.HandleAsync(scope, conn, context, message, context.RequestAborted));
             }
         }
