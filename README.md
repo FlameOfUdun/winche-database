@@ -850,7 +850,8 @@ Transaction configuration (`WincheDatabaseOptions.TransactionConfig`):
 | --- | --- | --- |
 | `IdleTimeoutSpan` | 60 s | Rolled back if no activity for this duration |
 | `TotalTimeoutSpan` | 5 min | Maximum lifetime of an open transaction |
-| `CleanupInterval` | 1 s | How often expired transactions are swept |
+| `Store` | `Database` | Where transactions live: `Database` (any node serves any step) or `Memory` (per node) |
+| `CleanupInterval` | 1 s | How often expired transactions are swept (at least 1 min with `Database`: expiry is checked on every access anyway) |
 
 Write-validation limits (`WincheDatabaseOptions.WriteLimits`):
 
@@ -864,7 +865,11 @@ Write-validation limits (`WincheDatabaseOptions.WriteLimits`):
 
 These limits are configurable — unlike many document databases that hard-code them.
 
-> **Multi-node note:** Transaction state lives in the serving node's in-memory ledger. Multi-node deployments must use sticky routing (all requests in a transaction to the same node) or use the WebSocket API (connection-pinned). Routing violations surface as `ABORTED` — never corruption.
+> **Multi-node (10.5.0):** transactions are kept in Postgres (`TransactionConfig.Store = TransactionStore.Database`,
+> the default), so begin, reads and commit may each land on a different node — REST clients behind a load
+> balancer need no sticky routing. Each transactional read costs one small write; expiry uses the database clock.
+> `TransactionStore.Memory` keeps the old per-node, in-memory ledger (no extra writes; every request of a
+> transaction must reach the same node, or it is `ABORTED`).
 
 ## REST API
 
@@ -988,6 +993,8 @@ WebSocket limits: at most 100 subscriptions per connection, 10 connections per u
 Subtrees: `DocumentDatabase.ExportSubtreeAsync` / `DeleteSubtreeAsync` read or delete everything under a document page by page / batch by batch.
 
 Metrics: the `Winche.Database` meter (see [Metrics](#metrics-1050)).
+
+Transactions now live in Postgres by default (`winche_documents_transactions`), so REST transactions work behind a load balancer without sticky routing; `TransactionConfig.Store = TransactionStore.Memory` restores the per-node ledger.
 
 `select` no longer fails on a selected field that holds `null` (or contains one): the projection used `jsonb_strip_nulls`, which emptied the stored `{"nullValue": null}` into an undecodable `{}`.
 

@@ -6,6 +6,8 @@ public static class WincheDatabaseTables
     public const string Documents = "winche_documents";
     public const string Changes = "winche_documents_changes";
     public const string FeedCursors = "winche_documents_feed_cursors";
+    /// <summary>Open optimistic transactions and their read sets (<c>TransactionStore.Database</c>).</summary>
+    public const string Transactions = "winche_documents_transactions";
     /// <summary>Changes a durable consumer gave up on after <c>ChangeFeedConfig.DeadLetterAfter</c>; replayable.</summary>
     public const string DeadLetters = "winche_documents_dead_letters";
     /// <summary>One row: the newest transaction any pruned feed row came from (resume tokens older than it can't be checked).</summary>

@@ -35,6 +35,14 @@ public static class SchemaSql
         CREATE INDEX IF NOT EXISTS idx_{{WincheDatabaseTables.Documents}}_collection_docid
             ON {{WincheDatabaseTables.Documents}}(collection_path, document_id ASC);
 
+        -- Open optimistic transactions (TransactionStore.Database, 10.5.0): any node serves any step.
+        CREATE TABLE IF NOT EXISTS {{WincheDatabaseTables.Transactions}} (
+            id            TEXT PRIMARY KEY,
+            reads         JSONB NOT NULL DEFAULT '{}',
+            created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+            last_activity TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+
         DROP TRIGGER IF EXISTS document_change_trigger ON {{WincheDatabaseTables.Documents}};
         DROP FUNCTION IF EXISTS public.notify_document_change() CASCADE;
         """;

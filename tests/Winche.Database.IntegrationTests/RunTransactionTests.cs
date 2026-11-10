@@ -44,7 +44,7 @@ public class RunTransactionTests(PostgresFixture fx) : QueryTestBase(fx)
             throw new InvalidOperationException("boom");
         }));
         Assert.Null(await db.GetAsync("c/should-not-exist"));
-        Assert.Equal(0, db.Ledger.Count);                                    // no leaked entries
+        Assert.Equal(0, await db.Ledger.CountAsync(default));                                    // no leaked entries
     }
 
     [Fact]

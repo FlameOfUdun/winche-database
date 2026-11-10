@@ -13,13 +13,26 @@ public sealed class TransactionSweeper(
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(options.Value.TransactionConfig.CleanupInterval);
+        var config = options.Value.TransactionConfig;
+        // In the database, expiry is checked on every access and the sweep only tidies the table: no need to
+        // run it every second on every node.
+        var interval = config.Store == TransactionStore.Database && config.CleanupInterval < TimeSpan.FromMinutes(1)
+            ? TimeSpan.FromMinutes(1)
+            : config.CleanupInterval;
+        using var timer = new PeriodicTimer(interval);
         while (true)
         {
             try { if (!await timer.WaitForNextTickAsync(stoppingToken)) break; }
             catch (OperationCanceledException) { break; }
 
-            var swept = core.Ledger.RemoveExpired();
+            int swept;
+            try { swept = await core.Ledger.RemoveExpiredAsync(stoppingToken); }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Sweeping expired transactions failed");
+                continue;
+            }
             if (swept > 0)
                 logger.LogDebug("Swept {Count} expired transactions", swept);
         }

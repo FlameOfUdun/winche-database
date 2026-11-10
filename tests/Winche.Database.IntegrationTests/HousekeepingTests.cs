@@ -31,9 +31,9 @@ public class HousekeepingTests(PostgresFixture fx) : QueryTestBase(fx)
         }));
         await db.BeginTransactionAsync();
         await db.BeginTransactionAsync();
-        Assert.Equal(2, db.Ledger.Count);
+        Assert.Equal(2, await db.Ledger.CountAsync(default));
         await Task.Delay(150);
-        Assert.Equal(2, db.Ledger.RemoveExpired());
-        Assert.Equal(0, db.Ledger.Count);
+        Assert.Equal(2, await db.Ledger.RemoveExpiredAsync(default));
+        Assert.Equal(0, await db.Ledger.CountAsync(default));
     }
 }

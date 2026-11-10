@@ -230,8 +230,24 @@ public sealed record TtlConfig
     public bool CascadeDelete { get; init; } = true;
 }
 
+/// <summary>Where optimistic transactions keep their read sets between requests.</summary>
+public enum TransactionStore
+{
+    /// <summary>
+    /// In Postgres (default): every node serves every step of a transaction, so REST clients behind a load
+    /// balancer need no sticky routing. One small write per transactional read.
+    /// </summary>
+    Database,
+
+    /// <summary>In this node's memory: no extra writes, but every request of a transaction must reach the same node.</summary>
+    Memory,
+}
+
 public sealed record TransactionConfig
 {
+    /// <summary>Where transactions live (default <see cref="TransactionStore.Database"/>).</summary>
+    public TransactionStore Store { get; init; } = TransactionStore.Database;
+
     public TimeSpan TotalTimeoutSpan { get; init; } = TimeSpan.FromMinutes(5);
 
     /// <summary>Spec (runtime §3): optimistic transactions idle out after 60 seconds by default.</summary>

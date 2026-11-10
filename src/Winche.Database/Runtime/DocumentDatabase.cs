@@ -21,7 +21,7 @@ public sealed class DocumentDatabase : IDocumentDatabase
 {
     private readonly NpgsqlDataSource _source;
     private readonly WriteApplier _applier;
-    private readonly TransactionLedger _ledger;
+    private readonly ITransactionLedger _ledger;
     private readonly QueryListenerRegistry? _listeners;
     private readonly DocumentListenerRegistry? _documentListeners;
     private readonly CollectionIndexResolver? _scopes;
@@ -32,14 +32,16 @@ public sealed class DocumentDatabase : IDocumentDatabase
     {
         _source = source;
         _applier = new WriteApplier(source, writeAuthorizer, options.Value.WriteLimits, options.Value.HookSnapshotPaths);
-        _ledger = new TransactionLedger(options.Value.TransactionConfig);
+        _ledger = options.Value.TransactionConfig.Store == TransactionStore.Memory
+            ? new MemoryTransactionLedger(options.Value.TransactionConfig)
+            : new PostgresTransactionLedger(source, options.Value.TransactionConfig);
         _listeners = listeners;
         _documentListeners = docListeners;
         _scopes = scopes;
     }
 
     /// <summary>Exposed for the Plan-3 expiry sweeper (internal — transaction-management detail).</summary>
-    internal TransactionLedger Ledger => _ledger;
+    internal ITransactionLedger Ledger => _ledger;
 
     // ── Reads ─────────────────────────────────────────────────────────────────
 
@@ -212,13 +214,13 @@ public sealed class DocumentDatabase : IDocumentDatabase
 
     // ── Transactions ──────────────────────────────────────────────────────────
 
-    public Task<TransactionHandle> BeginTransactionAsync(CancellationToken ct = default) =>
-        Task.FromResult(new TransactionHandle(_ledger.Begin()));
+    public async Task<TransactionHandle> BeginTransactionAsync(CancellationToken ct = default) =>
+        new(await _ledger.BeginAsync(ct));
 
     public async Task<Document?> GetAsync(string transactionId, string path, CancellationToken ct = default)
     {
         var doc = await GetAsync(path, ct);
-        _ledger.RecordRead(transactionId, path, doc?.UpdateTime);
+        await _ledger.RecordReadAsync(transactionId, path, doc?.UpdateTime, ct);
         return doc;
     }
 
@@ -226,14 +228,14 @@ public sealed class DocumentDatabase : IDocumentDatabase
     {
         var result = await QueryAsync(query, ct);
         foreach (var doc in result.Documents)
-            _ledger.RecordRead(transactionId, doc.Path, doc.UpdateTime);
+            await _ledger.RecordReadAsync(transactionId, doc.Path, doc.UpdateTime, ct);
         return result;
     }
 
     public async Task<IReadOnlyList<WriteResult>> CommitTransactionAsync(
         string transactionId, IReadOnlyList<Write> writes, CancellationToken ct = default)
     {
-        var readSet = _ledger.Consume(transactionId);
+        var readSet = await _ledger.ConsumeAsync(transactionId, ct);
         try
         {
             return await _applier.ApplyAsync(writes, readSet, ct);
@@ -244,11 +246,8 @@ public sealed class DocumentDatabase : IDocumentDatabase
         }
     }
 
-    public Task RollbackTransactionAsync(string transactionId, CancellationToken ct = default)
-    {
-        _ledger.Rollback(transactionId);
-        return Task.CompletedTask;
-    }
+    public Task RollbackTransactionAsync(string transactionId, CancellationToken ct = default) =>
+        _ledger.RollbackAsync(transactionId, ct);
 
     public Task<T> RunTransactionAsync<T>(Func<TransactionContext, Task<T>> body,
         TransactionOptions? options = null, CancellationToken ct = default) =>
