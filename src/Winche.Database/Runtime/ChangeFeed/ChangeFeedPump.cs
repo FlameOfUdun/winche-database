@@ -25,13 +25,22 @@ public sealed class ChangeFeedPump(
     private readonly IReadOnlyList<IChangeFeedConsumer> _ephemeral = consumers.Where(c => c.DurableName is null).ToList();
     private readonly IReadOnlyList<IChangeFeedConsumer> _durable = ValidateDurableNames(consumers);
     private readonly List<SemaphoreSlim> _wakeSignals = [];
-    private long _cursor;
+    private readonly Lock _positionLock = new();
+    private FeedPosition _position;
 
-    public long Cursor => Interlocked.Read(ref _cursor);
+    /// <summary>Where the pump has delivered up to (see <see cref="ChangeFeedReader.ReadAfterAsync(FeedPosition, int, CancellationToken)"/>).</summary>
+    public FeedPosition Position
+    {
+        get { lock (_positionLock) return _position; }
+        private set { lock (_positionLock) _position = value; }
+    }
+
+    /// <summary>Seq of the last delivered record (diagnostics; delivery is tracked by <see cref="Position"/>).</summary>
+    public long Cursor => Position.Seq;
 
     public async Task RunAsync(CancellationToken ct)
     {
-        Interlocked.Exchange(ref _cursor, await _reader.GetMaxSeqAsync(ct));
+        Position = await _reader.GetHeadAsync(ct);
 
         // Spawn one DurableConsumerRunner per durable consumer, each with its own wake semaphore.
         var runnerTasks = new List<Task>();
@@ -124,7 +133,7 @@ public sealed class ChangeFeedPump(
     {
         while (true)
         {
-            var records = await _reader.ReadAfterAsync(Cursor, config.BatchSize, ct);
+            var records = await _reader.ReadAfterAsync(Position, config.BatchSize, ct);
             if (records.Count == 0) return;
 
             // Skip the doc fetch when there are no ephemeral consumers — durable runners
@@ -146,7 +155,7 @@ public sealed class ChangeFeedPump(
                         consumer.GetType().Name, records[^1].Seq);
                 }
             }
-            Interlocked.Exchange(ref _cursor, records[^1].Seq);
+            Position = records[^1].Position;
 
             // Wake all durable runners — they read their own cursors independently.
             foreach (var sem in _wakeSignals)

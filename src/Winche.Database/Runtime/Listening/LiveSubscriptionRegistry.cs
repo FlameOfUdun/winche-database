@@ -206,7 +206,7 @@ public abstract class LiveSubscriptionRegistry<TGroup, TSnapshot>(NpgsqlDataSour
                     continue;
                 }
 
-                group.LastSeq = batch.Records[^1].Seq;
+                group.LastSeq = batch.Records.Max(r => r.Seq);
                 if (!result.Changed) continue;
 
                 List<SubscriptionHandleBase<TSnapshot>> handles;

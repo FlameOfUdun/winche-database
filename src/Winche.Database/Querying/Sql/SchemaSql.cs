@@ -110,13 +110,24 @@ public static class SchemaSql
     /// wake-up only — the rows are the durable truth (spec §2/§4).
     /// </summary>
     public static string ChangesDdl() => $$"""
+        DO $v$
+        BEGIN
+            IF current_setting('server_version_num')::int < 130000 THEN
+                RAISE EXCEPTION 'Winche.Database needs PostgreSQL 13 or later (the change feed uses xid8); this server is %', version();
+            END IF;
+        END
+        $v$;
+
         CREATE TABLE IF NOT EXISTS {{WincheDatabaseTables.Changes}} (
             seq             BIGSERIAL PRIMARY KEY,
             type            TEXT NOT NULL,
             document_path   TEXT NOT NULL,
             collection_path TEXT NOT NULL,
             version         BIGINT NOT NULL,
-            commit_time     TIMESTAMPTZ NOT NULL
+            commit_time     TIMESTAMPTZ NOT NULL,
+            -- The writing transaction: readers order by (txid, seq) and stop at the oldest transaction
+            -- still running, so a row that commits late can't land behind a cursor (see ChangeFeedReader).
+            txid            xid8 NOT NULL DEFAULT pg_current_xact_id()
         );
 
         CREATE INDEX IF NOT EXISTS idx_{{WincheDatabaseTables.Changes}}_commit_time
@@ -125,8 +136,31 @@ public static class SchemaSql
         CREATE TABLE IF NOT EXISTS {{WincheDatabaseTables.FeedCursors}} (
             consumer   TEXT PRIMARY KEY,
             seq        BIGINT NOT NULL,
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            txid       xid8
         );
+
+        -- Upgrade from a feed without txid (one statement, so one transaction). Existing rows and cursors get
+        -- txid 0: those rows keep their seq order and sort before every later row. Stamping them with this
+        -- transaction's id instead would let a write that was already running land behind the cursors.
+        -- The constant default is instant (no table rewrite); new rows then default to their own transaction.
+        DO $m$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_schema = current_schema() AND table_name = '{{WincheDatabaseTables.Changes}}' AND column_name = 'txid') THEN
+                ALTER TABLE {{WincheDatabaseTables.Changes}} ADD COLUMN txid xid8 NOT NULL DEFAULT '0';
+                ALTER TABLE {{WincheDatabaseTables.Changes}} ALTER COLUMN txid SET DEFAULT pg_current_xact_id();
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_schema = current_schema() AND table_name = '{{WincheDatabaseTables.FeedCursors}}' AND column_name = 'txid') THEN
+                ALTER TABLE {{WincheDatabaseTables.FeedCursors}} ADD COLUMN txid xid8;
+                UPDATE {{WincheDatabaseTables.FeedCursors}} SET txid = '0';
+            END IF;
+        END
+        $m$;
+
+        CREATE INDEX IF NOT EXISTS idx_{{WincheDatabaseTables.Changes}}_txid_seq
+            ON {{WincheDatabaseTables.Changes}} (txid, seq);
 
         CREATE OR REPLACE FUNCTION winche_notify_change() RETURNS TRIGGER AS $t$
         BEGIN

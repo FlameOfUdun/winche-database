@@ -68,7 +68,7 @@ public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionInd
         var changes = SnapshotDiff.Compute(group.State, newState);
         group.State = newState;
         if (changes.Count == 0) return (null, false);
-        return (new QuerySnapshot(newState, changes, batch.Records[^1].CommitTime, batch.Records[^1].Seq), true);
+        return (new QuerySnapshot(newState, changes, batch.Records[^1].CommitTime, batch.Records.Max(r => r.Seq)), true);
     }
 
     protected override QuerySnapshot BuildInitialSnapshot(QueryGroup group) =>

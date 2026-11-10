@@ -64,7 +64,7 @@ public sealed class DurableConsumerRunner(
     /// <summary>Delivers until <paramref name="ct"/> trips (shutdown or a lost lock).</summary>
     private async Task DeliverAsync(Func<CancellationToken, Task> waitForWake, CancellationToken ct)
     {
-        long? cursor = null;
+        FeedPosition? cursor = null;
         var failures = 0;
         while (!ct.IsCancellationRequested)
         {
@@ -85,12 +85,12 @@ public sealed class DurableConsumerRunner(
                 var batch = new ChangeBatch(records, await _reader.FetchDocumentsAsync(records, ct));
                 await consumer.OnBatchAsync(batch, ct);                 // throws → retry same batch
 
-                cursor = records[^1].Seq;
+                cursor = records[^1].Position;
                 // Persist cursor AFTER successful delivery; persist failures log a warning
                 // but do NOT count as delivery failure — redelivery possible after restart.
                 try
                 {
-                    await _reader.SaveCursorAsync(_name, cursor.Value, ct);
+                    await _reader.SavePositionAsync(_name, cursor.Value, ct);
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
                 catch (Exception persistEx)
@@ -117,14 +117,15 @@ public sealed class DurableConsumerRunner(
         }
     }
 
-    private async Task<long> BootstrapAsync(CancellationToken ct)
+    private async Task<FeedPosition> BootstrapAsync(CancellationToken ct)
     {
-        var cursor = await _reader.GetCursorAsync(_name, ct);
+        var cursor = await _reader.GetPositionAsync(_name, ct);
         if (cursor is not null) return cursor.Value;
 
-        var max = await _reader.GetMaxSeqAsync(ct);
-        await _reader.SaveCursorAsync(_name, max, ct);
-        return max;
+        // A new consumer starts from now (no replay of history).
+        var head = await _reader.GetHeadAsync(ct);
+        await _reader.SavePositionAsync(_name, head, ct);
+        return head;
     }
 
 }

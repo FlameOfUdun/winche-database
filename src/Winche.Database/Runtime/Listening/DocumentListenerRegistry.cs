@@ -62,7 +62,7 @@ public sealed class DocumentListenerRegistry(NpgsqlDataSource source)
         group.Current = next;
         if (unchanged) return Task.FromResult<(DocumentSnapshot?, bool)>((null, false));
 
-        var snap = new DocumentSnapshot(next, next is not null, batch.Records[^1].CommitTime, batch.Records[^1].Seq);
+        var snap = new DocumentSnapshot(next, next is not null, batch.Records[^1].CommitTime, batch.Records.Max(r => r.Seq));
         return Task.FromResult<(DocumentSnapshot?, bool)>((snap, true));
     }
 

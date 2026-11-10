@@ -282,6 +282,8 @@ WebSocket transports. DI services are available inside the delegate via `http.Re
 
 Hooks let you react to document mutations. Implement `DocumentStoreHook` (behavior only) and register it against a path with `UseHooks(h => h.Add<MyHook>(path))` — mirroring how `UseIndexes` binds a collection id. Hooks execute **inline and sequentially** inside `HookFeedConsumer`, which is driven by a durable feed runner. Delivery is **true at-least-once end-to-end** — the cursor advances only after all hooks in a batch succeed, and failed batches are retried with capped backoff (1 s → 30 s). Implementations **must be idempotent** (use the document `version` as an idempotency key).
 
+The feed is **gap-free**: a change is delivered only once every older transaction has finished, so a write that commits after a later one is held back rather than skipped. A long-running write transaction therefore delays hook delivery until it ends.
+
 The path supplied at registration is a **trigger pattern** (the same grammar as the rules engine): literal segments, `{id}` single-segment captures, and a trailing `{document=**}` recursive wildcard. Use `"{document=**}"` to match every document. Bare `*`/`**` are not valid. Because the path lives in the registration (not the class), the same hook type can be bound to multiple paths.
 
 ```csharp
@@ -828,6 +830,12 @@ Connect at `/documents/ws?access_token=<jwt>`. The connection authenticates at t
 
 See [PROTOCOL](docs/PROTOCOL.md#7-websocket-protocol) for full message shapes, close codes, and listener protocol details.
 
+## Upgrading to 10.3.0
+
+The change feed now orders by writing transaction as well as `seq`, so a change that commits after a later one is no longer skipped (before 10.3.0 a durable hook could miss it for good). Startup adds a `txid` column to `winche_documents_changes` and `winche_documents_feed_cursors`, plus an index; existing rows and saved cursors get `txid = 0` and carry on where they were, with no replay. Needs PostgreSQL 13+. `ChangeFeedReader.ReadAfterAsync(long, …)` is obsolete; use the `FeedPosition` overload.
+
+During a rolling deploy, an older node that still holds a hook's lock saves `seq` without `txid`; after the switch, that hook may receive some changes twice (never miss any).
+
 ## Upgrading to 10.0.0
 
 10.0.0 upgrades the bundled rules engine to **Winche.Rules 3.0.0** and makes access rules
@@ -919,7 +927,7 @@ existing databases. The code/API changes you must make:
 ## Requirements
 
 - .NET 10.0
-- PostgreSQL (any recent version with JSONB support)
+- PostgreSQL 13 or later (the change feed uses `xid8`; startup fails with a clear error on older servers)
 
 ## License
 
