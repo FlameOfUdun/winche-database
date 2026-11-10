@@ -30,8 +30,8 @@ public class DocumentToResourceTests
         var doc = MakeDocument("users/u1", "u1", "users", fields);
         var map = DocumentToResource.Convert(doc).AsMap;
 
-        // No "data" wrapper — fields live at the top level.
-        Assert.False(map.ContainsKey("data"));
+        // Fields live at the top level; "data" (10.5.0) is the fields alone, for keys()/diff().
+        Assert.Equal(["age", "name"], map["data"].AsMap.Keys.Order(StringComparer.Ordinal));
         Assert.Equal(30L, map["age"].AsInt);
         Assert.Equal("Alice", map["name"].AsString);
 
@@ -60,8 +60,9 @@ public class DocumentToResourceTests
     {
         var map = DocumentToResource.Convert(MakeDocument("col/doc1", "doc1", "col")).AsMap;
         Assert.Equal(
-            new[] { "collection", "createdAt", "id", "path", "updatedAt", "version" },
+            new[] { "collection", "createdAt", "data", "id", "path", "updatedAt", "version" },
             map.Keys.OrderBy(k => k, StringComparer.Ordinal));
+        Assert.Empty(map["data"].AsMap);
     }
 
     [Fact]

@@ -223,8 +223,11 @@ Conditions are `RuleExpr` values built with the `Expr` factory:
 | `Expr.All(a, b)` | `a && b` (AND) |
 | `.Eq(...)` / `.Ne(...)` / `.Lt(...)` etc. | comparison operators |
 
-A document's own fields are exposed at the top level of `resource` (so `resource.ownerId`, never a
-`data` wrapper). The storage columns are added as reserved siblings, so rules can condition on document
+A document's own fields are exposed at the top level of `resource` (so `resource.ownerId`).
+`resource.data` (10.5.0) is the fields alone, without the storage columns below — what `keys()` and
+`diff()` need, e.g. `request.resource.data.keys().hasOnly(['name', 'email'])` or
+`request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])`. A field that is itself
+named `data` takes precedence. The storage columns are added as reserved siblings, so rules can condition on document
 metadata: `resource.id`, `resource.path`, `resource.collection`, `resource.createdAt`,
 `resource.updatedAt`, and `resource.version`. A reserved column wins over a field of the same name.
 
@@ -869,6 +872,8 @@ Live queries no longer re-run the whole query on every relevant change: each hol
 Resume tokens now cover whole transactions: a resume was told "current" (`listen.current`) when a write with an earlier feed sequence number committed after the token was issued, and the client never got it. Tokens are now negative numbers (clients store and echo them; the Dart SDK needs no change); a token from an older server gets one full snapshot. Startup adds `winche_documents_feed_pruned`, which records how far pruning has reached so an old token is recognised as unverifiable.
 
 Indexes: declared indexes are now built `CONCURRENTLY` (an invalid one is rebuilt), and indexes for definitions no longer declared are dropped at startup (`DropUndeclaredIndexes`). New `IndexKind.ArrayMembership` / `ib.AddArray(...)` serves array filters. A slow query with no serving index logs the index to add (`SlowQueryThreshold`). The GIN index over whole documents (`idx_winche_documents_data`) is dropped: no query could use it, and it slowed every write.
+
+Rules: Winche.Rules 3.1.0 adds functions (`keys`, `hasOnly`/`hasAll`/`hasAny`, `diff(...).affectedKeys()`, `is` type checks, `matches`, `lower`/`upper`, `get(key, default)`) and a text syntax (`RuleText`), and `resource.data` exposes a document's fields alone for them.
 
 `select` no longer fails on a selected field that holds `null` (or contains one): the projection used `jsonb_strip_nulls`, which emptied the stored `{"nullValue": null}` into an undecodable `{}`.
 
