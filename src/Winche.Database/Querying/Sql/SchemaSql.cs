@@ -189,6 +189,12 @@ public static class SchemaSql
         CREATE INDEX IF NOT EXISTS idx_{{WincheDatabaseTables.Changes}}_txid_seq
             ON {{WincheDatabaseTables.Changes}} (txid, seq);
 
+        -- The document before and after the change, for hooks registered withSnapshots (10.5.0): stored
+        -- only for writes to paths such a hook covers, NULL otherwise. {fields, createdAt, updatedAt, version}.
+        ALTER TABLE {{WincheDatabaseTables.Changes}}
+            ADD COLUMN IF NOT EXISTS before jsonb,
+            ADD COLUMN IF NOT EXISTS after  jsonb;
+
         -- A durable consumer's failing change (the one right after its cursor): when it started failing and
         -- how often, so the give-up deadline survives restarts and moves between nodes. Cleared on success.
         ALTER TABLE {{WincheDatabaseTables.FeedCursors}}

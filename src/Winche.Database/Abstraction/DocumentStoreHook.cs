@@ -1,3 +1,4 @@
+using Winche.Database.Runtime.ChangeFeed;
 using Winche.Database.Documents;
 
 namespace Winche.Database.Abstraction;
@@ -10,6 +11,20 @@ namespace Winche.Database.Abstraction;
 /// </summary>
 public abstract class DocumentStoreHook
 {
+    /// <summary>
+    /// Called for every change to a matching document. The default calls <see cref="OnDocumentSetAsync"/>,
+    /// <see cref="OnDocumentUpdatedAsync"/> or <see cref="OnDocumentDeletedAsync"/>; override it to see the
+    /// document before and after the change (<see cref="DocumentChange.Before"/> / <see cref="DocumentChange.After"/>),
+    /// which are filled when the hook is registered <c>withSnapshots: true</c>.
+    /// </summary>
+    public virtual Task OnChangeAsync(DocumentChange change, CancellationToken ct) => change.Type switch
+    {
+        ChangeType.Added when change.After is { } added => OnDocumentSetAsync(change.Path, added, ct),
+        ChangeType.Modified when change.After is { } modified => OnDocumentUpdatedAsync(change.Path, modified, ct),
+        ChangeType.Removed => OnDocumentDeletedAsync(change.Path, ct),
+        _ => Task.CompletedTask,
+    };
+
     /// <summary>
     /// This method is called when a document is set. The hook can perform additional actions based on the document being set.
     /// </summary>
@@ -36,3 +51,19 @@ public abstract class DocumentStoreHook
     /// <returns>A task representing the asynchronous operation.</returns>
     public virtual Task OnDocumentDeletedAsync(string path, CancellationToken ct) => Task.CompletedTask;
 }
+
+/// <summary>
+/// One change to a document, as a hook sees it.
+/// </summary>
+/// <param name="Type">Added (created), Modified (updated) or Removed (deleted).</param>
+/// <param name="Path">The document's path.</param>
+/// <param name="Before">
+/// The document before the change — null when it didn't exist (Added), or when the hook isn't registered
+/// <c>withSnapshots</c> (or the change predates that registration).
+/// </param>
+/// <param name="After">
+/// With snapshots: the document as this change wrote it (null when Removed). Without: its current state when
+/// the hook runs (null if it's gone again), as before 10.5.0.
+/// </param>
+/// <param name="Version">The document's version after the change (for a removal, the version removed): an idempotency key.</param>
+public sealed record DocumentChange(ChangeType Type, string Path, Document? Before, Document? After, long Version);

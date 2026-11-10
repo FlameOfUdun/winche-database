@@ -1,4 +1,5 @@
 using Winche.Database.Abstraction;
+using Winche.Database.Documents;
 
 namespace Winche.Database.Runtime.ChangeFeed;
 
@@ -25,6 +26,8 @@ public sealed class HookFeedConsumer(
     private readonly IReadOnlyList<HookRegistration> _hooks = hooks.ToList();
 
     public string? DurableName => durableName;
+
+    public bool WantsSnapshots => _hooks.Any(r => r.WithSnapshots);
 
     /// <summary>
     /// The cursor name for hooks of <paramref name="hookType"/>: <c>hooks:</c> + its full name. Renaming the
@@ -60,22 +63,14 @@ public sealed class HookFeedConsumer(
         {
             if (!Winche.Rules.Matching.PathMatcher.IsMatch(registration.Path, path)) continue;
 
-            var hook = registration.Hook;
-            switch (record.Type)
-            {
-                // When TryGetValue guards fail (doc absent from batch.Documents), the document was
-                // deleted again before the batch fetch — skip the set/update hook silently.
-                // The later Removed record still fires the delete hook, so no hook is permanently lost.
-                case ChangeType.Added when batch.Documents.TryGetValue(path, out var added):
-                    await hook.OnDocumentSetAsync(path, added, ct);
-                    break;
-                case ChangeType.Modified when batch.Documents.TryGetValue(path, out var modified):
-                    await hook.OnDocumentUpdatedAsync(path, modified, ct);
-                    break;
-                case ChangeType.Removed:
-                    await hook.OnDocumentDeletedAsync(path, ct);
-                    break;
-            }
+            // With snapshots: the versions this change wrote. Without: the current document (null if it's
+            // gone again before delivery — a set/update hook then waits for the later Removed record).
+            Document? before = null, after;
+            if (registration.WithSnapshots && batch.Snapshots.TryGetValue(record.Seq, out var snapshot))
+                (before, after) = snapshot;
+            else
+                after = record.Type == ChangeType.Removed ? null : batch.Documents.GetValueOrDefault(path);
+            await registration.Hook.OnChangeAsync(new DocumentChange(record.Type, path, before, after, record.Version), ct);
         }
     }
 }

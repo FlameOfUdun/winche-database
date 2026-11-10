@@ -30,7 +30,7 @@ public sealed class DocumentDatabase : IDocumentDatabase
         IWriteAuthorizer? writeAuthorizer = null, DocumentListenerRegistry? docListeners = null)
     {
         _source = source;
-        _applier = new WriteApplier(source, writeAuthorizer, options.Value.WriteLimits);
+        _applier = new WriteApplier(source, writeAuthorizer, options.Value.WriteLimits, options.Value.HookSnapshotPaths);
         _ledger = new TransactionLedger(options.Value.TransactionConfig);
         _listeners = listeners;
         _documentListeners = docListeners;

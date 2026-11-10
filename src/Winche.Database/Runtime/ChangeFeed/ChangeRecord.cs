@@ -59,6 +59,13 @@ public sealed record ChangeBatch(
     /// the last transaction may continue in the next batch.
     /// </summary>
     public bool EndsWithWholeTransaction { get; init; }
+
+    /// <summary>
+    /// By record seq: the document before and after that change, for records written to a path a hook
+    /// registered <c>withSnapshots</c> covers (and only when the consumer asked: <see cref="IChangeFeedConsumer.WantsSnapshots"/>).
+    /// </summary>
+    public IReadOnlyDictionary<long, (Document? Before, Document? After)> Snapshots { get; init; } =
+        new Dictionary<long, (Document? Before, Document? After)>();
 }
 
 /// <summary>
@@ -93,6 +100,9 @@ public interface IChangeFeedConsumer
     /// creates a <see cref="DurableConsumerRunner"/> for it. Null → ephemeral (current behaviour).
     /// </summary>
     string? DurableName => null;
+
+    /// <summary>True when the consumer reads <see cref="ChangeBatch.Snapshots"/> (they're loaded only then).</summary>
+    bool WantsSnapshots => false;
 
     Task OnBatchAsync(ChangeBatch batch, CancellationToken ct);
 }

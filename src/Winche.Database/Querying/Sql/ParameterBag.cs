@@ -23,6 +23,13 @@ internal sealed class ParameterBag
         return $"${_params.Count}";
     }
 
+    /// <summary>A jsonb[] parameter whose elements may be null (SQL NULL).</summary>
+    public string AddJsonbArray(string?[] values)
+    {
+        _params.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Jsonb, Value = values });
+        return $"${_params.Count}";
+    }
+
     public string AddTextArray(string[] values)
     {
         _params.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text, Value = values });

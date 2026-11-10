@@ -104,9 +104,14 @@ public sealed class WincheDatabaseOptions
     /// Multiple calls accumulate — each binding is registered as a singleton so that
     /// <c>GetServices&lt;HookRegistration&gt;()</c> returns them all at startup.
     /// </summary>
+    private readonly List<string> _hookSnapshotPaths = [];
+
+    /// <summary>The path patterns of hooks registered <c>withSnapshots</c>: writes to these store before/after copies.</summary>
+    public IReadOnlyList<string> HookSnapshotPaths => _hookSnapshotPaths;
+
     public WincheDatabaseOptions UseHooks(Action<HookBuilder> configure)
     {
-        var builder = new HookBuilder(Services);
+        var builder = new HookBuilder(Services, _hookSnapshotPaths);
         configure(builder);
         return this;
     }
@@ -306,23 +311,25 @@ public sealed class TtlBuilder(IServiceCollection services)
 /// Each <see cref="Add{THook}(string)"/> call registers one <see cref="HookRegistration"/> as a
 /// singleton so that <c>GetServices&lt;HookRegistration&gt;()</c> returns them all at startup.
 /// </summary>
-public sealed class HookBuilder(IServiceCollection services)
+public sealed class HookBuilder(IServiceCollection services, List<string>? snapshotPaths = null)
 {
     /// <summary>
     /// Registers a hook <typeparamref name="THook"/> (constructed via DI, so constructor injection
     /// works) bound to <paramref name="path"/>. The same hook type may be bound to multiple paths.
     /// </summary>
-    public HookBuilder Add<THook>(string path) where THook : DocumentStoreHook
+    public HookBuilder Add<THook>(string path, bool withSnapshots = false) where THook : DocumentStoreHook
     {
         services.TryAddSingleton<THook>();
-        services.AddSingleton(sp => new HookRegistration(path, sp.GetRequiredService<THook>()));
+        services.AddSingleton(sp => new HookRegistration(path, sp.GetRequiredService<THook>(), withSnapshots));
+        if (withSnapshots) snapshotPaths?.Add(path);
         return this;
     }
 
     /// <summary>Registers a pre-constructed <paramref name="hook"/> instance bound to <paramref name="path"/>.</summary>
-    public HookBuilder Add(string path, DocumentStoreHook hook)
+    public HookBuilder Add(string path, DocumentStoreHook hook, bool withSnapshots = false)
     {
-        services.AddSingleton(new HookRegistration(path, hook));
+        services.AddSingleton(new HookRegistration(path, hook, withSnapshots));
+        if (withSnapshots) snapshotPaths?.Add(path);
         return this;
     }
 }

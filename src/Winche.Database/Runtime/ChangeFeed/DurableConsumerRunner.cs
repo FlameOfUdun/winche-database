@@ -93,6 +93,8 @@ public sealed class DurableConsumerRunner(
                     continue;
                 }
                 batch = new ChangeBatch(records, await _reader.FetchDocumentsAsync(records, ct));
+                if (consumer.WantsSnapshots)
+                    batch = batch with { Snapshots = await _reader.FetchSnapshotsAsync(records, ct) };
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {

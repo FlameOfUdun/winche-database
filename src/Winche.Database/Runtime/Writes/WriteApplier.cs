@@ -17,9 +17,12 @@ namespace Winche.Database.Runtime.Writes;
 /// causes affected-rows = 0, which is detected and turned into ABORTED before commit.
 /// For rows held under FOR UPDATE the guard always passes — no behavior change.
 /// </summary>
-public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? authorizer = null, WriteLimits? limits = null)
+public sealed class WriteApplier(
+    NpgsqlDataSource source, IWriteAuthorizer? authorizer = null, WriteLimits? limits = null,
+    IReadOnlyList<string>? snapshotPaths = null)
 {
     private readonly WriteLimits _limits = limits ?? new();
+    private readonly IReadOnlyList<string> _snapshotPaths = snapshotPaths ?? [];
 
     private sealed class DocState
     {
@@ -30,6 +33,10 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
         public bool ExistedBefore;
         public bool Exists;
         public long VersionBefore;
+        // The stored document as it was before this batch (for before/after snapshots).
+        public IReadOnlyDictionary<string, Value>? BeforeFields;
+        public DateTimeOffset BeforeCreatedAt;
+        public DateTimeOffset BeforeUpdatedAt;
     }
 
     public async Task<IReadOnlyList<WriteResult>> ApplyAsync(
@@ -363,6 +370,9 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
         VersionBefore = reader.GetInt64(7),
         ExistedBefore = true,
         Exists = true,
+        BeforeFields = StorageCodec.Decode(reader.GetString(4)),
+        BeforeCreatedAt = reader.GetFieldValue<DateTimeOffset>(5),
+        BeforeUpdatedAt = reader.GetFieldValue<DateTimeOffset>(6),
     };
 
     private async Task PersistAsync(NpgsqlConnection conn, NpgsqlTransaction tx,
@@ -373,6 +383,8 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
         var changePaths = new List<string>();
         var changeCollections = new List<string>();
         var changeVersions = new List<long>();
+        var changeBefore = new List<string?>();
+        var changeAfter = new List<string?>();
 
         foreach (var (path, doc) in state)
         {
@@ -409,6 +421,9 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
             changePaths.Add(path);
             changeCollections.Add(info.Collection);
             changeVersions.Add(doc.Exists ? doc.Version : doc.VersionBefore);
+            var snapshot = _snapshotPaths.Count > 0 && _snapshotPaths.Any(p => Winche.Rules.Matching.PathMatcher.IsMatch(p, path));
+            changeBefore.Add(snapshot && doc.ExistedBefore ? ChangeFeed.ChangeSnapshots.Encode(doc.BeforeFields!, doc.BeforeCreatedAt, doc.BeforeUpdatedAt, doc.VersionBefore) : null);
+            changeAfter.Add(snapshot && doc.Exists ? ChangeFeed.ChangeSnapshots.Encode(doc.Fields, doc.CreatedAt, doc.UpdatedAt, doc.Version) : null);
         }
 
         if (deletes.Count > 0)
@@ -423,7 +438,7 @@ public sealed class WriteApplier(NpgsqlDataSource source, IWriteAuthorizer? auth
         {
             await using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
-            WriteSql.InsertChanges(changeTypes, changePaths, changeCollections, changeVersions, commitTime).Apply(cmd);
+            WriteSql.InsertChanges(changeTypes, changePaths, changeCollections, changeVersions, changeBefore, changeAfter, commitTime).Apply(cmd);
             await cmd.ExecuteNonQueryAsync(ct);
         }
     }

@@ -379,6 +379,29 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source)
         return (int)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
+    /// <summary>The before/after snapshots stored with <paramref name="records"/> (only those that have any).</summary>
+    public async Task<IReadOnlyDictionary<long, (Document? Before, Document? After)>> FetchSnapshotsAsync(
+        IReadOnlyList<ChangeRecord> records, CancellationToken ct = default)
+    {
+        var result = new Dictionary<long, (Document? Before, Document? After)>();
+        if (records.Count == 0) return result;
+        var paths = records.ToDictionary(r => r.Seq, r => r.Path);
+        await using var conn = await source.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"SELECT seq, before::text, after::text FROM {WincheDatabaseTables.Changes} WHERE seq = ANY($1) AND (before IS NOT NULL OR after IS NOT NULL)";
+        cmd.Parameters.AddWithValue(paths.Keys.ToArray());
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var seq = reader.GetInt64(0);
+            var path = paths[seq];
+            result[seq] = (
+                reader.IsDBNull(1) ? null : ChangeSnapshots.Decode(path, reader.GetString(1)),
+                reader.IsDBNull(2) ? null : ChangeSnapshots.Decode(path, reader.GetString(2)));
+        }
+        return result;
+    }
+
     /// <summary>Fetches the still-existing documents for the added/modified paths in <paramref name="records"/> (one batch query); removed paths are skipped.</summary>
     public async Task<IReadOnlyDictionary<string, Document>> FetchDocumentsAsync(
         IReadOnlyList<ChangeRecord> records, CancellationToken ct = default)

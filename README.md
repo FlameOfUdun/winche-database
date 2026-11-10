@@ -355,6 +355,33 @@ config.UseHooks(h => h
     .Add<AuditHook>("invoices/{invoiceId}"));   // same hook type, bound to a second path
 ```
 
+### Before and after (10.5.0)
+
+Register a hook `withSnapshots: true` and override `OnChangeAsync` to see the document before and after each
+change — like Firestore's `change.before` / `change.after`:
+
+```csharp
+config.UseHooks(h => h.Add<StatusHook>("orders/{orderId}", withSnapshots: true));
+
+public class StatusHook : DocumentStoreHook
+{
+    public override Task OnChangeAsync(DocumentChange change, CancellationToken ct)
+    {
+        var before = change.Before?.Fields.GetValueOrDefault("status");   // null when created
+        var after = change.After?.Fields.GetValueOrDefault("status");     // null when deleted
+        // … react to a status transition; change.Version is the idempotency key
+        return Task.CompletedTask;
+    }
+}
+```
+
+With snapshots, `After` is exactly the version that change wrote (two quick updates arrive as two changes, each
+with its own before/after), and a deletion carries the deleted document in `Before`. The cost: writes to paths
+such a hook covers store both versions in the change feed (kept for `ChangeFeed.Retention`). Without snapshots,
+`Before` is null and `After` is the document's current state when the hook runs, as before. The default
+`OnChangeAsync` calls `OnDocumentSetAsync` / `OnDocumentUpdatedAsync` / `OnDocumentDeletedAsync`, so existing
+hooks keep working either way.
+
 ## TTL Policies (Auto-Expiry)
 
 TTL policies automatically delete documents once a registered timestamp field is in the past. Register policies via `UseTtl` inside `AddWincheDatabase`:
@@ -897,6 +924,8 @@ Indexes: declared indexes are now built `CONCURRENTLY` (an invalid one is rebuil
 Rules: Winche.Rules 3.1.0 adds functions (`keys`, `hasOnly`/`hasAll`/`hasAny`, `diff(...).affectedKeys()`, `is` type checks, `matches`, `lower`/`upper`, `get(key, default)`) and a text syntax (`RuleText`), and `resource.data` exposes a document's fields alone for them.
 
 Collection group queries: `Query.CollectionGroup` (wire `"collectionGroup": true`) reads every collection with an id under any parent; `ib.AddGroup(...)` indexes them; rules govern them through `match {path=**}/<id>/{doc}`.
+
+Hooks: `h.Add<MyHook>(path, withSnapshots: true)` + `OnChangeAsync(DocumentChange)` give the document before and after each change. Startup adds `before`/`after` columns to the change feed.
 
 `select` no longer fails on a selected field that holds `null` (or contains one): the projection used `jsonb_strip_nulls`, which emptied the stored `{"nullValue": null}` into an undecodable `{}`.
 

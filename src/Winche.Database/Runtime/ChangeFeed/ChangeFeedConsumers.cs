@@ -160,7 +160,9 @@ public sealed class ChangeFeedConsumers(
                 try
                 {
                     var records = new[] { letter.Change };
-                    await target.OnBatchAsync(new ChangeBatch(records, await _reader.FetchDocumentsAsync(records, ct)), ct);
+                    var batch = new ChangeBatch(records, await _reader.FetchDocumentsAsync(records, ct));
+                    if (target.WantsSnapshots) batch = batch with { Snapshots = await _reader.FetchSnapshotsAsync(records, ct) };
+                    await target.OnBatchAsync(batch, ct);
                     await ExecuteAsync($"DELETE FROM {WincheDatabaseTables.DeadLetters} WHERE id = $1", ct, letter.Id);
                     replayed++;
                 }

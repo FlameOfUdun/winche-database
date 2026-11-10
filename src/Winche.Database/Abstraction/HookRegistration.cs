@@ -12,4 +12,9 @@ namespace Winche.Database.Abstraction;
 /// </summary>
 /// <param name="Path">The path pattern selecting which documents fire <paramref name="Hook"/>.</param>
 /// <param name="Hook">The hook behavior invoked for matching documents.</param>
-public sealed record HookRegistration(string Path, DocumentStoreHook Hook);
+/// <param name="WithSnapshots">
+/// Store the document before and after each change to a matching path, and hand them to the hook
+/// (<see cref="DocumentChange.Before"/> / <see cref="DocumentChange.After"/>). Costs a copy of each version in
+/// the change feed; off by default.
+/// </param>
+public sealed record HookRegistration(string Path, DocumentStoreHook Hook, bool WithSnapshots = false);
