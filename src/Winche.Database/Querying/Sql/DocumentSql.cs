@@ -48,14 +48,21 @@ public static class DocumentSql
         return new CompiledSql(sql, bag.ToArray());
     }
 
+    /// <summary>
+    /// <paramref name="root"/> and every document beneath it, as a byte-order range on the path:
+    /// <c>root/ &lt;= path &lt; root0</c> ('0' follows '/'), under COLLATE "C" so the
+    /// <c>idx_winche_documents_path_c</c> index serves it — a LIKE prefix can't use an index under a
+    /// non-C database collation, and with a parameter not even under C once the plan is cached.
+    /// </summary>
+    internal static string SubtreeWhere(ParameterBag bag, string root) =>
+        $"(document_path = {bag.Add(root)} OR (document_path >= {bag.Add(root + "/")} COLLATE \"C\" AND document_path < {bag.Add(root + "0")} COLLATE \"C\"))";
+
     public static CompiledSql SelectSubtreeForUpdate(string path)
     {
         var bag = new ParameterBag();
-        var pPath = bag.Add(path);
-        var pPrefix = bag.Add(LikePatternEscaper.Escape(path) + "/%");
         var sql = $"""
             SELECT document_path FROM {WincheDatabaseTables.Documents}
-            WHERE document_path = {pPath} OR document_path LIKE {pPrefix} ESCAPE '\'
+            WHERE {SubtreeWhere(bag, path)}
             FOR UPDATE
             """;
         return new CompiledSql(sql, bag.ToArray());
@@ -70,12 +77,9 @@ public static class DocumentSql
     public static CompiledSql DeleteSubtree(string path)
     {
         var bag = new ParameterBag();
-        var pPath = bag.Add(path);
-        var pPrefix = bag.Add(LikePatternEscaper.Escape(path) + "/%");
-
         var sql = $"""
             DELETE FROM {WincheDatabaseTables.Documents}
-            WHERE document_path = {pPath} OR document_path LIKE {pPrefix} ESCAPE '\'
+            WHERE {SubtreeWhere(bag, path)}
             RETURNING document_path
             """;
         return new CompiledSql(sql, bag.ToArray());

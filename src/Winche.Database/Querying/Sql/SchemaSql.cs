@@ -51,6 +51,29 @@ public static class SchemaSql
     /// and safe to run on every startup (idempotent). Uses literal historical object names on purpose
     /// (not <c>WincheDatabaseTables</c>, which now holds the new names).
     /// </summary>
+    /// <summary>
+    /// Index for subtree reads and cascade deletes (<see cref="DocumentSql.SubtreeWhere"/>) and collection
+    /// listing: the path in byte order (COLLATE "C"). The primary key can't serve a prefix range under the
+    /// usual en_US-style database collation, so without this every cascade scanned the whole table.
+    /// </summary>
+    public const string PathIndex = "idx_" + WincheDatabaseTables.Documents + "_path_c";
+
+    /// <summary>
+    /// Builds <see cref="PathIndex"/> without blocking writes (CONCURRENTLY: one statement per command, outside
+    /// a transaction). A concurrent build that failed leaves an invalid index behind, which IF NOT EXISTS would
+    /// keep for ever, so that is dropped first.
+    /// </summary>
+    public static string PathIndexIsInvalid() => $"""
+        SELECT EXISTS (
+            SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+            WHERE c.relname = '{PathIndex}' AND c.relnamespace = current_schema()::regnamespace AND NOT i.indisvalid)
+        """;
+
+    public static string DropPathIndex() => $"DROP INDEX CONCURRENTLY IF EXISTS {PathIndex}";
+
+    public static string CreatePathIndex() =>
+        $"CREATE INDEX CONCURRENTLY IF NOT EXISTS {PathIndex} ON {WincheDatabaseTables.Documents} (document_path COLLATE \"C\")";
+
     public static string MigrationDdl() => """
         DO $migrate$
         BEGIN

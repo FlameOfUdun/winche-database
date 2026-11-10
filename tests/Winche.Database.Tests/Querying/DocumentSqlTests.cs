@@ -26,12 +26,16 @@ public class DocumentSqlTests
     }
 
     [Fact]
-    public void DeleteSubtree_EscapesLikeMetacharacters()
+    public void DeleteSubtree_MatchesTheRootAndAByteOrderRangeBelowIt()
     {
+        // No LIKE, so wildcard characters in a path are just characters (no escaping needed).
         var result = DocumentSql.DeleteSubtree("users/100%_x");
-        Assert.Equal(2, result.Parameters.Length);
-        Assert.Equal("users/100%_x", result.Parameters[0].Value);          // exact match: raw
-        Assert.Equal(@"users/100\%\_x/%", result.Parameters[1].Value);     // prefix match: escaped
+        Assert.Equal(3, result.Parameters.Length);
+        Assert.Equal("users/100%_x", result.Parameters[0].Value);     // the root itself
+        Assert.Equal("users/100%_x/", result.Parameters[1].Value);    // root/ <= path …
+        Assert.Equal("users/100%_x0", result.Parameters[2].Value);    // … < root0 ('0' follows '/')
+        Assert.Contains("COLLATE \"C\"", result.Sql);
+        Assert.DoesNotContain("LIKE", result.Sql);
         Assert.Contains("RETURNING document_path", result.Sql);
     }
 

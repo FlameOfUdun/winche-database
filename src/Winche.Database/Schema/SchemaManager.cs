@@ -32,6 +32,8 @@ public sealed class SchemaManager(
             await cmd.ExecuteNonQueryAsync(ct);
         }
 
+        await EnsurePathIndexAsync(conn, ct);
+
         await using (var cmd = conn.CreateCommand())
         {
             cmd.CommandText = SchemaSql.HelperFunctions();
@@ -43,6 +45,25 @@ public sealed class SchemaManager(
             cmd.CommandText = SchemaSql.ChangesDdl();
             await cmd.ExecuteNonQueryAsync(ct);
         }
+    }
+
+    private static async Task EnsurePathIndexAsync(NpgsqlConnection conn, CancellationToken ct)
+    {
+        await using (var check = conn.CreateCommand())
+        {
+            check.CommandText = SchemaSql.PathIndexIsInvalid();
+            if (await check.ExecuteScalarAsync(ct) is true)
+            {
+                await using var drop = conn.CreateCommand();
+                drop.CommandText = SchemaSql.DropPathIndex();
+                await drop.ExecuteNonQueryAsync(ct);
+            }
+        }
+
+        await using var create = conn.CreateCommand();
+        create.CommandText = SchemaSql.CreatePathIndex();
+        create.CommandTimeout = 0;   // a first build on a large table can take a while; it doesn't block writes
+        await create.ExecuteNonQueryAsync(ct);
     }
 
     public async Task SyncIndexesAsync(CancellationToken ct = default)

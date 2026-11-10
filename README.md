@@ -843,6 +843,10 @@ Connect at `/documents/ws?access_token=<jwt>`. The connection authenticates at t
 
 See [PROTOCOL](docs/PROTOCOL.md#7-websocket-protocol) for full message shapes, close codes, and listener protocol details.
 
+## Upgrading to 10.5.0
+
+Cascade deletes and subtree reads (TTL, deleting a document with `Cascade = true`) used `LIKE 'path/%'`, which can't use an index under the usual en_US-style database collation, so each one scanned the whole documents table. They now match the path as a byte-order range, served by a new index `idx_winche_documents_path_c` on `document_path COLLATE "C"`, which also speeds up collection listing. The first start builds the index with `CREATE INDEX CONCURRENTLY`, so writes carry on meanwhile; on a large table that start takes a little longer. An index left invalid by an interrupted build is dropped and rebuilt on the next start.
+
 ## Upgrading to 10.4.0
 
 Hooks no longer share one cursor: each hook type gets its own (`hooks:<full type name>`), so a failing hook no longer stops the others. On the first start, every hook type's cursor is copied from the old `hooks` cursor — nothing is skipped or replayed. (During a rolling deploy, nodes on the old version keep using `hooks` until they stop, so a change can be delivered twice — fine for idempotent hooks.) Startup adds the `winche_documents_dead_letters` table and failure columns on `winche_documents_feed_cursors`.

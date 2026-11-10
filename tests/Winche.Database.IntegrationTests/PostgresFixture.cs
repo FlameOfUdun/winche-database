@@ -29,6 +29,11 @@ public sealed class PostgresFixture : IAsyncLifetime
         }
         await using (var cmd = conn.CreateCommand())
         {
+            cmd.CommandText = SchemaSql.CreatePathIndex();
+            await cmd.ExecuteNonQueryAsync();
+        }
+        await using (var cmd = conn.CreateCommand())
+        {
             cmd.CommandText = SchemaSql.HelperFunctions();
             await cmd.ExecuteNonQueryAsync();
         }

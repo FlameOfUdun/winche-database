@@ -19,7 +19,7 @@ internal static class WriteSql
         if (exactPaths.Count > 0)
             clauses.Add($"document_path = ANY({bag.Add(exactPaths.ToArray())})");
         foreach (var root in cascadeRoots)
-            clauses.Add($"document_path = {bag.Add(root)} OR document_path LIKE {bag.Add(LikePatternEscaper.Escape(root) + "/%")} ESCAPE '\\'");
+            clauses.Add(DocumentSql.SubtreeWhere(bag, root));
         var sql = $"SELECT {Columns} FROM {WincheDatabaseTables.Documents} WHERE {string.Join(" OR ", clauses)} ORDER BY document_path FOR UPDATE";
         return new CompiledSql(sql, bag.ToArray());
     }
