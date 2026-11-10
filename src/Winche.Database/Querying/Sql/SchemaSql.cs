@@ -35,9 +35,6 @@ public static class SchemaSql
         CREATE INDEX IF NOT EXISTS idx_{{WincheDatabaseTables.Documents}}_collection_docid
             ON {{WincheDatabaseTables.Documents}}(collection_path, document_id ASC);
 
-        CREATE INDEX IF NOT EXISTS idx_{{WincheDatabaseTables.Documents}}_data
-            ON {{WincheDatabaseTables.Documents}} USING GIN(data);
-
         DROP TRIGGER IF EXISTS document_change_trigger ON {{WincheDatabaseTables.Documents}};
         DROP FUNCTION IF EXISTS public.notify_document_change() CASCADE;
         """;
@@ -68,6 +65,13 @@ public static class SchemaSql
             SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
             WHERE c.relname = '{PathIndex}' AND c.relnamespace = current_schema()::regnamespace AND NOT i.indisvalid)
         """;
+
+    /// <summary>
+    /// The GIN index over whole documents that older versions created: no query uses the operators it
+    /// serves (filters go through the winche_* functions), so it only slowed every write. Dropped at startup.
+    /// </summary>
+    public static string DropUnusedDataIndex() =>
+        $"DROP INDEX CONCURRENTLY IF EXISTS idx_{WincheDatabaseTables.Documents}_data";
 
     public static string DropPathIndex() => $"DROP INDEX CONCURRENTLY IF EXISTS {PathIndex}";
 
@@ -360,5 +364,17 @@ public static class SchemaSql
                     RETURN res || '\x00'::bytea;
             END CASE;
         END $f$ LANGUAGE plpgsql IMMUTABLE STRICT;
+
+        -- The winche_key of every element of an array value (NULL for anything else): what an
+        -- ArrayMembership GIN index stores. Array filters match elements by winche_key, so
+        -- "winche_array_keys(f) @> ARRAY[winche_key(x)]" holds exactly when f contains x.
+        -- search_path pinned for the same reason as winche_key (it calls siblings during index builds).
+        CREATE OR REPLACE FUNCTION winche_array_keys(v jsonb) RETURNS bytea[]
+        SET search_path FROM CURRENT
+        AS $f$
+        SELECT CASE WHEN winche_rank(v) = 90
+            THEN ARRAY(SELECT winche_key(e) FROM jsonb_array_elements(v->'arrayValue'->'values') AS t(e))
+        END
+        $f$ LANGUAGE sql IMMUTABLE STRICT;
         """;
 }

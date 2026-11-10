@@ -152,6 +152,23 @@ Collection ID grammar (violations throw `InvalidPathPatternException` at schema-
 
 - A collection ID is a **single segment** matching `[A-Za-z0-9_-]+` (no `/`, no `*`).
 
+**Array fields.** `arrayContains` / `arrayContainsAny` / `arrayContainsAll` need their own index kind,
+a GIN index over the array's elements:
+
+```csharp
+config.UseIndexes(i => i.AddArray("posts", "tags"));
+```
+
+**Lifecycle.** At startup every declared index that is missing is built with `CREATE INDEX CONCURRENTLY`,
+so writes carry on while it builds; one left invalid by an interrupted build is rebuilt. An index this
+library created for a definition you have since removed or changed is dropped, so it stops slowing every
+write (`DropUndeclaredIndexes = false` turns that off — e.g. when several apps with different index sets
+share one schema). Only indexes built from the `winche_*` functions on a collection id are touched.
+
+**Advice.** A query slower than `SlowQueryThreshold` (default 500 ms) that no declared index serves logs a
+warning once, with the declaration to add, e.g.
+`Add: ib.Add("sessionHistory", [new("runtimeType"), new("finishedAt", SortDirection.Desc)])`.
+
 Because indexes are keyed by collection id, an index on `sessionHistory` covers **all** collections
 named `sessionHistory` (e.g. one per user). Cross-collection ("collection group") queries — querying
 a field across *all* members at once — are not yet supported.
@@ -850,6 +867,8 @@ Cascade deletes and subtree reads (TTL, deleting a document with `Cascade = true
 Live queries no longer re-run the whole query on every relevant change: each holds its result plus `Listeners.HeldBeyondLimit` (10) more matching documents, whole, and applies a change to them in memory — filters, sort order, cursors, `limit`/`limitToLast` and `select` (applied on output) included. It re-runs the query only when fewer than `limit` held documents are left while more exist, for queries with an `offset`, and on the first change after `Listeners.ResyncInterval` (5 minutes). A node now updates up to `Listeners.MaxParallelUpdates` (8) listeners at once, so one slow query no longer delays the others. Set `Listeners.ApplyChangesInMemory = false` to always re-run.
 
 Resume tokens now cover whole transactions: a resume was told "current" (`listen.current`) when a write with an earlier feed sequence number committed after the token was issued, and the client never got it. Tokens are now negative numbers (clients store and echo them; the Dart SDK needs no change); a token from an older server gets one full snapshot. Startup adds `winche_documents_feed_pruned`, which records how far pruning has reached so an old token is recognised as unverifiable.
+
+Indexes: declared indexes are now built `CONCURRENTLY` (an invalid one is rebuilt), and indexes for definitions no longer declared are dropped at startup (`DropUndeclaredIndexes`). New `IndexKind.ArrayMembership` / `ib.AddArray(...)` serves array filters. A slow query with no serving index logs the index to add (`SlowQueryThreshold`). The GIN index over whole documents (`idx_winche_documents_data`) is dropped: no query could use it, and it slowed every write.
 
 `select` no longer fails on a selected field that holds `null` (or contains one): the projection used `jsonb_strip_nulls`, which emptied the stored `{"nullValue": null}` into an undecodable `{}`.
 

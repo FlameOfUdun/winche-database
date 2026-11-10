@@ -41,6 +41,20 @@ public sealed class WincheDatabaseOptions
     public TransactionConfig TransactionConfig { get; set; } = new();
     public ChangeFeedConfig ChangeFeed { get; set; } = new();
     public ListenerConfig Listeners { get; set; } = new();
+
+    /// <summary>
+    /// At startup, drop indexes this library created for <see cref="UseIndexes(Action{IndexBuilder})"/> that are no
+    /// longer declared (default true), so a removed or changed definition stops costing every write. Only
+    /// indexes built from the winche_* functions on a collection id are touched; set false when several apps
+    /// with different index sets share one schema.
+    /// </summary>
+    public bool DropUndeclaredIndexes { get; set; } = true;
+
+    /// <summary>
+    /// A query slower than this, with no declared index that serves it, logs a warning (once per query shape)
+    /// naming the index to add (default 500 ms; null turns it off).
+    /// </summary>
+    public TimeSpan? SlowQueryThreshold { get; set; } = TimeSpan.FromMilliseconds(500);
     public WriteLimits WriteLimits { get; set; } = new();
     public TtlConfig Ttl { get; set; } = new();
 
@@ -241,6 +255,16 @@ public sealed class IndexBuilder(IServiceCollection services)
     public IndexBuilder Add(string collectionId, params IndexField[] fields)
     {
         services.AddSingleton(new IndexDefinition(collectionId, fields));
+        return this;
+    }
+
+    /// <summary>
+    /// Adds an <see cref="IndexKind.ArrayMembership"/> index on the array field <paramref name="field"/>, which
+    /// serves arrayContains / arrayContainsAny / arrayContainsAll on it.
+    /// </summary>
+    public IndexBuilder AddArray(string collectionId, string field)
+    {
+        services.AddSingleton(new IndexDefinition(collectionId, [new IndexField(field)], Kind: IndexKind.ArrayMembership));
         return this;
     }
 }

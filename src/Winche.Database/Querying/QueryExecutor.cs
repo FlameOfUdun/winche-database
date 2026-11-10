@@ -11,18 +11,27 @@ namespace Winche.Database.Querying;
 /// <summary>The query path end-to-end: normalize → compile → execute → decode.</summary>
 public sealed class QueryExecutor(NpgsqlConnection conn, NpgsqlTransaction? tx, CollectionIndexResolver? scopes = null)
 {
-    public async Task<QueryResult> ExecuteAsync(Query query, CancellationToken ct = default)
+    private LogicalPlan Plan(Query query)
     {
         var plan = Normalizer.Normalize(query);
+        return scopes is null ? plan : scopes.WithArrayIndexConditions(query.Collection, plan);
+    }
+
+    public async Task<QueryResult> ExecuteAsync(Query query, CancellationToken ct = default)
+    {
+        var plan = Plan(query);
         var pageNode = plan.Nodes.OfType<PageNode>().Single();
         var compiled = SqlCompiler.Compile(plan, scopes?.ScopeFor(query.Collection), query.Select);
 
+        var started = Stopwatch.GetTimestamp();
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         compiled.Apply(cmd);
 
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        var docs = await TypedDocumentReader.ReadAllAsync(reader, ct);
+        List<Document> docs;
+        await using (var reader = await cmd.ExecuteReaderAsync(ct))
+            docs = [.. await TypedDocumentReader.ReadAllAsync(reader, ct)];
+        scopes?.Observe(query, plan, Stopwatch.GetElapsedTime(started));
 
         // hasMore: a row beyond the page exists. For limitToLast (ReverseResult), the query ran
         // reversed, so this means a row exists BEFORE the returned window, not after it.
@@ -40,14 +49,17 @@ public sealed class QueryExecutor(NpgsqlConnection conn, NpgsqlTransaction? tx, 
     /// </summary>
     public async Task<long> CountAsync(Query query, CancellationToken ct = default)
     {
-        var plan = Normalizer.Normalize(query);
+        var plan = Plan(query);
         var compiled = CountSql.Compile(plan, query.Limit, scopes?.ScopeFor(query.Collection));
 
+        var started = Stopwatch.GetTimestamp();
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         compiled.Apply(cmd);
 
-        return Convert.ToInt64(await cmd.ExecuteScalarAsync(ct));
+        var count = Convert.ToInt64(await cmd.ExecuteScalarAsync(ct));
+        scopes?.Observe(query, plan, Stopwatch.GetElapsedTime(started));
+        return count;
     }
 
     /// <summary>
@@ -59,7 +71,7 @@ public sealed class QueryExecutor(NpgsqlConnection conn, NpgsqlTransaction? tx, 
     {
         AggregateValidator.Validate(aggregations);
 
-        var plan = Normalizer.Normalize(query);
+        var plan = Plan(query);
         var compiled = AggregateSql.Compile(plan, aggregations, query.Limit, scopes?.ScopeFor(query.Collection));
 
         await using var cmd = conn.CreateCommand();

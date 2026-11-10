@@ -23,6 +23,7 @@ internal static class OperatorRegistry
         UnaryFilter u => EmitUnary(u, bag, resolver),
         FieldFilter f => EmitFieldFilter(f, bag, resolver),
         FieldCompare cmp => EmitFieldCompare(cmp, bag, resolver),
+        ArrayKeysFilter a => EmitArrayKeys(a, bag, resolver),
         _ => throw new NotSupportedException($"Unknown filter: {filter.GetType().Name}"),
     };
 
@@ -245,6 +246,16 @@ internal static class OperatorRegistry
         var f = RequireTagged(resolver.Resolve(field, bag)).Sql;
         var pj = ValueSql.CanonicalJsonb(operand, bag);
         return $"(winche_rank({f}) = 90 AND EXISTS (SELECT 1 FROM jsonb_array_elements(({f})->'arrayValue'->'values') AS _e(v) WHERE winche_key(_e.v) = winche_key({pj})))";
+    }
+
+    // What an ArrayMembership index (GIN on winche_array_keys(field)) serves: contains all of the keys
+    // (arrayContains / arrayContainsAll) or overlaps them (arrayContainsAny).
+    private static string EmitArrayKeys(ArrayKeysFilter a, ParameterBag bag, SchemaResolver resolver)
+    {
+        var f = RequireTagged(resolver.Resolve(a.Field, bag)).Sql;
+        var keys = string.Join(", ", a.Values.Select(v => $"winche_key({ValueSql.CanonicalJsonb(v, bag)})"));
+        var op = a.Op == FilterOperator.ArrayContainsAny ? "&&" : "@>";
+        return $"(winche_array_keys({f}) {op} ARRAY[{keys}]::bytea[])";
     }
 
     private static string EmitArrayContainsAny(FieldPath field, ArrayValue operand, ParameterBag bag, SchemaResolver resolver)

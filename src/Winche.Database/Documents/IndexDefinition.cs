@@ -4,6 +4,18 @@ namespace Winche.Database.Documents;
 
 public sealed record IndexField(string Path, SortDirection Direction = SortDirection.Asc);
 
+/// <summary>What an index serves.</summary>
+public enum IndexKind
+{
+    /// <summary>A btree over the fields in Winche's sort order: equality, ranges and orderBy.</summary>
+    Ordered,
+
+    /// <summary>
+    /// A GIN index over one array field's elements: arrayContains, arrayContainsAny and arrayContainsAll.
+    /// </summary>
+    ArrayMembership,
+}
+
 /// <summary>
 /// A composite expression index over the winche_* family for one collection ID.
 /// Field paths become DDL literals — segments must match ^[A-Za-z0-9_\-]{1,128}$.
@@ -24,8 +36,13 @@ public sealed record IndexField(string Path, SortDirection Direction = SortDirec
 /// literal SQL fragment via <see cref="Querying.Sql.IndexPredicateSql"/>.
 /// <see langword="null"/> means no predicate (full-collection index).
 /// </param>
+/// <param name="Kind">
+/// <see cref="IndexKind.Ordered"/> (default) or <see cref="IndexKind.ArrayMembership"/>, which takes exactly
+/// one field (its direction is ignored).
+/// </param>
 public sealed record IndexDefinition(
     string CollectionId,
     IReadOnlyList<IndexField> Fields,
     string? Name = null,
-    Filter? Where = null);
+    Filter? Where = null,
+    IndexKind Kind = IndexKind.Ordered);

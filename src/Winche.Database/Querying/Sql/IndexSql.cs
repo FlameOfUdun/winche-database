@@ -30,56 +30,101 @@ public static partial class IndexSql
         return Convert.ToHexString(bytes, 0, 4).ToLowerInvariant();
     }
 
-    public static string BuildCreate(IndexDefinition index)
+    /// <summary>The index's name: <see cref="IndexDefinition.Name"/>, or one derived (stably) from the definition.</summary>
+    public static string NameOf(IndexDefinition index)
+    {
+        if (index.Name is not null)
+        {
+            RequireIdentifier(index.Name);
+            return index.Name;
+        }
+
+        var hashInput = $"{index.CollectionId}|{string.Join("|", index.Fields.Select(f => $"{f.Path}:{f.Direction}"))}";
+        // Fold predicate into name hash so filtered and unfiltered indexes get distinct names
+        if (index.Where is not null)
+            hashInput += "|" + QueryAstWriter.WriteFilter(index.Where).ToJsonString();
+        // Ordered keeps the historical hash input, so existing indexes keep their names.
+        if (index.Kind == IndexKind.ArrayMembership)
+            hashInput += "|array";
+        var hash = StableHash8(hashInput);
+        // The hash carries uniqueness/stability; the prefix is a human-readable label.
+        // Collapse any non-identifier char (e.g. '-' in collection ids or field paths) to '_'
+        // so the name stays DDL-safe.
+        var label = $"idx_{WincheDatabaseTables.Documents}_{index.CollectionId}_{string.Join("_", index.Fields.Select(f => f.Path))}";
+        var prefix = NonIdentifierChar().Replace(label, "_");
+        var name = $"{prefix[..Math.Min(prefix.Length, 54)]}_{hash}";
+        RequireIdentifier(name);
+        return name;
+    }
+
+    /// <summary>
+    /// CREATE INDEX for <paramref name="index"/>. With <paramref name="concurrently"/> it doesn't block writes
+    /// while it builds (it must then run alone, outside a transaction).
+    /// </summary>
+    public static string BuildCreate(IndexDefinition index, bool concurrently = false)
     {
         if (index.Fields.Count == 0)
             throw new ArgumentException("Index must have at least one field.", nameof(index));
+        if (index.Kind == IndexKind.ArrayMembership && index.Fields.Count != 1)
+            throw new ArgumentException("An ArrayMembership index takes exactly one field.", nameof(index));
 
         if (!DocumentPathParser.IsValidCollectionId(index.CollectionId, out var idError))
             throw new InvalidPathPatternException(index.CollectionId, idError!);
 
-        string name;
-        if (index.Name is not null)
+        var name = NameOf(index);
+
+        string columns;
+        if (index.Kind == IndexKind.ArrayMembership)
         {
-            name = index.Name;
+            columns = $"USING GIN ((winche_array_keys({LiteralAccessor(index.Fields[0].Path)})))";
         }
         else
         {
-            var hashInput = $"{index.CollectionId}|{string.Join("|", index.Fields.Select(f => $"{f.Path}:{f.Direction}"))}";
-            // Fold predicate into name hash so filtered and unfiltered indexes get distinct names
-            if (index.Where is not null)
-                hashInput += "|" + QueryAstWriter.WriteFilter(index.Where).ToJsonString();
-            var hash = StableHash8(hashInput);
-            // The hash carries uniqueness/stability; the prefix is a human-readable label.
-            // Collapse any non-identifier char (e.g. '-' in collection ids or field paths) to '_'
-            // so the name stays DDL-safe.
-            var label = $"idx_{WincheDatabaseTables.Documents}_{index.CollectionId}_{string.Join("_", index.Fields.Select(f => f.Path))}";
-            var prefix = NonIdentifierChar().Replace(label, "_");
-            name = $"{prefix[..Math.Min(prefix.Length, 54)]}_{hash}";
-        }
-
-        RequireIdentifier(name);
-
-        // Always lead with collection_path so Postgres can seek to a specific collection
-        // within the partial index (which is already narrowed to collection_id).
-        var exprs = new List<string> { "collection_path" };
-        foreach (var field in index.Fields)
-        {
-            var accessor = LiteralAccessor(field.Path);
-            var dir = field.Direction == SortDirection.Desc ? " DESC" : "";
-            exprs.Add($"(winche_rank({accessor})){dir}");
-            exprs.Add($"(winche_num({accessor})){dir}");
-            exprs.Add($"(winche_num2({accessor})){dir}");
-            exprs.Add($"(winche_text({accessor}) COLLATE \"C\"){dir}");
-            exprs.Add($"(winche_bytes({accessor})){dir}");
-            exprs.Add($"(winche_key({accessor})){dir}");
+            // Always lead with collection_path so Postgres can seek to a specific collection
+            // within the partial index (which is already narrowed to collection_id).
+            var exprs = new List<string> { "collection_path" };
+            foreach (var field in index.Fields)
+            {
+                var accessor = LiteralAccessor(field.Path);
+                var dir = field.Direction == SortDirection.Desc ? " DESC" : "";
+                exprs.Add($"(winche_rank({accessor})){dir}");
+                exprs.Add($"(winche_num({accessor})){dir}");
+                exprs.Add($"(winche_num2({accessor})){dir}");
+                exprs.Add($"(winche_text({accessor}) COLLATE \"C\"){dir}");
+                exprs.Add($"(winche_bytes({accessor})){dir}");
+                exprs.Add($"(winche_key({accessor})){dir}");
+            }
+            columns = $"({string.Join(", ", exprs)})";
         }
 
         var whereClause = $"WHERE collection_id = '{index.CollectionId.Replace("'", "''")}'";
         if (index.Where is not null)
             whereClause += $" AND ({IndexPredicateSql.Emit(index.Where)})";
 
-        return $"CREATE INDEX IF NOT EXISTS \"{name}\" ON \"{WincheDatabaseTables.Documents}\" ({string.Join(", ", exprs)}) {whereClause}";
+        var create = concurrently ? "CREATE INDEX CONCURRENTLY IF NOT EXISTS" : "CREATE INDEX IF NOT EXISTS";
+        return $"{create} \"{name}\" ON \"{WincheDatabaseTables.Documents}\" {columns} {whereClause}";
+    }
+
+    /// <summary>
+    /// The indexes on the documents table that <see cref="BuildCreate"/> made: built from winche_* field
+    /// functions and restricted to a collection id. Returns (name, valid).
+    /// </summary>
+    internal static string ListManaged() => $"""
+        SELECT c.relname, i.indisvalid
+        FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indexrelid
+        JOIN pg_class t ON t.oid = i.indrelid
+        WHERE t.relname = '{WincheDatabaseTables.Documents}'
+          AND t.relnamespace = current_schema()::regnamespace
+          AND (pg_get_indexdef(i.indexrelid) LIKE '%winche_rank(%' OR pg_get_indexdef(i.indexrelid) LIKE '%winche_array_keys(%')
+          AND pg_get_expr(i.indpred, i.indrelid) LIKE '%collection_id = %'
+        """;
+
+    /// <summary>DROP INDEX CONCURRENTLY (doesn't block writes; must run alone, outside a transaction).</summary>
+    internal static string BuildDropConcurrently(string name)
+    {
+        RequireIdentifier(name);
+        return $"DROP INDEX CONCURRENTLY IF EXISTS \"{name}\"";
     }
 
     public static string BuildDrop(string name)
