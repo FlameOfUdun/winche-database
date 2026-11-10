@@ -10,7 +10,9 @@ namespace Winche.Database.Querying.Sql;
 ///
 /// <para>Semantics mirror <c>FieldProjector</c> exactly:</para>
 /// <list type="bullet">
-///   <item>Paths absent in the document are silently omitted (CASE/strip_nulls).</item>
+///   <item>Paths absent in the document are silently omitted (each entry is added only when present).</item>
+///   <item>Stored values are copied as they are — including <c>{"nullValue": null}</c>, which a recursive
+///         <c>jsonb_strip_nulls</c> used to empty into an undecodable <c>{}</c>.</item>
 ///   <item>Ancestor wins: if both <c>address</c> and <c>address.city</c> are selected,
 ///         the whole <c>address</c> field is returned and deeper paths are ignored.</item>
 ///   <item>Path-through-non-map is silently omitted (the CASE IS NULL check).</item>
@@ -32,9 +34,7 @@ internal static class ProjectionSql
         // Build a prefix tree from the selected paths.
         var root = BuildTree(paths);
 
-        // Emit the outermost jsonb_strip_nulls(jsonb_build_object(…)) expression.
-        var entries = EmitEntries(root.Children, baseAccessor, bag);
-        return $"jsonb_strip_nulls(jsonb_build_object({entries}))";
+        return EmitObject(root.Children, baseAccessor, bag);
     }
 
     // ── Prefix tree ───────────────────────────────────────────────────────────
@@ -78,10 +78,12 @@ internal static class ProjectionSql
     // ── SQL emitters ──────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Emits the comma-separated key/value pairs for a <c>jsonb_build_object(…)</c> call,
-    /// one pair per child of <paramref name="children"/>.
+    /// A JSONB object with one entry per child that is present: <c>jsonb_build_object(…)</c>, then the entries
+    /// whose value is absent (SQL NULL, so JSON null at this level) are dropped — only at this level. A stored
+    /// value is always a tagged object, so nothing inside one (such as <c>{"nullValue": null}</c>) is touched;
+    /// the recursive <c>jsonb_strip_nulls</c> this replaces emptied those into an undecodable <c>{}</c>.
     /// </summary>
-    private static string EmitEntries(
+    private static string EmitObject(
         Dictionary<string, TrieNode> children,
         string accessor,
         ParameterBag bag)
@@ -94,16 +96,17 @@ internal static class ProjectionSql
             var valueExpr = node.IsLeaf
                 ? LeafExpr(accessor, nameParam)
                 : InteriorExpr(name, node, accessor, nameParam, bag);
-
             parts.Add(nameParam);
             parts.Add(valueExpr);
         }
-        return string.Join(", ", parts);
+        return "(SELECT COALESCE(jsonb_object_agg(e.key, e.value), '{}'::jsonb) " +
+               $"FROM jsonb_each(jsonb_build_object({string.Join(", ", parts)})) AS e " +
+               "WHERE jsonb_typeof(e.value) <> 'null')";
     }
 
     /// <summary>
     /// A leaf node: emit the tagged value at <c>accessor -&gt; nameParam</c>.
-    /// NULL (absent key) propagates up; <c>jsonb_strip_nulls</c> at the root removes it.
+    /// NULL (absent key) propagates up and the entry is left out (see <see cref="EmitObject"/>).
     /// </summary>
     private static string LeafExpr(string accessor, string nameParam) =>
         $"{accessor}->{nameParam}";
@@ -112,7 +115,7 @@ internal static class ProjectionSql
     /// An interior node: we need to descend through the map envelope
     /// (<c>mapValue → fields</c>) and recurse.  We emit a CASE expression so that
     /// when the key is absent OR the value is not a map the whole entry becomes NULL
-    /// and is stripped by <c>jsonb_strip_nulls</c> at the root.
+    /// and is left out.
     /// </summary>
     private static string InteriorExpr(
         string name,
@@ -125,14 +128,14 @@ internal static class ProjectionSql
         var childAccessor = $"{accessor}->{nameParam}->'{WireTags.MapValue}'->'{WireTags.Fields}'";
 
         // Recurse for the children of this interior node.
-        var childEntries = EmitEntries(node.Children, childAccessor, bag);
+        var childObject = EmitObject(node.Children, childAccessor, bag);
 
-        // Re-use nameParam for the CASE guard (it was already added to the bag above in EmitEntries).
+        // Re-use nameParam for the CASE guard (it was already added to the bag above in EmitObject).
         var sb = new StringBuilder();
         sb.Append($"CASE WHEN {accessor}->{nameParam}->'{WireTags.MapValue}'->'{WireTags.Fields}' IS NULL");
         sb.Append(" THEN NULL");
         sb.Append($" ELSE jsonb_build_object('{WireTags.MapValue}', jsonb_build_object('{WireTags.Fields}',");
-        sb.Append($" jsonb_strip_nulls(jsonb_build_object({childEntries})))) END");
+        sb.Append($" {childObject})) END");
         return sb.ToString();
     }
 }

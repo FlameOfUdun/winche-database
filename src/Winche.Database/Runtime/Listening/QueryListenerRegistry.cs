@@ -4,7 +4,6 @@ using Winche.Database.Documents;
 using Winche.Database.Querying;
 using Winche.Database.Querying.Ast;
 using Winche.Database.Querying.Matching;
-using Winche.Database.Querying.Planning;
 using Winche.Database.Runtime.ChangeFeed;
 
 namespace Winche.Database.Runtime.Listening;
@@ -30,7 +29,7 @@ public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionInd
                 return new QueryGroup
                 {
                     Key = key, IndexKey = indexKey, Query = query, Predicate = predicate, PredicateFailed = !ok,
-                    SortKeys = ok ? InMemoryQuery.SortKeysFor(query) : null,
+                    InMemory = ok && _config.ApplyChangesInMemory ? InMemoryQuery.For(query, _config.HeldBeyondLimit) : null,
                 };
             },
             listenOptions);
@@ -41,9 +40,21 @@ public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionInd
         QueryGroup group, Func<SubscriptionHandleBase<QuerySnapshot>, ValueTask> onDispose) =>
         new QueryHandle(onDispose, ExistingAsync);
 
-    protected override async Task InitializeStateAsync(QueryGroup group, CancellationToken ct)
+    protected override async Task InitializeStateAsync(QueryGroup group, CancellationToken ct) =>
+        await RequeryAsync(group, ct);
+
+    /// <summary>Runs the query; for an in-memory query, fetches the held window (whole documents, limit + spares).</summary>
+    private async Task RequeryAsync(QueryGroup group, CancellationToken ct)
     {
-        group.State = (await RunQueryAsync(group.Query, ct)).Documents;
+        if (group.InMemory is { } live)
+        {
+            group.Held = live.FromFetch((await RunQueryAsync(live.FetchQuery, ct)).Documents);
+            group.State = live.Result(group.Held);
+        }
+        else
+        {
+            group.State = (await RunQueryAsync(group.Query, ct)).Documents;
+        }
         group.LastQueried = DateTimeOffset.UtcNow;
     }
 
@@ -55,11 +66,11 @@ public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionInd
 
             if (record.Type == ChangeType.Removed)
             {
-                if (group.StatePaths.Contains(record.Path)) return true;
+                if (group.TrackedPaths.Contains(record.Path)) return true;
                 continue;
             }
 
-            if (group.StatePaths.Contains(record.Path)) return true;          // member changed
+            if (group.TrackedPaths.Contains(record.Path)) return true;        // member (or held spare) changed
             if (!batch.Documents.TryGetValue(record.Path, out var doc)) return true;   // gone again → conservative
             if (group.PredicateFailed) return true;
             if (group.Predicate is null) return true;                          // unfiltered query
@@ -78,18 +89,20 @@ public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionInd
     protected override async Task<(QuerySnapshot? Snapshot, bool Changed)> RecomputeAsync(
         QueryGroup group, ChangeBatch batch, CancellationToken ct)
     {
-        IReadOnlyList<Document>? newState = null;
-        if (_config.ApplyChangesInMemory
-            && group.SortKeys is { } keys
-            && DateTimeOffset.UtcNow - group.LastQueried < _config.ResyncInterval)
-            newState = InMemoryQuery.TryApply(group.Query, group.Predicate, keys, group.State, batch);
-        if (newState is null)
+        var oldState = group.State;
+        if (group.InMemory is { } live && group.Held is { } held
+            && DateTimeOffset.UtcNow - group.LastQueried < _config.ResyncInterval
+            && live.TryApply(held, batch) is { } applied)
         {
-            newState = (await RunQueryAsync(group.Query, ct)).Documents;
-            group.LastQueried = DateTimeOffset.UtcNow;
+            group.Held = applied;
+            group.State = live.Result(applied);
         }
-        var changes = SnapshotDiff.Compute(group.State, newState);
-        group.State = newState;
+        else
+        {
+            await RequeryAsync(group, ct);
+        }
+        var newState = group.State;
+        var changes = SnapshotDiff.Compute(oldState, newState);
         if (changes.Count == 0) return (null, false);
         return (new QuerySnapshot(newState, changes, batch.Records[^1].CommitTime, batch.Records.Max(r => r.Seq)), true);
     }
@@ -138,8 +151,21 @@ public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionInd
         public Filter? Predicate { get; init; }
         public bool PredicateFailed { get; init; }
 
-        /// <summary>The sort order, when this query's result can be kept up to date in memory; else null.</summary>
-        internal IReadOnlyList<SortKey>? SortKeys { get; init; }
+        /// <summary>How this query is kept up to date in memory; null when it is always re-run.</summary>
+        internal InMemoryQuery? InMemory { get; init; }
+
+        private HeldWindow? _held;
+        private HashSet<string>? _heldPaths;
+
+        /// <summary>The documents held for in-memory updates (the result plus spares beyond the limit).</summary>
+        internal HeldWindow? Held
+        {
+            get => _held;
+            set { _held = value; _heldPaths = value is null ? null : new HashSet<string>(value.Documents.Select(d => d.Path), StringComparer.Ordinal); }
+        }
+
+        /// <summary>Paths whose change can alter this query's state: the held documents, else the result.</summary>
+        internal IReadOnlySet<string> TrackedPaths => _heldPaths ?? _statePaths;
 
         /// <summary>When the query was last run against the database.</summary>
         internal DateTimeOffset LastQueried { get; set; }

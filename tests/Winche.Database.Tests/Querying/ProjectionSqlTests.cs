@@ -27,9 +27,11 @@ public class ProjectionSqlTests
     {
         var (sql, _) = Build("name");
 
-        // Should be jsonb_strip_nulls(jsonb_build_object($1, d.data->$2))
+        // An object built from the entries, minus the absent ones (only at this level).
         // Both the key and the accessor share the same parameter placeholder.
-        Assert.StartsWith("jsonb_strip_nulls(jsonb_build_object(", sql);
+        Assert.StartsWith("(SELECT COALESCE(jsonb_object_agg(", sql);
+        Assert.Contains("jsonb_build_object(", sql);
+        Assert.DoesNotContain("jsonb_strip_nulls", sql);   // recursive: emptied stored {"nullValue": null}
         Assert.Contains("d.data->", sql);
     }
 
@@ -120,6 +122,16 @@ public class ProjectionSqlTests
     }
 
     [Fact]
+    public void DeepPaths_GrowTheSqlLinearly()
+    {
+        // Each level's value expression is emitted once, so depth doesn't blow the SQL up.
+        var (sql10, _) = Build(string.Join('.', Enumerable.Range(0, 10).Select(i => $"f{i}")));
+        var (sql20, _) = Build(string.Join('.', Enumerable.Range(0, 20).Select(i => $"f{i}")));
+        Assert.Equal(10, CountOccurrences(sql10, "jsonb_each("));
+        Assert.True(sql20.Length < sql10.Length * 3, $"{sql10.Length} → {sql20.Length}");
+    }
+
+    [Fact]
     public void FieldNameIsParameterized_NoLiteralNameInSql()
     {
         var (sql, bag) = Build("secretField");
@@ -138,8 +150,9 @@ public class ProjectionSqlTests
     {
         var (sql, _) = Build("displayName");
 
-        // Expected: jsonb_strip_nulls(jsonb_build_object($1, d.data->$1))
-        Assert.Equal("jsonb_strip_nulls(jsonb_build_object($1, d.data->$1))", sql);
+        Assert.Equal(
+            "(SELECT COALESCE(jsonb_object_agg(e.key, e.value), '{}'::jsonb) " +
+            "FROM jsonb_each(jsonb_build_object($1, d.data->$1)) AS e WHERE jsonb_typeof(e.value) <> 'null')", sql);
     }
 
     [Fact]
@@ -149,7 +162,7 @@ public class ProjectionSqlTests
 
         // Both fields emit leaf expressions: each field uses a single parameter for both the
         // key and the ->> accessor. Order of parameters is not guaranteed; check structure.
-        Assert.StartsWith("jsonb_strip_nulls(jsonb_build_object(", sql);
+        Assert.StartsWith("(SELECT COALESCE(jsonb_object_agg(", sql);
         // Each field: $N, d.data->$N  (two times total)
         Assert.Equal(2, CountOccurrences(sql, "d.data->$"));
         Assert.DoesNotContain("'mapValue'", sql);

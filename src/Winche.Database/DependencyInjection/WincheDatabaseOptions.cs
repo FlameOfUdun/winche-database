@@ -169,10 +169,15 @@ public sealed record ListenerConfig
 {
     /// <summary>
     /// Apply a change to a live query's result in memory when that gives the exact result, instead of
-    /// re-running the query (default true). Queries with select, offset, limitToLast or cursors are always
-    /// re-run, as are limited queries whose full window loses or changes a member.
+    /// re-running the query (default true). Queries with an offset are always re-run.
     /// </summary>
     public bool ApplyChangesInMemory { get; init; } = true;
+
+    /// <summary>
+    /// How many documents past its limit a live query holds (default 10), so that when members leave the
+    /// next ones move up without a re-query; it re-runs once those run out.
+    /// </summary>
+    public int HeldBeyondLimit { get; init; } = 10;
 
     /// <summary>
     /// A live query updated in memory re-runs its real query on the first change after this long

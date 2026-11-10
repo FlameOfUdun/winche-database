@@ -50,11 +50,13 @@ public class InMemoryQueryAgreementTests(PostgresFixture fx) : QueryTestBase(fx)
 
     private static FieldPath F(string p) => FieldPath.Parse(p);
 
+    private static Cursor At(bool before, params Value[] values) => new(values, before);
+
     private static readonly Query[] Queries =
     [
-        new(Coll),
+        new(Coll),                                                                    // default limit 100: more than that exist
         new(Coll, OrderBy: [new Ordering(F("n"))]),
-        new(Coll, OrderBy: [new Ordering(F("n"), SortDirection.Desc)]),
+        new(Coll, OrderBy: [new Ordering(F("n"), SortDirection.Desc)], Limit: 500),  // effectively everything
         new(Coll, Where: new FieldFilter(F("n"), FilterOperator.Gt, new IntegerValue(0)), OrderBy: [new Ordering(F("n"))]),
         new(Coll, Where: new FieldFilter(F("s"), FilterOperator.Gte, new StringValue("b")), OrderBy: [new Ordering(F("s"), SortDirection.Desc)]),
         new(Coll, Where: new FieldFilter(F("tag"), FilterOperator.Eq, new StringValue("a")), OrderBy: [new Ordering(F("m.x"))]),
@@ -64,9 +66,25 @@ public class InMemoryQueryAgreementTests(PostgresFixture fx) : QueryTestBase(fx)
         new(Coll, Where: new CompositeFilter(CompositeOp.Or, [
             new FieldFilter(F("n"), FilterOperator.Eq, new IntegerValue(1)),
             new FieldFilter(F("s"), FilterOperator.Eq, new StringValue("a"))])),
-        new(Coll, OrderBy: [new Ordering(F("tag")), new Ordering(F("n"), SortDirection.Desc)]),
+        new(Coll, OrderBy: [new Ordering(F("tag")), new Ordering(F("n"), SortDirection.Desc)], Limit: 7),
         new(Coll, Where: new FieldFilter(F("n"), FilterOperator.Ne, new NullValue()), OrderBy: [new Ordering(F("n"), SortDirection.Desc)], Limit: 6),
+        // select (whole documents held, projection applied on output; values include null)
+        new(Coll, OrderBy: [new Ordering(F("n"))], Limit: 5, Select: [F("n"), F("m.x")]),
+        new(Coll, Where: new FieldFilter(F("tag"), FilterOperator.Eq, new StringValue("b")), Select: [F("m"), F("s")]),
+        // cursors
+        new(Coll, OrderBy: [new Ordering(F("n"))], Start: At(true, new IntegerValue(0)), Limit: 8),
+        new(Coll, OrderBy: [new Ordering(F("s"), SortDirection.Desc)], Start: At(false, new StringValue("b")), End: At(false, new StringValue("")), Limit: 9),
+        new(Coll, OrderBy: [new Ordering(F("n"))], Start: At(false, new IntegerValue(1), new StringValue($"{Coll}/d50")), Limit: 5),
+        new(Coll, OrderBy: [new Ordering(F("tag"))], End: At(true, new StringValue("b"))),
+        // limitToLast
+        new(Coll, OrderBy: [new Ordering(F("n"))], LimitToLast: 4),
+        new(Coll, Where: new FieldFilter(F("tag"), FilterOperator.In, new ArrayValue([new StringValue("a"), new StringValue("b")])),
+            OrderBy: [new Ordering(F("s"), SortDirection.Desc)], LimitToLast: 3, Select: [F("s")]),
     ];
+
+    private static bool SameFields(Document a, Document b) =>
+        a.Fields.Count == b.Fields.Count
+        && ValueComparer.Instance.Compare(new MapValue(a.Fields), new MapValue(b.Fields)) == 0;
 
     private async Task<IReadOnlyList<Document>> FreshAsync(Query query)
     {
@@ -83,23 +101,27 @@ public class InMemoryQueryAgreementTests(PostgresFixture fx) : QueryTestBase(fx)
         var rng = new Random(seed);
         var applier = new WriteApplier(Fx.DataSource);
         var reader = new ChangeFeedReader(Fx.DataSource);
+        const int pool = 140;
+
+        // Start with more documents than the default limit (100).
+        for (var i = 0; i < 130; i += 10)
+            await applier.ApplyAsync([.. Enumerable.Range(i, 10).Select(j => new SetWrite { Path = $"{Coll}/d{j}", Fields = RandomFields(rng) })]);
         var position = await reader.GetHeadAsync();
 
-        var states = new List<IReadOnlyList<Document>>();
-        foreach (var q in Queries) states.Add(await FreshAsync(q));
-        var keys = Queries.Select(InMemoryQuery.SortKeysFor).ToList();
-        var predicates = Queries.Select(q => { ChangeMatcher.TryPreparePredicate(q, out var p); return p; }).ToList();
+        var lives = Queries.Select(q => InMemoryQuery.For(q, buffer: 10)!).ToList();
+        var held = new List<HeldWindow>();
+        foreach (var live in lives) held.Add(live.FromFetch(await FreshAsync(live.FetchQuery)));
         int inMemory = 0, requeried = 0;
 
         for (var round = 0; round < 120; round++)
         {
             var writes = new List<Write>();
             var touched = new HashSet<string>();
-            for (var w = rng.Next(1, 6); w > 0; w--)
+            for (var w = rng.Next(1, 8); w > 0; w--)
             {
-                var path = $"{Coll}/d{rng.Next(25)}";
+                var path = $"{Coll}/d{rng.Next(pool)}";
                 if (!touched.Add(path)) continue;
-                writes.Add(rng.Next(5) == 0 ? new DeleteWrite { Path = path } : new SetWrite { Path = path, Fields = RandomFields(rng) });
+                writes.Add(rng.Next(4) == 0 ? new DeleteWrite { Path = path } : new SetWrite { Path = path, Fields = RandomFields(rng) });
             }
             await applier.ApplyAsync(writes);
 
@@ -110,30 +132,56 @@ public class InMemoryQueryAgreementTests(PostgresFixture fx) : QueryTestBase(fx)
 
             for (var i = 0; i < Queries.Length; i++)
             {
+                if (lives[i].TryApply(held[i], batch) is { } applied) { held[i] = applied; inMemory++; }
+                else { held[i] = lives[i].FromFetch(await FreshAsync(lives[i].FetchQuery)); requeried++; }
+
                 var fresh = await FreshAsync(Queries[i]);
-                var applied = keys[i] is { } k ? InMemoryQuery.TryApply(Queries[i], predicates[i], k, states[i], batch) : null;
-                if (applied is null) { requeried++; states[i] = fresh; continue; }
-                inMemory++;
-                Assert.True(fresh.Select(d => d.Path).SequenceEqual(applied.Select(d => d.Path)),
-                    $"seed {seed} round {round} query {i}:\n  sql:       {string.Join(", ", fresh.Select(d => d.Id))}\n  in memory: {string.Join(", ", applied.Select(d => d.Id))}");
-                Assert.True(fresh.Select(d => d.Version).SequenceEqual(applied.Select(d => d.Version)), $"seed {seed} round {round} query {i}: versions differ");
-                states[i] = applied;
+                var result = lives[i].Result(held[i]);
+                var where = $"seed {seed} round {round} query {i}";
+                Assert.True(fresh.Select(d => d.Path).SequenceEqual(result.Select(d => d.Path)),
+                    $"{where}:\n  sql:       {string.Join(", ", fresh.Select(d => d.Id))}\n  in memory: {string.Join(", ", result.Select(d => d.Id))}");
+                for (var j = 0; j < fresh.Count; j++)
+                {
+                    Assert.True(fresh[j].Version == result[j].Version, $"{where}: version of {fresh[j].Id}");
+                    Assert.True(SameFields(fresh[j], result[j]), $"{where}: fields of {fresh[j].Id}");
+                }
             }
         }
 
         // Most updates must have been in memory, or the feature does nothing.
-        Assert.True(inMemory > requeried * 3, $"in memory {inMemory}, re-queried {requeried}");
+        Assert.True(inMemory > requeried * 4, $"in memory {inMemory}, re-queried {requeried}");
     }
 
     [Fact]
-    public void Queries_that_depend_on_documents_outside_the_result_always_requery()
+    public async Task Select_returns_fields_that_hold_null()
     {
-        Assert.Null(InMemoryQuery.SortKeysFor(new Query(Coll, Select: [F("n")])));
-        Assert.Null(InMemoryQuery.SortKeysFor(new Query(Coll, OrderBy: [new Ordering(F("n"))], Offset: 2)));
-        Assert.Null(InMemoryQuery.SortKeysFor(new Query(Coll, OrderBy: [new Ordering(F("n"))], LimitToLast: 2)));
-        Assert.Null(InMemoryQuery.SortKeysFor(new Query(Coll, OrderBy: [new Ordering(F("n"))],
-            Start: new Cursor([new IntegerValue(1)], Before: true))));
-        Assert.NotNull(InMemoryQuery.SortKeysFor(new Query(Coll, OrderBy: [new Ordering(F("n"))], Limit: 3)));
+        // The SQL projection used to strip {"nullValue": null} to an undecodable {}.
+        await SeedDoc("p", new()
+        {
+            ["f"] = new NullValue(),
+            ["a"] = new ArrayValue([new NullValue(), new IntegerValue(1)]),
+            ["m"] = new MapValue(new Dictionary<string, Value> { ["x"] = new NullValue(), ["y"] = new IntegerValue(2) }),
+            ["skip"] = new IntegerValue(3),
+        }, "proj");
+
+        var doc = Assert.Single((await Run(new Query("proj", Select: [F("f"), F("a"), F("m.x"), F("missing"), F("skip.deeper")]))).Documents);
+
+        Assert.Equal(["a", "f", "m"], doc.Fields.Keys.Order(StringComparer.Ordinal));
+        Assert.IsType<NullValue>(doc.Fields["f"]);
+        Assert.Equal(2, ((ArrayValue)doc.Fields["a"]).Values.Count);
+        var m = (MapValue)doc.Fields["m"];
+        Assert.Equal(["x"], m.Fields.Keys);
+        Assert.IsType<NullValue>(m.Fields["x"]);
+    }
+
+    [Fact]
+    public void Only_an_offset_always_requeries()
+    {
+        Assert.Null(InMemoryQuery.For(new Query(Coll, OrderBy: [new Ordering(F("n"))], Offset: 2), 10));
+        Assert.NotNull(InMemoryQuery.For(new Query(Coll, OrderBy: [new Ordering(F("n"))], Offset: 0), 10));
+        Assert.NotNull(InMemoryQuery.For(new Query(Coll, Select: [F("n")]), 10));
+        Assert.NotNull(InMemoryQuery.For(new Query(Coll, OrderBy: [new Ordering(F("n"))], LimitToLast: 2), 10));
+        Assert.NotNull(InMemoryQuery.For(new Query(Coll, OrderBy: [new Ordering(F("n"))], Start: At(true, new IntegerValue(1))), 10));
     }
 
     [Fact]
