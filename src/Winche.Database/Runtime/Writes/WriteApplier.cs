@@ -44,6 +44,37 @@ public sealed class WriteApplier(
         IReadOnlyDictionary<string, DateTimeOffset?>? readValidations = null,
         CancellationToken ct = default)
     {
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        var outcome = "error";
+        try
+        {
+            var results = await ApplyCoreAsync(writes, readValidations, ct);
+            outcome = "ok";
+            WincheDatabaseMetrics.WriteDocuments.Add(writes.Count);
+            return results;
+        }
+        catch (RuntimeException ex)
+        {
+            outcome = ex.Status == RuntimeStatus.Aborted ? "aborted" : "invalid";
+            throw;
+        }
+        catch (Authorization.AccessDeniedException)
+        {
+            outcome = "denied";
+            throw;
+        }
+        finally
+        {
+            WincheDatabaseMetrics.WriteDuration.Record(System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalSeconds,
+                WincheDatabaseMetrics.Tags("outcome", outcome));
+        }
+    }
+
+    private async Task<IReadOnlyList<WriteResult>> ApplyCoreAsync(
+        IReadOnlyList<Write> writes,
+        IReadOnlyDictionary<string, DateTimeOffset?>? readValidations,
+        CancellationToken ct)
+    {
         if (writes.Count > 0)
             WriteValidator.Validate(writes);
         else if (readValidations is null || readValidations.Count == 0)

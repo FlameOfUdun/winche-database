@@ -78,6 +78,11 @@ public sealed class DocumentListenerRegistry(NpgsqlDataSource source, ListenerCo
 
     protected override IEnumerable<string> IndexKeysOf(ChangeRecord record) => [record.Path];
 
+    protected override string MetricKind => "document";
+
+    // The changed document comes with the batch: never a query.
+    protected override string UpdateMethodOf(DocumentGroup group) => "in_memory";
+
     // ── Group / handle ─────────────────────────────────────────────────────────
 
     public sealed class DocumentGroup : SubscriptionGroup<DocumentSnapshot>

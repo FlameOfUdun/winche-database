@@ -62,6 +62,9 @@ public static class WebApplicationExtensions
             await next(context);
         });
 
+    // The metric tag takes only these (a client-chosen string would let one client create unbounded series).
+    private static readonly HashSet<string> KnownTypes = new(StringComparer.Ordinal) { "ping", "doc.get", "doc.getAll", "query", "count", "aggregate", "add", "write", "tx.begin", "tx.get", "tx.query", "tx.commit", "tx.rollback", "listen", "doc.listen", "unlisten" };
+
     private static async Task HandleAsync(HttpContext context)
     {
         if (!context.WebSockets.IsWebSocketRequest)
@@ -78,6 +81,7 @@ public static class WebApplicationExtensions
 
         using var socket = await context.WebSockets.AcceptWebSocketAsync();
         await using var conn = new WsConnection(socket, options);
+        Winche.Database.Runtime.WincheDatabaseMetrics.WsConnections.Add(1);
         using var sendLoopCts = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, conn.Closed);
         var sendLoop = conn.RunSendLoopAsync(sendLoopCts.Token);
 
@@ -118,6 +122,9 @@ public static class WebApplicationExtensions
                 ClientMessage? message;
                 using (doc)
                 {
+                    var type = doc.RootElement.ValueKind == JsonValueKind.Object && doc.RootElement.TryGetProperty("type", out var t)
+                               && t.ValueKind == JsonValueKind.String ? t.GetString() : null;
+                    Winche.Database.Runtime.WincheDatabaseMetrics.WsRequests.Add(1, Winche.Database.Runtime.WincheDatabaseMetrics.Tags("type", type is not null && KnownTypes.Contains(type) ? type : "other"));
                     try
                     {
                         message = JsonSerializer.Deserialize<ClientMessage>(doc);
@@ -151,6 +158,7 @@ public static class WebApplicationExtensions
         }
         finally
         {
+            Winche.Database.Runtime.WincheDatabaseMetrics.WsConnections.Add(-1);
             await scope.DisposeAsync();
             await conn.DrainAndCloseAsync(sendLoop, WebSocketCloseStatus.NormalClosure, "bye");
         }

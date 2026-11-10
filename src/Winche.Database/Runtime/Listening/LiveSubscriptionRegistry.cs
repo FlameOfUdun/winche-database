@@ -53,6 +53,12 @@ public abstract class LiveSubscriptionRegistry<TGroup, TSnapshot>(NpgsqlDataSour
     /// <summary>True when the feed has a change relevant to this group from a transaction after <paramref name="throughTxId"/>.</summary>
     protected abstract Task<bool> HasRelevantChangesAfterAsync(TGroup group, ulong throughTxId, CancellationToken ct);
 
+    /// <summary>The <c>kind</c> tag on this registry's metrics (query, document).</summary>
+    protected abstract string MetricKind { get; }
+
+    /// <summary>How the last <see cref="RecomputeAsync"/> brought <paramref name="group"/> up to date (<c>method</c> tag).</summary>
+    protected virtual string UpdateMethodOf(TGroup group) => "requery";
+
     /// <summary>The relevance buckets a change record belongs to (its collection and collection group, or its document path).</summary>
     protected abstract IEnumerable<string> IndexKeysOf(ChangeRecord record);
 
@@ -77,6 +83,7 @@ public abstract class LiveSubscriptionRegistry<TGroup, TSnapshot>(NpgsqlDataSour
         }
 
         var handle = CreateHandle(group, h => RemoveAsync(group, h));
+        WincheDatabaseMetrics.Listeners.Add(1, WincheDatabaseMetrics.Tags("kind", MetricKind));
         // I3: the handle is NOT added to group.Handles here; DeliverInitialAsync adds it under the
         // semaphore, immediately before the initial snapshot, so it never sees a diff first.
         _ = DeliverInitialAsync(group, handle, listenOptions);
@@ -85,6 +92,7 @@ public abstract class LiveSubscriptionRegistry<TGroup, TSnapshot>(NpgsqlDataSour
 
     private ValueTask RemoveAsync(TGroup group, SubscriptionHandleBase<TSnapshot> handle)
     {
+        WincheDatabaseMetrics.Listeners.Add(-1, WincheDatabaseMetrics.Tags("kind", MetricKind));
         lock (group.Gate) group.Handles.Remove(handle);
         lock (_gate)
         {
@@ -212,7 +220,13 @@ public abstract class LiveSubscriptionRegistry<TGroup, TSnapshot>(NpgsqlDataSour
             group.Dirty = false;   // clear before recompute; set again on failure
 
             (TSnapshot? Snapshot, bool Changed) result;
-            try { result = await RecomputeAsync(group, batch, ct); }
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            try
+            {
+                result = await RecomputeAsync(group, batch, ct);
+                WincheDatabaseMetrics.ListenerUpdateDuration.Record(System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalSeconds,
+                    WincheDatabaseMetrics.Tags("kind", MetricKind, "method", UpdateMethodOf(group)));
+            }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception)
             {

@@ -11,6 +11,17 @@ namespace Winche.Database.Querying;
 /// <summary>The query path end-to-end: normalize → compile → execute → decode.</summary>
 public sealed class QueryExecutor(NpgsqlConnection conn, NpgsqlTransaction? tx, CollectionIndexResolver? scopes = null)
 {
+    private void Observe(string operation, Query query, TimeSpan elapsed, LogicalPlan? plan = null)
+    {
+        var collectionId = query.CollectionGroup ? query.Collection : DocumentPathParser.CollectionIdOf(query.Collection);
+        Runtime.WincheDatabaseMetrics.QueryDuration.Record(elapsed.TotalSeconds, new System.Diagnostics.TagList
+        {
+            { "operation", operation }, { "collection_id", collectionId }, { "collection_group", query.CollectionGroup },
+            { "indexed", scopes?.ScopeFor(query.Collection) is not null },
+        });
+        scopes?.Observe(query, plan ?? Plan(query), elapsed);
+    }
+
     private LogicalPlan Plan(Query query)
     {
         var plan = Normalizer.Normalize(query);
@@ -31,7 +42,7 @@ public sealed class QueryExecutor(NpgsqlConnection conn, NpgsqlTransaction? tx, 
         List<Document> docs;
         await using (var reader = await cmd.ExecuteReaderAsync(ct))
             docs = [.. await TypedDocumentReader.ReadAllAsync(reader, ct)];
-        scopes?.Observe(query, plan, Stopwatch.GetElapsedTime(started));
+        Observe("query", query, Stopwatch.GetElapsedTime(started), plan);
 
         // hasMore: a row beyond the page exists. For limitToLast (ReverseResult), the query ran
         // reversed, so this means a row exists BEFORE the returned window, not after it.
@@ -58,7 +69,7 @@ public sealed class QueryExecutor(NpgsqlConnection conn, NpgsqlTransaction? tx, 
         compiled.Apply(cmd);
 
         var count = Convert.ToInt64(await cmd.ExecuteScalarAsync(ct));
-        scopes?.Observe(query, plan, Stopwatch.GetElapsedTime(started));
+        Observe("count", query, Stopwatch.GetElapsedTime(started), plan);
         return count;
     }
 
@@ -74,6 +85,7 @@ public sealed class QueryExecutor(NpgsqlConnection conn, NpgsqlTransaction? tx, 
         var plan = Plan(query);
         var compiled = AggregateSql.Compile(plan, aggregations, query.Limit, scopes?.ScopeFor(query.Collection));
 
+        var started = Stopwatch.GetTimestamp();
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         compiled.Apply(cmd);
@@ -118,6 +130,7 @@ public sealed class QueryExecutor(NpgsqlConnection conn, NpgsqlTransaction? tx, 
         // The per-aggregation column offsets above must match AggregateSql's emit layout (Count=1, Sum=3, Average=1).
         Debug.Assert(col == reader.FieldCount, "aggregate column read count must match the emitted columns");
 
+        Observe("aggregate", query, Stopwatch.GetElapsedTime(started), plan);
         return new AggregationResult(values);
     }
 }

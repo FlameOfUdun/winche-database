@@ -96,10 +96,12 @@ public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionInd
         {
             group.Held = applied;
             group.State = live.Result(applied);
+            group.LastUpdateMethod = "in_memory";
         }
         else
         {
             await RequeryAsync(group, ct);
+            group.LastUpdateMethod = "requery";
         }
         var newState = group.State;
         var changes = SnapshotDiff.Compute(oldState, newState);
@@ -121,6 +123,10 @@ public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionInd
     // A change is in its collection's bucket and its collection group's ("group:<id>").
     protected override IEnumerable<string> IndexKeysOf(ChangeRecord record) =>
         [record.Collection, GroupBucket(DocumentPathParser.CollectionIdOf(record.Collection))];
+
+    protected override string MetricKind => "query";
+
+    protected override string UpdateMethodOf(QueryGroup group) => group.LastUpdateMethod;
 
     private static string GroupBucket(string collectionId) => "group:" + collectionId;
 
@@ -178,6 +184,9 @@ public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionInd
 
         /// <summary>Paths whose change can alter this query's state: the held documents, else the result.</summary>
         internal IReadOnlySet<string> TrackedPaths => _heldPaths ?? _statePaths;
+
+        /// <summary>How the last update was made (metrics): in_memory or requery.</summary>
+        internal string LastUpdateMethod { get; set; } = "requery";
 
         /// <summary>When the query was last run against the database.</summary>
         internal DateTimeOffset LastQueried { get; set; }

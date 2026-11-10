@@ -18,6 +18,7 @@ internal sealed class RequestThrottle(int perSecond, int burst, TimeProvider? cl
         Refill();
         if (_tokens < 1)
         {
+            Winche.Database.Runtime.WincheDatabaseMetrics.WsThrottled.Add(1);
             var wait = TimeSpan.FromSeconds((1 - _tokens) / perSecond);
             await Task.Delay(wait, _clock, ct);
             Refill();

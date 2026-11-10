@@ -121,6 +121,7 @@ public sealed class DurableConsumerRunner(
             catch (Exception caught)
             {
                 failures++;
+                WincheDatabaseMetrics.HookFailures.Add(1, WincheDatabaseMetrics.Tags("consumer", _name));
                 var ex = caught;
                 ChangeRecord record;
                 if (caught is ChangeDeliveryException { Delivered: var delivered } partial && delivered < records.Count)
@@ -169,6 +170,9 @@ public sealed class DurableConsumerRunner(
 
             cursor = records[^1].Position;
             failures = 0;
+            WincheDatabaseMetrics.HookChanges.Add(records.Count, WincheDatabaseMetrics.Tags("consumer", _name));
+            WincheDatabaseMetrics.HookLag.Record(Math.Max(0, (DateTimeOffset.UtcNow - records[^1].CommitTime).TotalSeconds),
+                WincheDatabaseMetrics.Tags("consumer", _name));
             // Persist cursor AFTER successful delivery; persist failures log a warning
             // but do NOT count as delivery failure — redelivery possible after restart.
             try
@@ -197,6 +201,7 @@ public sealed class DurableConsumerRunner(
             if (config.DeadLetterAfter is not { } limit || failingFor < limit) return false;
 
             await _reader.DeadLetterAsync(_name, record, ct);
+            WincheDatabaseMetrics.HookDeadLetters.Add(1, WincheDatabaseMetrics.Tags("consumer", _name));
             logger.LogError(error,
                 "Durable consumer '{Consumer}' gave up on change {Seq} ({Type} {Path}) after {Attempts} attempts over {FailingFor}; " +
                 "moved it to the dead letters (replay with ChangeFeedConsumers.ReplayDeadLettersAsync)",

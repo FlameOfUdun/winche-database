@@ -63,6 +63,7 @@ public sealed class WsConnectionRegistry(NpgsqlDataSource source, ILogger<WsConn
             foreach (var oldest in connections.Keys.Where(k => k != id).Order().Take(Math.Max(0, connections.Count - maxPerUser)).ToList())
             {
                 if (!connections.TryRemove(oldest, out var evict)) continue;
+                Winche.Database.Runtime.WincheDatabaseMetrics.WsLimited.Add(1, Winche.Database.Runtime.WincheDatabaseMetrics.Tags("limit", "connections"));
                 logger.LogInformation("Closing a user's oldest WebSocket connection: more than {Max} open", maxPerUser);
                 _ = Task.Run(async () =>
                 {

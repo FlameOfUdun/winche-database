@@ -93,7 +93,13 @@ public sealed class MessageRouter
         return Ok(id, []);
     }
 
-    private static ErrorMessage TooManySubscriptions(ConnectionScope scope, string id) => new()
+    private static ErrorMessage TooManySubscriptions(ConnectionScope scope, string id)
+    {
+        Winche.Database.Runtime.WincheDatabaseMetrics.WsLimited.Add(1, Winche.Database.Runtime.WincheDatabaseMetrics.Tags("limit", "subscriptions"));
+        return TooManySubscriptionsError(scope, id);
+    }
+
+    private static ErrorMessage TooManySubscriptionsError(ConnectionScope scope, string id) => new()
     {
         Id = id,
         Status = "RESOURCE_EXHAUSTED",
@@ -128,6 +134,7 @@ public sealed class MessageRouter
         ConnectionScope scope, string subscriptionId, IAsyncDisposable listener, Task pump, CancellationTokenSource cts, string id)
     {
         lock (scope.Gate) scope.Subscriptions[subscriptionId] = new ConnectionScope.Subscription(listener, pump, cts);
+        Winche.Database.Runtime.WincheDatabaseMetrics.WsSubscriptions.Add(1);
         return Ok(id, new JsonObject { ["subscriptionId"] = subscriptionId });
     }
 
@@ -140,6 +147,7 @@ public sealed class MessageRouter
         }
         if (sub is not null)
         {
+            Winche.Database.Runtime.WincheDatabaseMetrics.WsSubscriptions.Add(-1);
             sub.Cts.Cancel();
             try { await sub.Listener.DisposeAsync(); } catch { }
         }

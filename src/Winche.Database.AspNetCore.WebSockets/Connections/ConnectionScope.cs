@@ -60,6 +60,7 @@ public sealed class ConnectionScope(
         {
             subs = [.. Subscriptions.Values];
             Subscriptions.Clear();
+            if (subs.Count > 0) Winche.Database.Runtime.WincheDatabaseMetrics.WsSubscriptions.Add(-subs.Count);
             txs = [.. Transactions];
             Transactions.Clear();
         }

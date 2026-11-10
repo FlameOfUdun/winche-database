@@ -919,6 +919,37 @@ See [PROTOCOL](docs/PROTOCOL.md#7-websocket-protocol) for full message shapes, c
 | `MaxConnectionsPerUser` | 10 | the user's **oldest** connection is closed with code 4429 (the new one stays) |
 | `RequestsPerSecond` / `RequestBurst` | 50 / 100 | the connection's next request is read later — slowed, never refused, so an offline write queue never has a write rejected |
 
+## Metrics (10.5.0)
+
+The library publishes `System.Diagnostics.Metrics` instruments on the `Winche.Database` meter
+(`WincheDatabaseMetrics.MeterName`). Collect them with OpenTelemetry:
+
+```csharp
+builder.Services.AddOpenTelemetry().WithMetrics(m => m
+    .AddMeter(WincheDatabaseMetrics.MeterName)
+    .AddOtlpExporter());   // or Prometheus, CloudWatch via the OTel collector, …
+```
+
+or watch them live with `dotnet-counters monitor --counters Winche.Database`. With nothing listening,
+recording costs next to nothing.
+
+| Instrument | Unit | Tags | What |
+| --- | --- | --- | --- |
+| `winche.database.query.duration` | s | `operation` (query/count/aggregate), `collection_id`, `collection_group`, `indexed` | query time |
+| `winche.database.write.duration` | s | `outcome` (ok/aborted/denied/invalid/error) | write batch / commit time |
+| `winche.database.write.documents` | | | writes committed |
+| `winche.database.listeners` | | `kind` (query/document) | live listeners held (up/down) |
+| `winche.database.listener.update.duration` | s | `kind`, `method` (in_memory/requery) | bringing a listener up to date |
+| `winche.database.hook.changes` | | `consumer` | changes delivered to hooks |
+| `winche.database.hook.lag` | s | `consumer` | commit → delivery |
+| `winche.database.hook.failures`, `…hook.dead_letters` | | `consumer` | failed deliveries, changes given up on |
+| `winche.database.ws.connections`, `…ws.subscriptions` | | | open WebSocket connections / subscriptions (up/down) |
+| `winche.database.ws.requests` | | `type` | WebSocket requests |
+| `winche.database.ws.throttled`, `…ws.limited` | | `limit` (subscriptions/connections) | delayed by the rate limit; refused or closed by a limit |
+
+Useful alarms: `hook.lag` p95 above a few minutes, any `hook.dead_letters`, `write.duration{outcome=aborted}`
+rising, `query.duration{indexed=false}` p95 above the slow-query threshold.
+
 ## Upgrading to 10.5.0
 
 Cascade deletes and subtree reads (TTL, deleting a document with `Cascade = true`) used `LIKE 'path/%'`, which can't use an index under the usual en_US-style database collation, so each one scanned the whole documents table. They now match the path as a byte-order range, served by a new index `idx_winche_documents_path_c` on `document_path COLLATE "C"`, which also speeds up collection listing. The first start builds the index with `CREATE INDEX CONCURRENTLY`, so writes carry on meanwhile; on a large table that start takes a little longer. An index left invalid by an interrupted build is dropped and rebuilt on the next start.
@@ -936,6 +967,8 @@ Collection group queries: `Query.CollectionGroup` (wire `"collectionGroup": true
 Hooks: `h.Add<MyHook>(path, withSnapshots: true)` + `OnChangeAsync(DocumentChange)` give the document before and after each change. Startup adds `before`/`after` columns to the change feed.
 
 WebSocket limits: at most 100 subscriptions per connection, 10 connections per user (the oldest is closed with 4429), and 50 requests/s per connection (excess is delayed, not refused) — see `WsOptions`. Raise them if your clients need more (e.g. a large offline queue drains at the request rate).
+
+Metrics: the `Winche.Database` meter (see [Metrics](#metrics-1050)).
 
 `select` no longer fails on a selected field that holds `null` (or contains one): the projection used `jsonb_strip_nulls`, which emptied the stored `{"nullValue": null}` into an undecodable `{}`.
 
