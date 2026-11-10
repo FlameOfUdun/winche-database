@@ -472,6 +472,23 @@ public interface IDocumentDatabase
 }
 ```
 
+### Subtree export and delete (10.5.0)
+
+On the unguarded core (`DocumentDatabase`, server code — not rule-checked):
+
+```csharp
+// Everything at or under a document, in path order, 500 at a time (memory stays flat) — e.g. a GDPR export.
+await foreach (var doc in core.ExportSubtreeAsync("userData/" + uid))
+    await writer.WriteAsync(doc);
+
+// Delete it, 200 documents per transaction, deepest first. Returns the count; safe to re-run after an
+// interruption (it carries on). Hooks, live queries and metrics see every delete.
+long deleted = await core.DeleteSubtreeAsync("userData/" + uid);
+```
+
+Unlike `DeleteWrite { Cascade = true }` (one transaction for the whole subtree — every document locked at
+once), this scales to users with thousands of documents.
+
 ### Single-document listener
 
 `IDocumentDatabase.ListenToDocumentAsync(string path, ListenOptions? options = null, CancellationToken ct = default)` returns a `Task<IDocumentListener>` that emits `DocumentSnapshot` values as the target document changes.
@@ -967,6 +984,8 @@ Collection group queries: `Query.CollectionGroup` (wire `"collectionGroup": true
 Hooks: `h.Add<MyHook>(path, withSnapshots: true)` + `OnChangeAsync(DocumentChange)` give the document before and after each change. Startup adds `before`/`after` columns to the change feed.
 
 WebSocket limits: at most 100 subscriptions per connection, 10 connections per user (the oldest is closed with 4429), and 50 requests/s per connection (excess is delayed, not refused) — see `WsOptions`. Raise them if your clients need more (e.g. a large offline queue drains at the request rate).
+
+Subtrees: `DocumentDatabase.ExportSubtreeAsync` / `DeleteSubtreeAsync` read or delete everything under a document page by page / batch by batch.
 
 Metrics: the `Winche.Database` meter (see [Metrics](#metrics-1050)).
 

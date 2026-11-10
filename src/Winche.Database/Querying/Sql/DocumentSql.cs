@@ -57,6 +57,24 @@ public static class DocumentSql
     internal static string SubtreeWhere(ParameterBag bag, string root) =>
         $"(document_path = {bag.Add(root)} OR (document_path >= {bag.Add(root + "/")} COLLATE \"C\" AND document_path < {bag.Add(root + "0")} COLLATE \"C\"))";
 
+    /// <summary>
+    /// A page of <paramref name="root"/> and the documents beneath it, in byte order of path, after
+    /// <paramref name="after"/> (keyset paging over idx_winche_documents_path_c). Ascending for export;
+    /// descending for deletion, which reaches every document's descendants before the document itself.
+    /// </summary>
+    public static CompiledSql SubtreePage(string root, string? after, int limit, bool descending, bool pathsOnly)
+    {
+        var bag = new ParameterBag();
+        var keyset = after is null ? "" : $" AND document_path {(descending ? "<" : ">")} {bag.Add(after)} COLLATE \"C\"";
+        var sql = $"""
+            SELECT {(pathsOnly ? "document_path" : Columns)} FROM {WincheDatabaseTables.Documents}
+            WHERE {SubtreeWhere(bag, root)}{keyset}
+            ORDER BY document_path COLLATE "C" {(descending ? "DESC" : "ASC")}
+            LIMIT {bag.Add(limit)}
+            """;
+        return new CompiledSql(sql, bag.ToArray());
+    }
+
     public static CompiledSql SelectSubtreeForUpdate(string path)
     {
         var bag = new ParameterBag();

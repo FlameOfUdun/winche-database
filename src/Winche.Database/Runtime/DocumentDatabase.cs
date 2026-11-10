@@ -3,6 +3,7 @@ using Npgsql;
 using Winche.Database.Documents;
 using Winche.Database.DependencyInjection;
 using Winche.Database.Querying;
+using Winche.Database.Querying.Sql;
 using Winche.Database.Querying.Ast;
 using Winche.Database.Runtime.Listening;
 using Winche.Database.Runtime.Transactions;
@@ -118,6 +119,69 @@ public sealed class DocumentDatabase : IDocumentDatabase
 
     public Task<IReadOnlyList<WriteResult>> WriteAsync(IReadOnlyList<Write> writes, CancellationToken ct = default) =>
         _applier.ApplyAsync(writes, ct: ct);
+
+    /// <summary>
+    /// Every document at or beneath <paramref name="path"/> (the document itself, if it exists, then its
+    /// subcollections at any depth), in path order, read <paramref name="pageSize"/> at a time — memory stays
+    /// flat however large the subtree. For data exports (e.g. GDPR access requests). Not rule-checked: this is
+    /// the unguarded core, for server code.
+    /// </summary>
+    public async IAsyncEnumerable<Document> ExportSubtreeAsync(
+        string path, int pageSize = 500, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        RequireDocumentPath(path);
+        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
+        string? after = null;
+        while (true)
+        {
+            List<Document> page;
+            await using (var conn = await _source.OpenConnectionAsync(ct))
+            await using (var cmd = conn.CreateCommand())
+            {
+                DocumentSql.SubtreePage(path, after, pageSize, descending: false, pathsOnly: false).Apply(cmd);
+                await using var reader = await cmd.ExecuteReaderAsync(ct);
+                page = await TypedDocumentReader.ReadAllAsync(reader, ct);
+            }
+            foreach (var doc in page) yield return doc;
+            if (page.Count < pageSize) yield break;
+            after = page[^1].Path;
+        }
+    }
+
+    /// <summary>
+    /// Deletes <paramref name="path"/> and every document beneath it, <paramref name="batchSize"/> per
+    /// transaction (at most 500) — unlike a cascade delete, which takes the whole subtree in one transaction.
+    /// Deepest first: a document goes only after everything beneath it, so an interrupted run leaves no orphans
+    /// and just continues when run again. Each batch is an ordinary write: change feed, hooks, live queries
+    /// and metrics see every delete. Returns how many documents were deleted. Not rule-checked (server code).
+    /// </summary>
+    public async Task<long> DeleteSubtreeAsync(string path, int batchSize = 200, CancellationToken ct = default)
+    {
+        RequireDocumentPath(path);
+        ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
+        batchSize = Math.Min(batchSize, 500);
+        long deleted = 0;
+        while (true)
+        {
+            var paths = new List<string>(batchSize);
+            await using (var conn = await _source.OpenConnectionAsync(ct))
+            await using (var cmd = conn.CreateCommand())
+            {
+                DocumentSql.SubtreePage(path, after: null, batchSize, descending: true, pathsOnly: true).Apply(cmd);
+                await using var reader = await cmd.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct)) paths.Add(reader.GetString(0));
+            }
+            if (paths.Count == 0) return deleted;
+            await _applier.ApplyAsync([.. paths.Select(p => (Write)new DeleteWrite { Path = p })], ct: ct);
+            deleted += paths.Count;
+        }
+    }
+
+    private static void RequireDocumentPath(string path)
+    {
+        if (!DocumentPathParser.IsValidDocumentPath(path, out var error))
+            throw new RuntimeException(RuntimeStatus.InvalidArgument, error!);
+    }
 
     public async Task<Document> AddAsync(string collectionPath, IReadOnlyDictionary<string, Value> fields, CancellationToken ct = default)
     {
