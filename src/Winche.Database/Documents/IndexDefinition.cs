@@ -36,6 +36,11 @@ public enum IndexKind
 /// literal SQL fragment via <see cref="Querying.Sql.IndexPredicateSql"/>.
 /// <see langword="null"/> means no predicate (full-collection index).
 /// </param>
+/// <param name="CollectionGroup">
+/// For collection group queries: the index isn't led by the collection path, so one scan covers every
+/// collection with the id, in the fields' order. (A normal index is led by the path: it serves queries on one
+/// collection.) Ignored for <see cref="IndexKind.ArrayMembership"/>, which serves both.
+/// </param>
 /// <param name="Kind">
 /// <see cref="IndexKind.Ordered"/> (default) or <see cref="IndexKind.ArrayMembership"/>, which takes exactly
 /// one field (its direction is ignored).
@@ -45,4 +50,5 @@ public sealed record IndexDefinition(
     IReadOnlyList<IndexField> Fields,
     string? Name = null,
     Filter? Where = null,
-    IndexKind Kind = IndexKind.Ordered);
+    IndexKind Kind = IndexKind.Ordered,
+    bool CollectionGroup = false);

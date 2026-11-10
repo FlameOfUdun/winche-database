@@ -18,7 +18,12 @@ internal static class Normalizer
     {
         if (string.IsNullOrEmpty(q.Collection))
             throw new PlanValidationException("EMPTY_COLLECTION", "'collection' must be non-empty.");
-        if (!DocumentPathParser.IsValidCollectionPath(q.Collection, out var pathError))
+        if (q.CollectionGroup)
+        {
+            if (!DocumentPathParser.IsValidCollectionId(q.Collection, out var idError))
+                throw new PlanValidationException("BAD_COLLECTION_ID", $"A collection group query takes a collection id (one segment): {idError}");
+        }
+        else if (!DocumentPathParser.IsValidCollectionPath(q.Collection, out var pathError))
             throw new PlanValidationException("BAD_COLLECTION_PATH", pathError!);
 
         var (limit, skip, reverse) = ResolvePaging(q);
@@ -29,7 +34,7 @@ internal static class Normalizer
         var predicate = BuildPredicate(q.Where, q.OrderBy);
         var range = BuildCursorRange(q.Start, q.End, sortKeys);
 
-        var nodes = new List<PlanNode> { new CollectionScan(q.Collection) };
+        var nodes = new List<PlanNode> { new CollectionScan(q.Collection, q.CollectionGroup) };
         if (predicate is not null) nodes.Add(new FilterNode(predicate));
         nodes.Add(new SortNode(sortKeys));
         if (range is not null) nodes.Add(range);

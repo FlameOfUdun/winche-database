@@ -356,7 +356,8 @@ All writes in a batch share the same `updateTime` (single commit timestamp). `tr
 
 | Field | Type | Required | Description |
 | - | - | - | - |
-| `collection` | string | Yes | Non-empty collection name. |
+| `collection` | string | Yes | Collection path (e.g. `users/u1/notes`), or with `collectionGroup` a collection id (`notes`). |
+| `collectionGroup` | boolean | No | `true`: every collection with this id, under any parent (10.5.0). |
 | `where` | object | No | Filter — see §4.2. |
 | `orderBy` | array | No | Sort keys — see §4.3. |
 | `limit` | integer | No | Maximum documents to return. Default **100** when omitted. Mutually exclusive with `limitToLast`. |

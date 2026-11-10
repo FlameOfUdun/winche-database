@@ -40,9 +40,7 @@ internal static class CountSql
             throw new InvalidOperationException("Plan must contain Scan and Sort nodes (Normalizer guarantees this).");
 
         var bag = new ParameterBag();
-        var where = new StringBuilder($"{Alias}.collection_path = {bag.Add(scan.Collection)}");
-        if (collectionIdScope is not null)
-            where.Append($" AND {Alias}.collection_id = {bag.Add(collectionIdScope)}");
+        var where = new StringBuilder(ScanSql.Where(scan, collectionIdScope, bag, Alias));
         if (filter is not null)
             where.Append($" AND ({OperatorRegistry.Emit(filter.Predicate, bag, Alias)})");
         if (range is not null && CursorSql.Build(range, sort.Keys, bag, Alias) is { } cursor)

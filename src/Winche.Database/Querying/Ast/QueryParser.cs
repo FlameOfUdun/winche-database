@@ -77,7 +77,14 @@ public static class QueryParser
             select = [.. selArr.Select((n, i) => ParseFieldPath(n, $"$.select[{i}]"))];
         }
 
-        return new Query(collection, where, orderBy, limit, start, end, select, offset, limitToLast);
+        var collectionGroup = false;
+        if (json["collectionGroup"] is { } cg)
+        {
+            if (cg is not JsonValue cgv || !cgv.TryGetValue<bool>(out collectionGroup))
+                throw new QueryParseException("'collectionGroup' must be a boolean", "$.collectionGroup");
+        }
+
+        return new Query(collection, where, orderBy, limit, start, end, select, offset, limitToLast, collectionGroup);
     }
 
     public static Filter ParseFilter(JsonNode node, string path)

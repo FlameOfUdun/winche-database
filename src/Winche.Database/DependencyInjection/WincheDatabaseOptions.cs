@@ -259,6 +259,16 @@ public sealed class IndexBuilder(IServiceCollection services)
     }
 
     /// <summary>
+    /// Adds an index for collection group queries on <paramref name="collectionId"/> (every collection with that
+    /// id, under any parent): see <see cref="IndexDefinition.CollectionGroup"/>.
+    /// </summary>
+    public IndexBuilder AddGroup(string collectionId, params IndexField[] fields)
+    {
+        services.AddSingleton(new IndexDefinition(collectionId, fields, CollectionGroup: true));
+        return this;
+    }
+
+    /// <summary>
     /// Adds an <see cref="IndexKind.ArrayMembership"/> index on the array field <paramref name="field"/>, which
     /// serves arrayContains / arrayContainsAny / arrayContainsAll on it.
     /// </summary>

@@ -99,7 +99,7 @@ internal sealed class InMemoryQuery
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var record in batch.Records)
             {
-                if (record.Collection != _query.Collection || !seen.Add(record.Path)) continue;
+                if (!QueryListenerRegistry.InScope(_query, record.Collection) || !seen.Add(record.Path)) continue;
 
                 var at = documents.FindIndex(d => d.Path == record.Path);
                 if (at >= 0) documents.RemoveAt(at);

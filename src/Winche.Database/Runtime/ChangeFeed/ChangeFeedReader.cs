@@ -287,6 +287,20 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source)
     public Task<bool> HasCollectionChangesAfterAsync(ulong throughTxId, string collection, CancellationToken ct = default) =>
         ExistsAfterTxAsync(throughTxId, "collection_path", collection, ct);
 
+    /// <summary>True when any committed feed row from a transaction after <paramref name="throughTxId"/> touches a collection with this id.</summary>
+    public async Task<bool> HasCollectionGroupChangesAfterAsync(ulong throughTxId, string collectionId, CancellationToken ct = default)
+    {
+        await using var conn = await source.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        // The feed keeps the collection path; its id is the last segment.
+        cmd.CommandText = $"SELECT EXISTS(SELECT 1 FROM {WincheDatabaseTables.Changes} WHERE txid > $1::text::xid8 AND (collection_path = $2 OR right(collection_path, $3) = $4))";
+        cmd.Parameters.AddWithValue(Text(throughTxId));
+        cmd.Parameters.AddWithValue(collectionId);
+        cmd.Parameters.AddWithValue(collectionId.Length + 1);
+        cmd.Parameters.AddWithValue("/" + collectionId);
+        return (bool)(await cmd.ExecuteScalarAsync(ct))!;
+    }
+
     /// <summary>True when any committed feed row from a transaction after <paramref name="throughTxId"/> touches the document.</summary>
     public Task<bool> HasDocumentChangesAfterAsync(ulong throughTxId, string documentPath, CancellationToken ct = default) =>
         ExistsAfterTxAsync(throughTxId, "document_path", documentPath, ct);

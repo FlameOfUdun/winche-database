@@ -53,9 +53,7 @@ internal static class SqlCompiler
             .Select(c => c == "data" ? dataColumn : $"{Alias}.{c}");
         sb.AppendLine($"SELECT {string.Join(", ", allColumns)}");
         sb.AppendLine($"FROM {WincheDatabaseTables.Documents} {Alias}");
-        sb.AppendLine($"WHERE {Alias}.collection_path = {bag.Add(scan.Collection)}");
-        if (collectionIdScope is not null)
-            sb.AppendLine($"  AND {Alias}.collection_id = {bag.Add(collectionIdScope)}");
+        sb.AppendLine($"WHERE {ScanSql.Where(scan, collectionIdScope, bag, Alias)}");
 
         if (filter is not null)
             sb.AppendLine($"  AND ({OperatorRegistry.Emit(filter.Predicate, bag, Alias)})");

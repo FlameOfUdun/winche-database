@@ -35,6 +35,8 @@ public sealed class CollectionIndexResolver
         _slowQuery = options is null ? TimeSpan.FromMilliseconds(500) : options.Value.SlowQueryThreshold;
     }
 
+    /// <summary>The collection id to add as a predicate (null when no index covers it). A collection group query
+    /// always filters by its id, so it needs none.</summary>
     public string? ScopeFor(string collectionPath)
     {
         var id = DocumentPathParser.CollectionIdOf(collectionPath);
@@ -117,12 +119,13 @@ public sealed class CollectionIndexResolver
         }
         if (equality.Count == 0 && order.Count == 0) return null;   // a plain collection scan: the built-in index serves it
 
-        if (_indexes.Any(i => i.Kind == IndexKind.Ordered && i.CollectionId == id && Serves(i, equality, order)))
+        if (_indexes.Any(i => i.Kind == IndexKind.Ordered && i.CollectionId == id && i.CollectionGroup == query.CollectionGroup
+                              && Serves(i, equality, order)))
             return null;
 
         var fields = equality.Select(e => $"new(\"{e}\")")
             .Concat(order.Select(o => o.Direction == SortDirection.Desc ? $"new(\"{o.Path}\", SortDirection.Desc)" : $"new(\"{o.Path}\")"));
-        return $"ib.Add(\"{id}\", [{string.Join(", ", fields)}])";
+        return $"ib.{(query.CollectionGroup ? "AddGroup" : "Add")}(\"{id}\", [{string.Join(", ", fields)}])";
     }
 
     // An index serves the query when it starts with the equality fields (any order), then the order fields

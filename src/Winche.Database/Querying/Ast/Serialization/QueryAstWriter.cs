@@ -9,6 +9,7 @@ public static class QueryAstWriter
     public static JsonObject Write(Query q)
     {
         var obj = new JsonObject { ["collection"] = q.Collection };
+        if (q.CollectionGroup) obj["collectionGroup"] = true;
         if (q.Where is not null) obj["where"] = WriteFilter(q.Where);
         if (q.OrderBy is { Count: > 0 })
             obj["orderBy"] = new JsonArray([.. q.OrderBy.Select(o => (JsonNode)new JsonObject

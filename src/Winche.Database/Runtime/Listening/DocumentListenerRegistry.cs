@@ -76,7 +76,7 @@ public sealed class DocumentListenerRegistry(NpgsqlDataSource source, ListenerCo
     protected override Task<bool> HasRelevantChangesAfterAsync(DocumentGroup group, ulong throughTxId, CancellationToken ct) =>
         Reader.HasDocumentChangesAfterAsync(throughTxId, group.Path, ct);
 
-    protected override string IndexKeyOf(ChangeRecord record) => record.Path;
+    protected override IEnumerable<string> IndexKeysOf(ChangeRecord record) => [record.Path];
 
     // ── Group / handle ─────────────────────────────────────────────────────────
 

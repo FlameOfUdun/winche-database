@@ -60,6 +60,11 @@ public sealed record Cursor(IReadOnlyList<Value> Values, bool Before)
     }
 }
 
+/// <summary>
+/// A query over one collection (<see cref="Collection"/> is its path, e.g. <c>users/u1/notes</c>) — or, with
+/// <see cref="CollectionGroup"/>, over every collection with that id under any parent (<see cref="Collection"/>
+/// is then the id, e.g. <c>notes</c>).
+/// </summary>
 [JsonConverter(typeof(Serialization.QueryAstJsonConverter))]
 public sealed record Query(
     string Collection,
@@ -70,7 +75,8 @@ public sealed record Query(
     Cursor? End = null,
     IReadOnlyList<FieldPath>? Select = null,
     int? Offset = null,
-    int? LimitToLast = null)
+    int? LimitToLast = null,
+    bool CollectionGroup = false)
 {
     public bool Equals(Query? other) =>
         other is not null
@@ -82,7 +88,8 @@ public sealed record Query(
         && Equals(End, other.End)
         && (Select is null ? other.Select is null : other.Select is not null && Select.SequenceEqual(other.Select))
         && Offset == other.Offset
-        && LimitToLast == other.LimitToLast;
+        && LimitToLast == other.LimitToLast
+        && CollectionGroup == other.CollectionGroup;
 
     public override int GetHashCode()
     {
@@ -96,6 +103,7 @@ public sealed record Query(
         if (Select is not null) foreach (var s in Select) hash.Add(s);
         hash.Add(Offset);
         hash.Add(LimitToLast);
+        hash.Add(CollectionGroup);
         return hash.ToHashCode();
     }
 }

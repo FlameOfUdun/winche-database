@@ -30,7 +30,8 @@ internal static class QueryToConstraints
     {
         var constraints = new List<QueryConstraint>();
         CollectConstraints(query.Where, constraints);
-        return new QueryConstraints(query.Collection, constraints);
+        // A collection group query is governed only by rules that cover every parent ({path=**}/id/{doc}).
+        return new QueryConstraints(query.Collection, constraints, query.CollectionGroup);
     }
 
     // ── Internals ─────────────────────────────────────────────────────────────

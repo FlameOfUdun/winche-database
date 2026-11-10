@@ -22,7 +22,7 @@ public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionInd
 
     public IQueryListener Listen(Query query, ListenOptions? listenOptions = null) =>
         (IQueryListener)Subscribe(
-            QueryKey.Compute(query), query.Collection,
+            QueryKey.Compute(query), BucketOf(query),
             (key, indexKey) =>
             {
                 var ok = ChangeMatcher.TryPreparePredicate(query, out var predicate);
@@ -62,7 +62,7 @@ public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionInd
     {
         foreach (var record in batch.Records)
         {
-            if (record.Collection != group.Query.Collection) continue;
+            if (!InScope(group.Query, record.Collection)) continue;
 
             if (record.Type == ChangeType.Removed)
             {
@@ -114,9 +114,21 @@ public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionInd
         new([], [], DateTimeOffset.UtcNow, group.ResumeToken, Current: true);
 
     protected override Task<bool> HasRelevantChangesAfterAsync(QueryGroup group, ulong throughTxId, CancellationToken ct) =>
-        Reader.HasCollectionChangesAfterAsync(throughTxId, group.Query.Collection, ct);
+        group.Query.CollectionGroup
+            ? Reader.HasCollectionGroupChangesAfterAsync(throughTxId, group.Query.Collection, ct)
+            : Reader.HasCollectionChangesAfterAsync(throughTxId, group.Query.Collection, ct);
 
-    protected override string IndexKeyOf(ChangeRecord record) => record.Collection;
+    // A change is in its collection's bucket and its collection group's ("group:<id>").
+    protected override IEnumerable<string> IndexKeysOf(ChangeRecord record) =>
+        [record.Collection, GroupBucket(DocumentPathParser.CollectionIdOf(record.Collection))];
+
+    private static string GroupBucket(string collectionId) => "group:" + collectionId;
+
+    private static string BucketOf(Query query) => query.CollectionGroup ? GroupBucket(query.Collection) : query.Collection;
+
+    /// <summary>Whether a change to <paramref name="collection"/> is in <paramref name="query"/>'s collection (or group).</summary>
+    internal static bool InScope(Query query, string collection) =>
+        query.CollectionGroup ? DocumentPathParser.CollectionIdOf(collection) == query.Collection : collection == query.Collection;
 
     private int _queriesRun;
 

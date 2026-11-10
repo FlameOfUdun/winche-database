@@ -6,7 +6,8 @@ namespace Winche.Database.Querying.Planning;
 
 internal abstract record PlanNode;
 
-internal sealed record CollectionScan(string Collection) : PlanNode;
+/// <summary>The documents of one collection (by path) or, for a collection group, of every collection with that id.</summary>
+internal sealed record CollectionScan(string Collection, bool Group = false) : PlanNode;
 
 /// <summary>WHERE predicate.</summary>
 internal sealed record FilterNode(Filter Predicate) : PlanNode;

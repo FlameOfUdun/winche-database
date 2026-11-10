@@ -170,8 +170,9 @@ warning once, with the declaration to add, e.g.
 `Add: ib.Add("sessionHistory", [new("runtimeType"), new("finishedAt", SortDirection.Desc)])`.
 
 Because indexes are keyed by collection id, an index on `sessionHistory` covers **all** collections
-named `sessionHistory` (e.g. one per user). Cross-collection ("collection group") queries — querying
-a field across *all* members at once — are not yet supported.
+named `sessionHistory` (e.g. one per user). That index serves queries on one of those collections; a
+**collection group query** (below) needs `i.AddGroup("sessionHistory", …)`, which isn't led by the collection
+path so one scan orders every collection with that id together.
 
 ## Access Rules
 
@@ -605,6 +606,26 @@ var result = await db.QueryAsync(query);
 // result.HasMore   : bool
 ```
 
+### Collection group queries (10.5.0)
+
+`CollectionGroup: true` queries every collection with an id, under any parent — e.g. every user's
+`sessionHistory` at once. `Collection` is then the id (one segment), not a path:
+
+```csharp
+var recent = await db.QueryAsync(new Query("sessionHistory",
+    Where: new FieldFilter(FieldPath.Parse("classId"), FilterOperator.Eq, new StringValue("c1")),
+    OrderBy: [new Ordering(FieldPath.Parse("finishedAt"), SortDirection.Desc)],
+    Limit: 50, CollectionGroup: true));
+```
+
+Filters, order, cursors, limits, select, count, aggregates and live queries all work as for one collection
+(wire: `"collectionGroup": true`). For speed declare `i.AddGroup("sessionHistory", new("classId"),
+new("finishedAt", SortDirection.Desc))`; the slow-query advice names it. Under access rules a group query is
+allowed only by a rule that covers every parent — `match {path=**}/sessionHistory/{id}` (Winche.Rules 3.1.0
+allows `{path=**}` anywhere; at the start it matches zero or more segments) — whose condition the query proves.
+In `list` conditions write fields as `resource.x`, not `resource.data.x`: a filter on `x` can't prove anything
+about `data.x` (a document may have its own `data` field), so such a rule denies.
+
 ### Filter operators
 
 `Eq`, `Ne`, `Gt`, `Gte`, `Lt`, `Lte`, `In`, `NotIn`, `ArrayContains`, `ArrayContainsAny`, `ArrayContainsAll`, `Contains`, `StartsWith`, `EndsWith`, `Regex`
@@ -874,6 +895,8 @@ Resume tokens now cover whole transactions: a resume was told "current" (`listen
 Indexes: declared indexes are now built `CONCURRENTLY` (an invalid one is rebuilt), and indexes for definitions no longer declared are dropped at startup (`DropUndeclaredIndexes`). New `IndexKind.ArrayMembership` / `ib.AddArray(...)` serves array filters. A slow query with no serving index logs the index to add (`SlowQueryThreshold`). The GIN index over whole documents (`idx_winche_documents_data`) is dropped: no query could use it, and it slowed every write.
 
 Rules: Winche.Rules 3.1.0 adds functions (`keys`, `hasOnly`/`hasAll`/`hasAny`, `diff(...).affectedKeys()`, `is` type checks, `matches`, `lower`/`upper`, `get(key, default)`) and a text syntax (`RuleText`), and `resource.data` exposes a document's fields alone for them.
+
+Collection group queries: `Query.CollectionGroup` (wire `"collectionGroup": true`) reads every collection with an id under any parent; `ib.AddGroup(...)` indexes them; rules govern them through `match {path=**}/<id>/{doc}`.
 
 `select` no longer fails on a selected field that holds `null` (or contains one): the projection used `jsonb_strip_nulls`, which emptied the stored `{"nullValue": null}` into an undecodable `{}`.
 

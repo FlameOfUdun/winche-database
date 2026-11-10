@@ -53,8 +53,8 @@ public abstract class LiveSubscriptionRegistry<TGroup, TSnapshot>(NpgsqlDataSour
     /// <summary>True when the feed has a change relevant to this group from a transaction after <paramref name="throughTxId"/>.</summary>
     protected abstract Task<bool> HasRelevantChangesAfterAsync(TGroup group, ulong throughTxId, CancellationToken ct);
 
-    /// <summary>The relevance bucket a change record belongs to (collection, or document path).</summary>
-    protected abstract string IndexKeyOf(ChangeRecord record);
+    /// <summary>The relevance buckets a change record belongs to (its collection and collection group, or its document path).</summary>
+    protected abstract IEnumerable<string> IndexKeysOf(ChangeRecord record);
 
     // ── Subscribe / unsubscribe ────────────────────────────────────────────────
 
@@ -187,8 +187,9 @@ public abstract class LiveSubscriptionRegistry<TGroup, TSnapshot>(NpgsqlDataSour
             var keys = new HashSet<string>(StringComparer.Ordinal);
             foreach (var record in batch.Records)
             {
-                if (_byIndexKey.TryGetValue(IndexKeyOf(record), out var set))
-                    keys.UnionWith(set);
+                foreach (var indexKey in IndexKeysOf(record))
+                    if (_byIndexKey.TryGetValue(indexKey, out var set))
+                        keys.UnionWith(set);
             }
             candidates = [.. keys.Select(k => _groups.GetValueOrDefault(k)).OfType<TGroup>()];
         }

@@ -46,6 +46,8 @@ public static partial class IndexSql
         // Ordered keeps the historical hash input, so existing indexes keep their names.
         if (index.Kind == IndexKind.ArrayMembership)
             hashInput += "|array";
+        else if (index.CollectionGroup)
+            hashInput += "|group";
         var hash = StableHash8(hashInput);
         // The hash carries uniqueness/stability; the prefix is a human-readable label.
         // Collapse any non-identifier char (e.g. '-' in collection ids or field paths) to '_'
@@ -80,9 +82,10 @@ public static partial class IndexSql
         }
         else
         {
-            // Always lead with collection_path so Postgres can seek to a specific collection
-            // within the partial index (which is already narrowed to collection_id).
-            var exprs = new List<string> { "collection_path" };
+            // A collection index leads with collection_path so Postgres can seek to one collection within the
+            // partial index (already narrowed to collection_id); a collection group index doesn't, so it orders
+            // every collection with the id together.
+            var exprs = index.CollectionGroup ? new List<string>() : new List<string> { "collection_path" };
             foreach (var field in index.Fields)
             {
                 var accessor = LiteralAccessor(field.Path);
