@@ -51,7 +51,40 @@ public readonly record struct FeedPosition(ulong TxId, long Seq) : IComparable<F
 /// </summary>
 public sealed record ChangeBatch(
     IReadOnlyList<ChangeRecord> Records,
-    IReadOnlyDictionary<string, Document> Documents);
+    IReadOnlyDictionary<string, Document> Documents)
+{
+    /// <summary>
+    /// True when the batch is everything the feed had up to its last transaction, so that transaction is
+    /// in it whole (the read returned fewer rows than it asked for). False when the read hit its limit and
+    /// the last transaction may continue in the next batch.
+    /// </summary>
+    public bool EndsWithWholeTransaction { get; init; }
+}
+
+/// <summary>
+/// Resume tokens for live queries and document listeners. A token says "this state reflects every change
+/// written by transactions up to T" and is encoded as <c>-(T + 1)</c>: negative, so it can't be mistaken
+/// for the feed sequence numbers older versions issued (those are ≥ 0 and are treated as unknown, which
+/// costs one full snapshot). Clients store and echo the number without reading it.
+/// </summary>
+public static class ResumeTokens
+{
+    public static long Encode(ulong throughTxId) => -(long)throughTxId - 1;
+
+    /// <summary>The transaction a token covers through; false for a token from before 10.5.0.</summary>
+    public static bool TryDecode(long token, out ulong throughTxId)
+    {
+        throughTxId = token < 0 ? (ulong)(-(token + 1)) : 0;
+        return token < 0;
+    }
+
+    /// <summary>The token after applying <paramref name="batch"/>: through its last transaction if that is whole, else the one before.</summary>
+    public static long After(ChangeBatch batch)
+    {
+        var last = batch.Records[^1].TxId;
+        return Encode(batch.EndsWithWholeTransaction || last == 0 ? last : last - 1);
+    }
+}
 
 public interface IChangeFeedConsumer
 {

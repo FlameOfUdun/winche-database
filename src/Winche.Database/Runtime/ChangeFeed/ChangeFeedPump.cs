@@ -141,7 +141,7 @@ public sealed class ChangeFeedPump(
             IReadOnlyDictionary<string, Document> docs = _ephemeral.Count > 0
                 ? await _reader.FetchDocumentsAsync(records, ct)
                 : new Dictionary<string, Document>(StringComparer.Ordinal);
-            var batch = new ChangeBatch(records, docs);
+            var batch = new ChangeBatch(records, docs) { EndsWithWholeTransaction = records.Count < config.BatchSize };
             foreach (var consumer in _ephemeral)
             {
                 try

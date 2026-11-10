@@ -67,7 +67,7 @@ public class WsListenerTests(PostgresFixture fx) : QueryTestBase(fx)
         var initial = await ws.WaitForAsync(f => (string?)f["type"] == "listen.snapshot"
                                               && (string?)f["subscriptionId"] == subId);
         Assert.Single(initial["documents"]!.AsArray());
-        Assert.True((long)initial["resumeToken"]! > 0);
+        Assert.True((long)initial["resumeToken"]! < 0);   // 10.5.0 tokens are negative (opaque to clients)
 
         await ws.RequestAsync(Set("wsd/b", ("n", Int(2))));
         var delta = await ws.WaitForAsync(f => (string?)f["type"] == "listen.delta");

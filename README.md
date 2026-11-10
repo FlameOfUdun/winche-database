@@ -446,7 +446,7 @@ await foreach (var snap in listener.Snapshots())
 | `Document` | `Document?` | The current document, or `null` when absent |
 | `Exists` | `bool` | `true` if the document is present |
 | `ReadTime` | `DateTimeOffset` | Server read time for this snapshot |
-| `ResumeToken` | `long` | Feed watermark; pass as `ListenOptions.ResumeToken` to resume after reconnect |
+| `ResumeToken` | `long` | Opaque position of this state in the feed; pass as `ListenOptions.ResumeFrom` to resume after reconnect |
 
 Internally, `ListenToDocumentAsync` is fulfilled by a native single-document subscription (a point read for the initial snapshot, then per-change updates straight from the change feed — no parent-collection query). The listen is authorized as a **`get`** on the document path, exactly like a one-shot read: single-document reads (one-shot or realtime) are governed by the per-document `get` rule, never the parent-collection `list` rule. An invalid (non-document) path throws `RuntimeException(InvalidArgument)`.
 
@@ -848,6 +848,8 @@ See [PROTOCOL](docs/PROTOCOL.md#7-websocket-protocol) for full message shapes, c
 Cascade deletes and subtree reads (TTL, deleting a document with `Cascade = true`) used `LIKE 'path/%'`, which can't use an index under the usual en_US-style database collation, so each one scanned the whole documents table. They now match the path as a byte-order range, served by a new index `idx_winche_documents_path_c` on `document_path COLLATE "C"`, which also speeds up collection listing. The first start builds the index with `CREATE INDEX CONCURRENTLY`, so writes carry on meanwhile; on a large table that start takes a little longer. An index left invalid by an interrupted build is dropped and rebuilt on the next start.
 
 Live queries no longer re-run the whole query on every relevant change: each holds its result plus `Listeners.HeldBeyondLimit` (10) more matching documents, whole, and applies a change to them in memory — filters, sort order, cursors, `limit`/`limitToLast` and `select` (applied on output) included. It re-runs the query only when fewer than `limit` held documents are left while more exist, for queries with an `offset`, and on the first change after `Listeners.ResyncInterval` (5 minutes). A node now updates up to `Listeners.MaxParallelUpdates` (8) listeners at once, so one slow query no longer delays the others. Set `Listeners.ApplyChangesInMemory = false` to always re-run.
+
+Resume tokens now cover whole transactions: a resume was told "current" (`listen.current`) when a write with an earlier feed sequence number committed after the token was issued, and the client never got it. Tokens are now negative numbers (clients store and echo them; the Dart SDK needs no change); a token from an older server gets one full snapshot. Startup adds `winche_documents_feed_pruned`, which records how far pruning has reached so an old token is recognised as unverifiable.
 
 `select` no longer fails on a selected field that holds `null` (or contains one): the projection used `jsonb_strip_nulls`, which emptied the stored `{"nullValue": null}` into an undecodable `{}`.
 

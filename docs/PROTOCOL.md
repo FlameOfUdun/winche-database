@@ -1070,13 +1070,13 @@ The WS layer tracks the last document list it actually **sent** per subscription
 
 #### Resume semantics
 
-The `resumeToken` on every listener event is the feed sequence watermark.
+The `resumeToken` on every listener event is an opaque integer: store it and send it back unchanged. (Since 10.5.0 it encodes the writing transaction the state covers through, and is negative; a token from an older server — a feed sequence number — is not trusted and gets one full snapshot.) A token is current only if every change it covers had committed when it was issued, so a write that commits after a later one can't be missed on resume.
 
 | Scenario | Result |
 | - | - |
 | Resume token is current (no feed rows after it touch the query collection) | **Silent** — no initial snapshot until a real change occurs |
 | Resume token is stale (feed rows exist after it for the collection) | **Reset** — a full `listen.snapshot` is sent immediately |
-| Resume token is too old or unrecognized | **Reset** — same as stale |
+| Resume token is too old (pruning reached past it) or unrecognized (incl. pre-10.5.0 tokens) | **Reset** — same as stale |
 
 The first event after a stale/reset resume is a `listen.snapshot` (not a delta), allowing the client to rebuild its state.
 

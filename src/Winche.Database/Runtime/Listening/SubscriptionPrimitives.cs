@@ -6,7 +6,7 @@ namespace Winche.Database.Runtime.Listening;
 /// Per-subscription group state shared by all live registries. One group is shared by every handle
 /// with the same <see cref="Key"/> (identical subscriptions share initial load + update work).
 /// Concurrency invariants (preserved from the original query registry):
-///   I2 read LastSeq before the initial load; I3 add a handle under the semaphore immediately before
+///   I2 take the resume token before the initial load; I3 add a handle under the semaphore immediately before
 ///   its initial snapshot; I4 a disposed group is re-registered/replaced on a racing subscribe;
 ///   I5 a group whose update failed is marked <see cref="Dirty"/> and unconditionally recomputed next batch.
 /// </summary>
@@ -29,7 +29,8 @@ public abstract class SubscriptionGroup<TSnapshot>
     /// <summary>I5: set when an update fails; causes the next relevant batch to unconditionally recompute.</summary>
     public bool Dirty { get; set; }
 
-    public long LastSeq { get; set; }
+    /// <summary>The token for this group's current state (see <see cref="ChangeFeed.ResumeTokens"/>).</summary>
+    public long ResumeToken { get; set; }
 }
 
 /// <summary>

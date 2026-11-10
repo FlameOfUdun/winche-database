@@ -188,8 +188,8 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source)
                   AND (c.commit_time < $2
                        OR NOT EXISTS (SELECT 1 FROM slowest)
                        OR (c.txid, c.seq) <= (SELECT txid, seq FROM slowest))
-                RETURNING EXISTS (SELECT 1 FROM slowest) AND (c.txid, c.seq) > (SELECT txid, seq FROM slowest) AS undelivered
-            )
+                RETURNING c.txid, EXISTS (SELECT 1 FROM slowest) AND (c.txid, c.seq) > (SELECT txid, seq FROM slowest) AS undelivered
+            ), horizon AS ({RecordHorizon("pruned")})
             SELECT count(*)::int, (count(*) FILTER (WHERE undelivered))::int FROM pruned
             """;
         cmd.Parameters.AddWithValue(cutoff);
@@ -199,6 +199,14 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source)
         await reader.ReadAsync(ct);
         return (reader.GetInt32(0), reader.GetInt32(1));
     }
+
+    // Raises the pruned-through mark to the newest transaction among the deleted rows (a CTE over them).
+    // ORDER BY … LIMIT 1 rather than max(): max(xid8) isn't available on every supported Postgres version.
+    private static string RecordHorizon(string deleted) => $"""
+        INSERT INTO {WincheDatabaseTables.FeedPruned} AS p (id, txid)
+        SELECT 1, (SELECT txid FROM {deleted} ORDER BY txid DESC LIMIT 1) WHERE EXISTS (SELECT 1 FROM {deleted})
+        ON CONFLICT (id) DO UPDATE SET txid = GREATEST(p.txid, EXCLUDED.txid)
+        """;
 
     internal static string Text(ulong txid) => txid.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
@@ -275,6 +283,38 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source)
         return (bool)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
+    /// <summary>True when any committed feed row from a transaction after <paramref name="throughTxId"/> touches the collection.</summary>
+    public Task<bool> HasCollectionChangesAfterAsync(ulong throughTxId, string collection, CancellationToken ct = default) =>
+        ExistsAfterTxAsync(throughTxId, "collection_path", collection, ct);
+
+    /// <summary>True when any committed feed row from a transaction after <paramref name="throughTxId"/> touches the document.</summary>
+    public Task<bool> HasDocumentChangesAfterAsync(ulong throughTxId, string documentPath, CancellationToken ct = default) =>
+        ExistsAfterTxAsync(throughTxId, "document_path", documentPath, ct);
+
+    // column MUST be a trusted constant (never user input) — it is interpolated into the SQL text.
+    private async Task<bool> ExistsAfterTxAsync(ulong throughTxId, string column, string value, CancellationToken ct)
+    {
+        await using var conn = await source.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"SELECT EXISTS(SELECT 1 FROM {WincheDatabaseTables.Changes} WHERE txid > $1::text::xid8 AND {column} = $2)";
+        cmd.Parameters.AddWithValue(Text(throughTxId));
+        cmd.Parameters.AddWithValue(value);
+        return (bool)(await cmd.ExecuteScalarAsync(ct))!;
+    }
+
+    /// <summary>
+    /// True when no feed row after <paramref name="throughTxId"/> can have been pruned, so the feed can say
+    /// whether anything changed since: the newest pruned transaction is at or before it.
+    /// </summary>
+    public async Task<bool> RetainsChangesAfterAsync(ulong throughTxId, CancellationToken ct = default)
+    {
+        await using var conn = await source.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"SELECT COALESCE((SELECT txid FROM {WincheDatabaseTables.FeedPruned} WHERE id = 1) <= $1::text::xid8, true)";
+        cmd.Parameters.AddWithValue(Text(throughTxId));
+        return (bool)(await cmd.ExecuteScalarAsync(ct))!;
+    }
+
     /// <summary>Smallest seq still in the feed, or 0 when empty.</summary>
     public async Task<long> GetMinSeqAsync(CancellationToken ct = default)
     {
@@ -316,9 +356,13 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"DELETE FROM {WincheDatabaseTables.Changes} WHERE commit_time < $1";
+        cmd.CommandText = $"""
+            WITH pruned AS (DELETE FROM {WincheDatabaseTables.Changes} WHERE commit_time < $1 RETURNING txid),
+            horizon AS ({RecordHorizon("pruned")})
+            SELECT count(*)::int FROM pruned
+            """;
         cmd.Parameters.AddWithValue(cutoff);
-        return await cmd.ExecuteNonQueryAsync(ct);
+        return (int)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
     /// <summary>Fetches the still-existing documents for the added/modified paths in <paramref name="records"/> (one batch query); removed paths are skipped.</summary>

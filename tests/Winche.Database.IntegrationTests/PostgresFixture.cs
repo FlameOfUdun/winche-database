@@ -59,7 +59,7 @@ public sealed class PostgresFixture : IAsyncLifetime
         await cmd.ExecuteNonQueryAsync();
         await ResetChangesAsync();
         await using var cmd2 = conn.CreateCommand();
-        cmd2.CommandText = $"TRUNCATE {WincheDatabaseTables.FeedCursors}, {WincheDatabaseTables.DeadLetters}";
+        cmd2.CommandText = $"TRUNCATE {WincheDatabaseTables.FeedCursors}, {WincheDatabaseTables.DeadLetters}, {WincheDatabaseTables.FeedPruned}";
         await cmd2.ExecuteNonQueryAsync();
     }
 

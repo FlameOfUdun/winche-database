@@ -194,6 +194,13 @@ public static class SchemaSql
             ADD COLUMN IF NOT EXISTS failing_attempts INT NOT NULL DEFAULT 0,
             ADD COLUMN IF NOT EXISTS failing_error    TEXT;
 
+        -- How far pruning has reached: the newest transaction any deleted feed row came from. A resume token
+        -- at or after it can be checked against the feed; an older one may have lost rows.
+        CREATE TABLE IF NOT EXISTS {{WincheDatabaseTables.FeedPruned}} (
+            id   INT PRIMARY KEY CHECK (id = 1),
+            txid xid8 NOT NULL
+        );
+
         -- Changes a durable consumer gave up on, kept for inspection and replay.
         CREATE TABLE IF NOT EXISTS {{WincheDatabaseTables.DeadLetters}} (
             id               BIGSERIAL PRIMARY KEY,

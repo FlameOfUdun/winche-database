@@ -50,8 +50,8 @@ public abstract class LiveSubscriptionRegistry<TGroup, TSnapshot>(NpgsqlDataSour
     /// <summary>Build a "current" marker (no documents) for a covered resume.</summary>
     protected abstract TSnapshot BuildCurrentMarker(TGroup group);
 
-    /// <summary>True when the feed has a change relevant to this group after <paramref name="resumeSeq"/>.</summary>
-    protected abstract Task<bool> HasRelevantChangesAfterAsync(TGroup group, long resumeSeq, CancellationToken ct);
+    /// <summary>True when the feed has a change relevant to this group from a transaction after <paramref name="throughTxId"/>.</summary>
+    protected abstract Task<bool> HasRelevantChangesAfterAsync(TGroup group, ulong throughTxId, CancellationToken ct);
 
     /// <summary>The relevance bucket a change record belongs to (collection, or document path).</summary>
     protected abstract string IndexKeyOf(ChangeRecord record);
@@ -132,16 +132,17 @@ public abstract class LiveSubscriptionRegistry<TGroup, TSnapshot>(NpgsqlDataSour
 
                 if (!group.Initialized)
                 {
-                    // I2: read LastSeq BEFORE the load so any concurrent write between the two is
-                    // captured in the feed cursor; errs toward spurious-but-safe initial emission on resume.
-                    group.LastSeq = await Reader.GetMaxSeqAsync();
+                    // I2: take the token BEFORE the load: every transaction before the oldest one still
+                    // running has finished, so the load sees all of them; a later one may or may not be in
+                    // it, which errs toward a spurious-but-safe full snapshot on resume.
+                    group.ResumeToken = ResumeTokens.Encode((await Reader.GetHeadAsync()).TxId);
                     await InitializeStateAsync(group, CancellationToken.None);
                     group.Initialized = true;
                 }
 
                 // I1: provable resume suppression: suppress the initial snapshot only when
                 // we can prove nothing relevant happened since the resume token.
-                if (listenOptions?.ResumeFrom is { } seq && await IsResumeCoveredAsync(group, seq, CancellationToken.None))
+                if (listenOptions?.ResumeFrom is { } token && await IsResumeCoveredAsync(group, token, CancellationToken.None))
                 {
                     // I3: join the group silently so the handle still receives future diffs.
                     lock (group.Gate) group.Handles.Add(handle);
@@ -162,14 +163,18 @@ public abstract class LiveSubscriptionRegistry<TGroup, TSnapshot>(NpgsqlDataSour
         }
     }
 
-    private async Task<bool> IsResumeCoveredAsync(TGroup group, long resumeSeq, CancellationToken ct)
+    /// <summary>
+    /// True only when it is provable that nothing relevant changed since <paramref name="token"/>: the token
+    /// is one this version issued, the feed still holds everything after it (pruning hasn't reached past
+    /// it), and no committed change after it touches this group. Every transaction up to the token had
+    /// finished when it was issued, so no change at or before it can still appear. A token from before
+    /// 10.5.0 (a plain feed sequence number, which could miss a change that committed late) never counts.
+    /// </summary>
+    private async Task<bool> IsResumeCoveredAsync(TGroup group, long token, CancellationToken ct)
     {
-        var minSeq = await Reader.GetMinSeqAsync(ct);
-        // minSeq == 0 means the feed is empty (never written or fully pruned); we cannot distinguish
-        // "no rows ever" from "all rows pruned" — treat as not-covered to be safe.
-        // tokenStillCovered: feed is non-empty AND the token falls within the retained window.
-        var tokenStillCovered = minSeq > 0 && resumeSeq >= minSeq - 1;
-        return tokenStillCovered && !await HasRelevantChangesAfterAsync(group, resumeSeq, ct);
+        if (!ResumeTokens.TryDecode(token, out var throughTxId)) return false;
+        return await Reader.RetainsChangesAfterAsync(throughTxId, ct)
+            && !await HasRelevantChangesAfterAsync(group, throughTxId, ct);
     }
 
     // ── Feed consumption ───────────────────────────────────────────────────────
@@ -215,7 +220,7 @@ public abstract class LiveSubscriptionRegistry<TGroup, TSnapshot>(NpgsqlDataSour
                 return;
             }
 
-            group.LastSeq = batch.Records.Max(r => r.Seq);
+            group.ResumeToken = ResumeTokens.After(batch);
             if (!result.Changed) return;
 
             List<SubscriptionHandleBase<TSnapshot>> handles;

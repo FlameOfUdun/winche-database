@@ -8,6 +8,8 @@ public static class WincheDatabaseTables
     public const string FeedCursors = "winche_documents_feed_cursors";
     /// <summary>Changes a durable consumer gave up on after <c>ChangeFeedConfig.DeadLetterAfter</c>; replayable.</summary>
     public const string DeadLetters = "winche_documents_dead_letters";
+    /// <summary>One row: the newest transaction any pruned feed row came from (resume tokens older than it can't be checked).</summary>
+    public const string FeedPruned = "winche_documents_feed_pruned";
     /// <summary>Intentionally equals <see cref="Changes"/> — the change trigger <c>pg_notify()</c>s on the table-named channel.</summary>
     public const string ChangesNotifyChannel = Changes;
 }

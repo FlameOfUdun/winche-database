@@ -104,17 +104,17 @@ public sealed class QueryListenerRegistry(NpgsqlDataSource source, CollectionInd
         var newState = group.State;
         var changes = SnapshotDiff.Compute(oldState, newState);
         if (changes.Count == 0) return (null, false);
-        return (new QuerySnapshot(newState, changes, batch.Records[^1].CommitTime, batch.Records.Max(r => r.Seq)), true);
+        return (new QuerySnapshot(newState, changes, batch.Records[^1].CommitTime, ResumeTokens.After(batch)), true);
     }
 
     protected override QuerySnapshot BuildInitialSnapshot(QueryGroup group) =>
-        new(group.State, SnapshotDiff.Compute([], group.State), DateTimeOffset.UtcNow, group.LastSeq);
+        new(group.State, SnapshotDiff.Compute([], group.State), DateTimeOffset.UtcNow, group.ResumeToken);
 
     protected override QuerySnapshot BuildCurrentMarker(QueryGroup group) =>
-        new([], [], DateTimeOffset.UtcNow, group.LastSeq, Current: true);
+        new([], [], DateTimeOffset.UtcNow, group.ResumeToken, Current: true);
 
-    protected override Task<bool> HasRelevantChangesAfterAsync(QueryGroup group, long resumeSeq, CancellationToken ct) =>
-        Reader.HasQueryChangesAfterAsync(resumeSeq, group.Query.Collection, ct);
+    protected override Task<bool> HasRelevantChangesAfterAsync(QueryGroup group, ulong throughTxId, CancellationToken ct) =>
+        Reader.HasCollectionChangesAfterAsync(throughTxId, group.Query.Collection, ct);
 
     protected override string IndexKeyOf(ChangeRecord record) => record.Collection;
 
