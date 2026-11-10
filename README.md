@@ -125,7 +125,7 @@ The built-in claims/exception filters are always applied internally and run oute
 - **Optimistic transactions** — Optimistic read-version ledger; `ABORTED` on conflict with safe retry; `RunTransactionAsync` with automatic retry; reads-before-writes enforced; idle (60 s) and absolute (5 min) timeouts
 - **Batch writes** — Atomic commit of up to 500 `set`/`update`/`delete` operations with field transforms, preconditions, and a single commit timestamp; use `new WriteBatch(db)` for a fluent builder; `set` supports explicit merge masks via `MergeFields` (subset-merge alternative to `merge: true`)
 - **Field transforms** — `serverTimestamp`, `increment` (saturating int, promotes to double on mixed), `maximum`, `minimum`, `arrayUnion`, `arrayRemove`; use the `FieldValue` factory for a fluent C# API (`FieldValue.ServerTimestamp`, `Increment`, `Maximum`, `Minimum`, `ArrayUnion`, `ArrayRemove`, `Delete`)
-- **Durable hooks** — Feed-driven, true at-least-once end-to-end; hooks execute inline+sequentially per batch; failed batches retried with capped backoff; hooks fire for writes from any node; cursor persisted across restarts; idempotency required
+- **Durable hooks** — Feed-driven, true at-least-once end-to-end; a cursor per hook type, so a failing hook holds back only itself; only the failing change is retried (capped backoff), and dead-lettered after `DeadLetterAfter` (replayable); hooks fire for writes from any node; cursor persisted across restarts; status + health check; idempotency required
 - **Secondary indexes** — composite expression indexes declared by **collection ID** (the last path segment), covering every collection with that id under any parent; `IndexDefinition.Where` for filtered/partial indexes (agreement tested against engine) (see below)
 - **Access control** — in-memory rules engine (Winche.Rules); OR semantics with default-deny; for `list`/query operations the query must provably satisfy a read rule or it is rejected with PERMISSION_DENIED (rules are not post-filters)
 - **TTL (auto-expiry)** — Documents are automatically deleted once a registered timestamp field is in the past; configurable sweep interval (default 5 min) and batch size (default 500); collection-group scoped; TTL deletes emit change-feed events; bypass access rules; cascade to subcollections by default (opt out with `CascadeDelete = false`)
@@ -280,7 +280,20 @@ WebSocket transports. DI services are available inside the delegate via `http.Re
 
 ## Document Store Hooks
 
-Hooks let you react to document mutations. Implement `DocumentStoreHook` (behavior only) and register it against a path with `UseHooks(h => h.Add<MyHook>(path))` — mirroring how `UseIndexes` binds a collection id. Hooks execute **inline and sequentially** inside `HookFeedConsumer`, which is driven by a durable feed runner. Delivery is **true at-least-once end-to-end** — the cursor advances only after all hooks in a batch succeed, and failed batches are retried with capped backoff (1 s → 30 s). Implementations **must be idempotent** (use the document `version` as an idempotency key).
+Hooks let you react to document mutations. Implement `DocumentStoreHook` (behavior only) and register it against a path with `UseHooks(h => h.Add<MyHook>(path))` — mirroring how `UseIndexes` binds a collection id. Hooks execute **inline and sequentially** inside `HookFeedConsumer`, which is driven by a durable feed runner. Delivery is **true at-least-once end-to-end** — the cursor advances past a change only after its hooks succeed, and a failing change is retried with capped backoff (1 s → 30 s). Implementations **must be idempotent** (use the document `version` as an idempotency key).
+
+Each hook **type** has its own cursor (`hooks:<full type name>`), so a hook that keeps failing holds back only itself — the other hook types carry on. Only the failing change is retried, not the ones before it. A change that keeps failing for `ChangeFeed.DeadLetterAfter` (default 1 hour) moves to the `winche_documents_dead_letters` table and the hook carries on; list, replay or discard dead letters with `ChangeFeedConsumers`:
+
+```csharp
+var consumers = app.Services.GetRequiredService<ChangeFeedConsumers>();
+foreach (var s in await consumers.GetStatusAsync())          // lag, failing since, last error, dead letters
+    Console.WriteLine($"{s.Name}: {s.Lag} behind, {s.DeadLetters} dead letters");
+await consumers.ReplayDeadLettersAsync("hooks:MyApp.AuditHook"); // after fixing the cause
+```
+
+For alerting, `builder.Services.AddHealthChecks().AddWincheChangeFeed(maxLag: TimeSpan.FromMinutes(5))` (Winche.Database.AspNetCore) reports **Degraded** when a hook type is behind, failing or has dead letters. It never reports Unhealthy: restarting a node doesn't fix a failing hook. Feed rows a hook hasn't delivered are kept past `ChangeFeed.Retention`, up to `ChangeFeed.MaxRetention` (default 30 days).
+
+> Renaming a hook class (or its namespace) gives it a new cursor, which starts from now.
 
 The feed is **gap-free**: a change is delivered only once every older transaction has finished, so a write that commits after a later one is held back rather than skipped. A long-running write transaction therefore delays hook delivery until it ends.
 
@@ -829,6 +842,12 @@ Connect at `/documents/ws?access_token=<jwt>`. The connection authenticates at t
 | `listen.current` | S→C | Covered-resume marker: the subscription is live and already up to date; carries the resume token, no documents (sent instead of a snapshot when a resume token is still current) |
 
 See [PROTOCOL](docs/PROTOCOL.md#7-websocket-protocol) for full message shapes, close codes, and listener protocol details.
+
+## Upgrading to 10.4.0
+
+Hooks no longer share one cursor: each hook type gets its own (`hooks:<full type name>`), so a failing hook no longer stops the others. On the first start, every hook type's cursor is copied from the old `hooks` cursor — nothing is skipped or replayed. (During a rolling deploy, nodes on the old version keep using `hooks` until they stop, so a change can be delivered twice — fine for idempotent hooks.) Startup adds the `winche_documents_dead_letters` table and failure columns on `winche_documents_feed_cursors`.
+
+Behaviour changes: a change that keeps failing for an hour is now dead-lettered instead of retried for ever (set `ChangeFeed.DeadLetterAfter = null` for the old behaviour), and the pruner keeps rows a hook hasn't delivered for up to `ChangeFeed.MaxRetention` (30 days) instead of deleting them after `Retention`. `ChangeFeedHostedService` and `RetentionPruner` now take a `ChangeFeedConsumerSet`; only code that constructs them by hand is affected.
 
 ## Upgrading to 10.3.0
 

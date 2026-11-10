@@ -9,10 +9,15 @@ using Winche.Database.Runtime.ChangeFeed;
 
 namespace Winche.Database.Runtime.Hosting;
 
-/// <summary>Bounds the feed table: deletes rows older than ChangeFeed.Retention (spec §4).</summary>
+/// <summary>
+/// Bounds the feed table: deletes rows older than ChangeFeed.Retention once every durable consumer has
+/// delivered them, and rows older than ChangeFeed.MaxRetention regardless (logged as an error, since a
+/// consumer then misses them).
+/// </summary>
 public sealed class RetentionPruner(
     [FromKeyedServices(WincheDatabaseKeys.DataSource)] NpgsqlDataSource source,
     IOptions<WincheDatabaseOptions> options,
+    ChangeFeedConsumerSet consumers,
     ILogger<RetentionPruner> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -24,7 +29,14 @@ public sealed class RetentionPruner(
         {
             try
             {
-                var pruned = await reader.PruneBeforeAsync(DateTimeOffset.UtcNow - config.Retention, stoppingToken);
+                var now = DateTimeOffset.UtcNow;
+                var (pruned, undelivered) = await reader.PruneAsync(
+                    now - config.Retention, now - config.MaxRetention, consumers.DurableNames, stoppingToken);
+                if (undelivered > 0)
+                    logger.LogError(
+                        "Pruned {Count} change-feed rows older than {MaxRetention} that a durable consumer had not delivered; " +
+                        "it will never see them (check ChangeFeedConsumers.GetStatusAsync for the consumer that is stuck)",
+                        undelivered, config.MaxRetention);
                 if (pruned > 0)
                     logger.LogInformation("Pruned {Count} change-feed rows", pruned);
             }

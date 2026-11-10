@@ -162,6 +162,33 @@ public static class SchemaSql
         CREATE INDEX IF NOT EXISTS idx_{{WincheDatabaseTables.Changes}}_txid_seq
             ON {{WincheDatabaseTables.Changes}} (txid, seq);
 
+        -- A durable consumer's failing change (the one right after its cursor): when it started failing and
+        -- how often, so the give-up deadline survives restarts and moves between nodes. Cleared on success.
+        ALTER TABLE {{WincheDatabaseTables.FeedCursors}}
+            ADD COLUMN IF NOT EXISTS failing_txid     xid8,
+            ADD COLUMN IF NOT EXISTS failing_seq      BIGINT,
+            ADD COLUMN IF NOT EXISTS failing_since    TIMESTAMPTZ,
+            ADD COLUMN IF NOT EXISTS failing_attempts INT NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS failing_error    TEXT;
+
+        -- Changes a durable consumer gave up on, kept for inspection and replay.
+        CREATE TABLE IF NOT EXISTS {{WincheDatabaseTables.DeadLetters}} (
+            id               BIGSERIAL PRIMARY KEY,
+            consumer         TEXT NOT NULL,
+            seq              BIGINT NOT NULL,
+            txid             xid8 NOT NULL,
+            type             TEXT NOT NULL,
+            document_path    TEXT NOT NULL,
+            collection_path  TEXT NOT NULL,
+            version          BIGINT NOT NULL,
+            commit_time      TIMESTAMPTZ NOT NULL,
+            error            TEXT,
+            attempts         INT NOT NULL,
+            first_failed_at  TIMESTAMPTZ NOT NULL,
+            dead_lettered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE (consumer, txid, seq)
+        );
+
         CREATE OR REPLACE FUNCTION winche_notify_change() RETURNS TRIGGER AS $t$
         BEGIN
             PERFORM pg_notify('{{WincheDatabaseTables.ChangesNotifyChannel}}', NEW.seq::text);

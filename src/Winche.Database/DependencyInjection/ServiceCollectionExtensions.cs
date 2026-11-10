@@ -60,8 +60,10 @@ public static class ServiceCollectionExtensions
         // Change feed consumers
         services.AddSingleton<IChangeFeedConsumer>(sp => sp.GetRequiredService<QueryListenerRegistry>());
         services.AddSingleton<IChangeFeedConsumer>(sp => sp.GetRequiredService<DocumentListenerRegistry>());
-        services.AddSingleton<IChangeFeedConsumer>(sp => new HookFeedConsumer(
-            sp.GetRequiredService<IEnumerable<HookRegistration>>()));
+        // Hooks run as one durable consumer per hook type (own cursor each), built by the set.
+        services.AddSingleton(sp => new ChangeFeedConsumerSet(
+            sp.GetServices<IChangeFeedConsumer>(), sp.GetServices<HookRegistration>()));
+        services.AddSingleton<ChangeFeedConsumers>();
 
         services.AddHostedService<ChangeFeedHostedService>();
         services.AddHostedService<RetentionPruner>();

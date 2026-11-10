@@ -6,8 +6,9 @@ namespace Winche.Database.Runtime.ChangeFeed;
 
 /// <summary>
 /// Delivery loop for ONE durable consumer (spec A): read after the persisted cursor →
-/// deliver → persist AFTER success. Failure retries the SAME batch with capped backoff
-/// (1s→30s) — true at-least-once; a poison batch blocks only this consumer (logged each retry).
+/// deliver → persist AFTER success. A failed batch is redelivered one change at a time, so only the
+/// failing change is retried (capped backoff 1s→30s) — true at-least-once; a change that keeps failing
+/// for ChangeFeedConfig.DeadLetterAfter is moved to the dead-letter table and delivery carries on.
 /// First run without a cursor row pins to MAX(seq) (no historical replay).
 ///
 /// Every node runs a runner, but only the one holding the consumer's advisory lock delivers; the rest
@@ -61,45 +62,37 @@ public sealed class DurableConsumerRunner(
         }
     }
 
-    /// <summary>Delivers until <paramref name="ct"/> trips (shutdown or a lost lock).</summary>
+    /// <summary>
+    /// Delivers until <paramref name="ct"/> trips (shutdown or a lost lock). When a batch fails, the changes
+    /// in it are delivered one at a time, so the cursor moves past every change that succeeds and only the
+    /// failing one is retried. A change that keeps failing for <see cref="ChangeFeedConfig.DeadLetterAfter"/>
+    /// goes to the dead-letter table and delivery carries on.
+    /// </summary>
     private async Task DeliverAsync(Func<CancellationToken, Task> waitForWake, CancellationToken ct)
     {
         FeedPosition? cursor = null;
+        FeedPosition? oneAtATimeThrough = null;   // the end of the batch that failed
         var failures = 0;
         while (!ct.IsCancellationRequested)
         {
+            IReadOnlyList<ChangeRecord> records;
+            ChangeBatch batch;
             try
             {
                 // Bootstrap is INSIDE the retry loop so transient PG failures hit backoff/log,
                 // not a silent unobserved crash of the runner task.
                 cursor ??= await BootstrapAsync(ct);
+                if (oneAtATimeThrough is { } through && cursor.Value.CompareTo(through) >= 0) oneAtATimeThrough = null;
 
-                var records = await _reader.ReadAfterAsync(cursor.Value, config.BatchSize, ct);
+                records = await _reader.ReadAfterAsync(cursor.Value, oneAtATimeThrough is null ? config.BatchSize : 1, ct);
                 if (records.Count == 0)
                 {
                     failures = 0;
+                    oneAtATimeThrough = null;
                     try { await waitForWake(ct); } catch (OperationCanceledException) { break; }
                     continue;
                 }
-
-                var batch = new ChangeBatch(records, await _reader.FetchDocumentsAsync(records, ct));
-                await consumer.OnBatchAsync(batch, ct);                 // throws → retry same batch
-
-                cursor = records[^1].Position;
-                // Persist cursor AFTER successful delivery; persist failures log a warning
-                // but do NOT count as delivery failure — redelivery possible after restart.
-                try
-                {
-                    await _reader.SavePositionAsync(_name, cursor.Value, ct);
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
-                catch (Exception persistEx)
-                {
-                    logger.LogWarning(persistEx,
-                        "Durable consumer '{Consumer}' cursor persist failed; redelivery possible after restart",
-                        _name);
-                }
-                failures = 0;
+                batch = new ChangeBatch(records, await _reader.FetchDocumentsAsync(records, ct));
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -108,14 +101,119 @@ public sealed class DurableConsumerRunner(
             catch (Exception ex)
             {
                 failures++;
-                var backoff = TimeSpan.FromSeconds(Math.Min(30, Math.Pow(2, Math.Min(failures, 5) - 1)));
-                logger.LogError(ex,
-                    "Durable consumer '{Consumer}' failed (attempt {Attempt}); retrying same batch in {Backoff}",
+                var backoff = Backoff(failures);
+                logger.LogError(ex, "Durable consumer '{Consumer}' could not read the feed (attempt {Attempt}); retrying in {Backoff}",
                     _name, failures, backoff);
                 try { await Task.Delay(backoff, ct); } catch (OperationCanceledException) { break; }
+                continue;
+            }
+
+            try
+            {
+                await consumer.OnBatchAsync(batch, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception caught)
+            {
+                failures++;
+                var ex = caught;
+                ChangeRecord record;
+                if (caught is ChangeDeliveryException { Delivered: var delivered } partial && delivered < records.Count)
+                {
+                    // The consumer said which change failed: keep the ones before it, retry only it.
+                    ex = partial.InnerException ?? partial;
+                    record = records[delivered];
+                    if (delivered > 0)
+                    {
+                        cursor = records[delivered - 1].Position;
+                        try { await _reader.SavePositionAsync(_name, cursor.Value, ct); }
+                        catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+                        catch (Exception persistEx)
+                        {
+                            logger.LogWarning(persistEx, "Durable consumer '{Consumer}' cursor persist failed; redelivery possible after restart", _name);
+                        }
+                    }
+                }
+                else if (records.Count > 1)
+                {
+                    // Don't redo the whole batch on every retry: go one change at a time to find the one that fails.
+                    oneAtATimeThrough = records[^1].Position;
+                    logger.LogWarning(caught, "Durable consumer '{Consumer}' failed on a batch of {Count} changes; delivering them one at a time",
+                        _name, records.Count);
+                    continue;
+                }
+                else
+                {
+                    record = records[0];
+                }
+
+                if (await TryDeadLetterAsync(record, ex, ct))
+                {
+                    cursor = record.Position;
+                    failures = 0;
+                    continue;
+                }
+
+                var backoff = Backoff(failures);
+                logger.LogError(ex,
+                    "Durable consumer '{Consumer}' failed on change {Seq} ({Type} {Path}), attempt {Attempt}; retrying in {Backoff}",
+                    _name, record.Seq, record.Type, record.Path, failures, backoff);
+                try { await Task.Delay(backoff, ct); } catch (OperationCanceledException) { break; }
+                continue;
+            }
+
+            cursor = records[^1].Position;
+            failures = 0;
+            // Persist cursor AFTER successful delivery; persist failures log a warning
+            // but do NOT count as delivery failure — redelivery possible after restart.
+            try
+            {
+                await _reader.SavePositionAsync(_name, cursor.Value, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+            catch (Exception persistEx)
+            {
+                logger.LogWarning(persistEx,
+                    "Durable consumer '{Consumer}' cursor persist failed; redelivery possible after restart",
+                    _name);
             }
         }
     }
+
+    /// <summary>
+    /// Records the failure; once the change has been failing for <see cref="ChangeFeedConfig.DeadLetterAfter"/>,
+    /// moves it to the dead-letter table (and the cursor past it) and returns true.
+    /// </summary>
+    private async Task<bool> TryDeadLetterAsync(ChangeRecord record, Exception error, CancellationToken ct)
+    {
+        try
+        {
+            var (attempts, failingFor) = await _reader.RecordFailureAsync(_name, record, error.ToString(), ct);
+            if (config.DeadLetterAfter is not { } limit || failingFor < limit) return false;
+
+            await _reader.DeadLetterAsync(_name, record, ct);
+            logger.LogError(error,
+                "Durable consumer '{Consumer}' gave up on change {Seq} ({Type} {Path}) after {Attempts} attempts over {FailingFor}; " +
+                "moved it to the dead letters (replay with ChangeFeedConsumers.ReplayDeadLettersAsync)",
+                _name, record.Seq, record.Type, record.Path, attempts, failingFor);
+            return true;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return false;   // shutting down; the caller's delay sees the cancellation and stops
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Durable consumer '{Consumer}' could not record a failure", _name);
+            return false;
+        }
+    }
+
+    private static TimeSpan Backoff(int failures) =>
+        TimeSpan.FromSeconds(Math.Min(30, Math.Pow(2, Math.Min(failures, 5) - 1)));
 
     private async Task<FeedPosition> BootstrapAsync(CancellationToken ct)
     {

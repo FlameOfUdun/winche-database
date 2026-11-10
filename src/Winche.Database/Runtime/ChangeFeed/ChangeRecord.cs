@@ -4,6 +4,26 @@ namespace Winche.Database.Runtime.ChangeFeed;
 
 public enum ChangeType { Added, Modified, Removed }
 
+/// <summary>The feed's stored spelling of <see cref="ChangeType"/>.</summary>
+internal static class ChangeTypes
+{
+    public static string ToWire(ChangeType type) => type switch
+    {
+        ChangeType.Added => "added",
+        ChangeType.Modified => "modified",
+        ChangeType.Removed => "removed",
+        _ => throw new ArgumentOutOfRangeException(nameof(type)),
+    };
+
+    public static ChangeType FromWire(string type) => type switch
+    {
+        "added" => ChangeType.Added,
+        "modified" => ChangeType.Modified,
+        "removed" => ChangeType.Removed,
+        _ => throw new InvalidOperationException($"Unknown change type '{type}'"),
+    };
+}
+
 /// <summary>One durable feed row (winche_changes).</summary>
 public sealed record ChangeRecord(
     long Seq, ChangeType Type, string Path, string Collection, long Version, DateTimeOffset CommitTime)

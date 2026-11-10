@@ -127,8 +127,27 @@ public sealed class WincheDatabaseOptions
 
 public sealed record ChangeFeedConfig
 {
-    /// <summary>Feed rows older than this are pruned (spec §4; default 7 days).</summary>
+    /// <summary>
+    /// Feed rows older than this are pruned (default 7 days) — but only once every durable consumer
+    /// (hook) has delivered them, so a consumer that is behind never loses changes to pruning, up to
+    /// <see cref="MaxRetention"/>.
+    /// </summary>
     public TimeSpan Retention { get; init; } = TimeSpan.FromDays(7);
+
+    /// <summary>
+    /// Hard limit (default 30 days): rows older than this are pruned even if a durable consumer hasn't
+    /// delivered them yet (logged as an error), so a consumer that is stuck or gone can't grow the feed
+    /// without bound.
+    /// </summary>
+    public TimeSpan MaxRetention { get; init; } = TimeSpan.FromDays(30);
+
+    /// <summary>
+    /// How long a durable consumer keeps retrying one change that keeps failing before it moves the change
+    /// to the dead-letter table and carries on (default 1 hour; null retries for ever). The clock runs
+    /// from the first failure and survives restarts. Dead letters can be listed and replayed through
+    /// <see cref="Runtime.ChangeFeed.ChangeFeedConsumers"/>.
+    /// </summary>
+    public TimeSpan? DeadLetterAfter { get; init; } = TimeSpan.FromHours(1);
     public TimeSpan PruneInterval { get; init; } = TimeSpan.FromMinutes(10);
     /// <summary>Poll fallback for missed notifies.</summary>
     public TimeSpan PollInterval { get; init; } = TimeSpan.FromSeconds(2);

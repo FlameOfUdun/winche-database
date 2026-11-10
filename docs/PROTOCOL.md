@@ -1107,33 +1107,32 @@ The **send queue** is bounded at 64 frames (configurable). If it fills up, the c
 
 ### 8.1 Hooks: feed-driven, at-least-once, idempotent
 
-Document lifecycle hooks (`DocumentStoreHook`) are invoked **inline and sequentially** by `HookFeedConsumer`, which reads from the durable `changes` feed table.
+Document lifecycle hooks (`DocumentStoreHook`) are invoked **inline and sequentially** by a `HookFeedConsumer`, which reads from the durable `changes` feed table.
 
-- **Feed-driven:** hooks fire from every node reading the shared feed, not from the write path directly. A write on any node triggers hook delivery on all nodes that have a `HookFeedConsumer` running.
-- **Inline and sequential execution:** within each batch, hooks execute inline in the `HookFeedConsumer`. A hook that throws propagates the failure to the `DurableConsumerRunner`.
-- **True at-least-once end-to-end:** the cursor is persisted **only after all hooks in a batch succeed**. On failure the runner retries the **same batch** with capped exponential backoff (1 s → 30 s). A poison hook blocks only the hooks consumer; it does not affect other consumers or listeners.
-- **Idempotency required:** because delivery is at-least-once (and because the seq/commit-order race described below can cause redelivery), hook implementations must be idempotent. The document `version` field is a reliable idempotency key — hooks can record the last-processed version per path.
-- **Durable cursor:** the cursor (`HookFeedConsumer.DurableName = "hooks"`) is persisted in `winche_feed_cursors`. On restart, the consumer resumes from the saved position and catches up on any writes that occurred while it was down.
-- **First boot:** on first deploy, the cursor is initialized to `MAX(seq)` at startup — historical documents are not replayed.
+- **One cursor per hook type (10.4.0+):** each hook type runs as its own durable consumer, named `hooks:<full type name>`, with its own cursor in `winche_documents_feed_cursors`. A hook that fails holds back only itself; the other hook types carry on. All registrations of one type share its cursor.
+- **One node at a time:** every node runs the runners, but each consumer delivers only on the node holding its Postgres advisory lock; another node takes over if that one stops.
+- **True at-least-once end-to-end:** the cursor moves past a change only after its hooks succeed. When a change fails, the cursor stays just before it and only that change is retried, with capped exponential backoff (1 s → 30 s); the changes before it in the batch are not redone.
+- **Dead letters:** a change that keeps failing for `ChangeFeed.DeadLetterAfter` (default 1 hour, measured from its first failure and kept across restarts) is copied to `winche_documents_dead_letters` with the last error, and the hook moves on. `ChangeFeedConsumers` lists, replays (`ReplayDeadLettersAsync`) or discards them. Set `DeadLetterAfter = null` to retry for ever instead.
+- **Idempotency required:** delivery is at-least-once (a retry, a replay or a node change can deliver a change again), so hook implementations must be idempotent. The document `version` field is a reliable idempotency key.
+- **First boot:** a consumer without a cursor starts from now; historical documents are not replayed. On the upgrade to 10.4.0, each hook type's cursor starts from the old shared `hooks` cursor, so nothing is skipped or replayed. A hook type added (or renamed) later starts from now.
+- **Status:** `ChangeFeedConsumers.GetStatusAsync()` reports, per consumer, how far behind it is, whether it is failing (since when, how often, the last error) and how many dead letters it has. `AddHealthChecks().AddWincheChangeFeed()` (Winche.Database.AspNetCore) turns that into a health check that reports Degraded — never Unhealthy, since restarting doesn't fix a failing hook.
 
 ### 8.2 Feed retention and pruning
 
-The `changes` table is pruned automatically. Feed rows older than the configured retention period are deleted by a background pruner.
+The `changes` table is pruned automatically. A row older than `Retention` is deleted once every durable consumer has delivered it; a consumer that is behind keeps its rows, up to `MaxRetention`, after which they are deleted anyway and the pruner logs an error with the number of changes some consumer never got. Cursors of consumers the host no longer runs are ignored.
 
 | `WincheDatabaseOptions.ChangeFeed` field | Default | Description |
 | - | - | - |
-| `Retention` | 7 days | Feed rows older than this are eligible for pruning |
+| `Retention` | 7 days | Delivered feed rows older than this are pruned |
+| `MaxRetention` | 30 days | Feed rows older than this are pruned even if undelivered |
+| `DeadLetterAfter` | 1 hour | How long one change may keep failing before it is dead-lettered (`null` = never) |
 | `PruneInterval` | 10 minutes | How often the pruner runs |
 | `PollInterval` | 2 seconds | Poll fallback (in addition to `pg_notify` wake-ups) |
 | `BatchSize` | 500 | Maximum feed rows read per pump batch |
 
-### 8.3 Seq/commit-order caveat
+### 8.3 Delivery order
 
-PostgreSQL assigns `BIGSERIAL` sequence values (`seq`) **before** a transaction commits. Two concurrent write transactions can therefore commit out of `seq` order: transaction A (seq 5) may commit **after** transaction B (seq 6). A consumer that advances past seq 6 immediately after B commits will permanently miss seq 5 when A later commits.
-
-The practical window for this race is the p99 write-transaction duration — typically sub-millisecond on a healthy cluster. The cursor save uses `GREATEST(current, incoming)` so a backwards-advancing cursor can only cause redelivery, never an additional skip.
-
-**Consequence:** the feed delivers mutations in `seq` order, which is **close to** but **not guaranteed to be** commit order. Hook implementations and feed consumers must tolerate occasional out-of-order delivery and should use idempotency keys (e.g. document `version`) rather than assuming strict ordering.
+Since 10.3.0 the feed is gap-free: rows are read in (writing transaction, `seq`) order and only from transactions older than the oldest one still running, so a change that commits after a later one is held back, never skipped. Across transactions the order matches commit order only loosely, so consumers should read the document's current state (as hooks do) and use the `version` for idempotency rather than assume strict ordering.
 
 ### 8.4 Listener delivery is per-node
 

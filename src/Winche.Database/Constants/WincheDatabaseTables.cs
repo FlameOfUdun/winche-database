@@ -6,6 +6,8 @@ public static class WincheDatabaseTables
     public const string Documents = "winche_documents";
     public const string Changes = "winche_documents_changes";
     public const string FeedCursors = "winche_documents_feed_cursors";
+    /// <summary>Changes a durable consumer gave up on after <c>ChangeFeedConfig.DeadLetterAfter</c>; replayable.</summary>
+    public const string DeadLetters = "winche_documents_dead_letters";
     /// <summary>Intentionally equals <see cref="Changes"/> — the change trigger <c>pg_notify()</c>s on the table-named channel.</summary>
     public const string ChangesNotifyChannel = Changes;
 }
