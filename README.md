@@ -988,9 +988,24 @@ It's stored in the change feed (`before`, `after` and a new `actor` column), who
 history's retention (`ChangeFeed.Retention` and `MaxRetention` still apply when longer). It costs a copy of each
 written document per change, so it's off by default. Changes made before it was turned on have no `Fields`.
 
+## Request logging (11.1.0)
+
+```csharp
+config.LogRequests(r => { r.SuccessSampleRate = 0.1; r.SlowThreshold = TimeSpan.FromSeconds(1); });   // the defaults
+```
+
+Every app request that goes through the access rules (REST, WebSocket, and `IDocumentDatabase` in your code) is
+logged in the category `Winche.Database.Requests` as a structured entry — `Operation` (`database.get`,
+`database.query`, `database.write`, …), `Path`, `Principal` (the caller's `uid`/`sub`, or `signed out`), `Outcome`
+(`ok`, `denied`, `notFound`, `alreadyExists`, `failedPrecondition`, `aborted`, `invalid`) and `LatencyMs` — with a plain
+message: *"u2 was denied reading users/u1: no rule allows it."* Denied and slow requests are always logged (Warning); a
+sample of the rest (Information). Unexpected errors are logged where they're mapped, with their error id. Reads made
+without the rules (the console's own browsing, `DocumentDatabase` directly) aren't logged. The Winche console's Logs
+Explorer filters on these values; elsewhere, set the category's level to keep them out of other outputs.
+
 ## Upgrading to 11.1.0
 
-Additive: startup adds an `actor` column and a path index to the change feed. `KeepHistory` (above) is opt-in.
+Additive: startup adds an `actor` column and a path index to the change feed. `KeepHistory` and `LogRequests` (above) are opt-in.
 
 ## Upgrading to 11.0.1
 

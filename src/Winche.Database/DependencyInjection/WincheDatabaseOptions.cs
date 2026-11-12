@@ -83,6 +83,22 @@ public sealed class WincheDatabaseOptions
     /// <see cref="UseIndexes(Action{IndexBuilder})"/>). Multiple calls accumulate — each policy is a
     /// singleton so <c>GetServices&lt;TtlPolicy&gt;()</c> returns them all for the TTL sweeper at startup.
     /// </summary>
+    /// <summary>What's logged about requests (<see cref="LogRequests"/>), or null when off.</summary>
+    public Runtime.Logging.RequestLogOptions? RequestLog { get; private set; }
+
+    /// <summary>
+    /// Log app requests that go through the access rules (11.1.0), as structured entries in the category
+    /// <c>Winche.Database.Requests</c>: denied and slow ones always (Warning), a sample of the rest (Information).
+    /// The Winche console's Logs Explorer filters them by operation, path, user and outcome.
+    /// </summary>
+    public WincheDatabaseOptions LogRequests(Action<Runtime.Logging.RequestLogOptions>? configure = null)
+    {
+        var o = new Runtime.Logging.RequestLogOptions();
+        configure?.Invoke(o);
+        RequestLog = o;
+        return this;
+    }
+
     /// <summary>The document history kept (<see cref="KeepHistory"/>), or null when off.</summary>
     public HistoryConfig? History { get; private set; }
 

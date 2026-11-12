@@ -103,7 +103,13 @@ public static class ServiceCollectionExtensions
                     claims: sp.GetRequiredService<IRuleClaimsAccessor>()
                 ),
                 sp.GetRequiredKeyedService<RuleEngine>(WincheDatabaseKeys.RuleEngine),
-                sp.GetRequiredService<IRuleClaimsAccessor>())
+                sp.GetRequiredService<IRuleClaimsAccessor>(),
+                options.RequestLog is { } requestLog
+                    ? new Runtime.Logging.RequestLog(
+                        (sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>() ?? Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance)
+                            .CreateLogger(Runtime.Logging.RequestLog.Category),
+                        requestLog, sp.GetRequiredService<IRuleClaimsAccessor>())
+                    : null)
             );
 
         services.AddSingleton<IDocumentDatabase>(sp =>
