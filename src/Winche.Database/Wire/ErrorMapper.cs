@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.Logging;
 using Winche.Database.Authorization;
 using Winche.Database.Querying.Ast;
 using Winche.Database.Querying.Planning;
@@ -12,6 +13,29 @@ public sealed record WireError(string Status, string Message, JsonObject? Detail
 /// <summary>Exception → spec §1 status vocabulary.</summary>
 public static class ErrorMapper
 {
+    /// <summary>
+    /// <see cref="Map(Exception)"/>, and for an unexpected exception (<c>INTERNAL</c>) also logs it at Error level with
+    /// <paramref name="operation"/> and <paramref name="user"/>, under a short error id that the caller gets in the
+    /// message and in <c>details.errorId</c> — so a report like "Internal error (3f9c0a1b2c4d)" leads to the log
+    /// entry. The client sees no more than before about the exception itself.
+    /// </summary>
+    public static WireError Map(Exception ex, ILogger logger, string operation, string? user)
+    {
+        ArgumentNullException.ThrowIfNull(logger);
+        var error = Map(ex);
+        if (error.Status != "INTERNAL") return error;
+        var errorId = Guid.NewGuid().ToString("N")[..12];
+        logger.LogError(ex, "Internal error {ErrorId} in {Operation} for {User}", errorId, operation, user ?? "(signed out)");
+        return error with { Message = $"Internal error ({errorId}).", Details = new JsonObject { ["errorId"] = errorId } };
+    }
+
+    /// <summary>The caller's user id from claims (<c>uid</c>, else <c>sub</c>), for logs.</summary>
+    public static string? UserOf(IReadOnlyDictionary<string, object?>? claims) =>
+        claims is null ? null
+        : claims.TryGetValue("uid", out var uid) && uid is not null ? uid.ToString()
+        : claims.TryGetValue("sub", out var sub) && sub is not null ? sub.ToString()
+        : null;
+
     public static WireError Map(Exception ex) => ex switch
     {
         RuntimeException re => new WireError(re.Status switch

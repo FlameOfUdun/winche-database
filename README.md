@@ -863,7 +863,7 @@ These limits are configurable — unlike many document databases that hard-code 
 
 ## REST API
 
-Mapped under `/documents` by default (configurable via `MapWincheDatabaseRestApi(prefix: "...")`). Document paths in URL parameters are Base64-encoded (UTF-8 bytes).
+Mapped under `/documents` by default (configurable via `MapWincheDatabaseRestApi(prefix: "...")`). Document paths in URL parameters are **base64url**-encoded UTF-8 (`-` and `_`, padding optional), which is always safe in a URL; standard base64 is still accepted, but its `/` and `+` can break the URL, so use base64url. A path that isn't either is a 400 `INVALID_ARGUMENT`.
 
 **Convenience endpoints:**
 
@@ -889,6 +889,11 @@ Mapped under `/documents` by default (configurable via `MapWincheDatabaseRestApi
 | `POST` | `/documents:aggregate` | Run aggregations over a query (count / sum / average) |
 
 Access rules are enforced on all routes. The claims accessor runs as an endpoint filter before every request.
+
+**Unexpected errors** (status `INTERNAL`, HTTP 500) — on REST, WebSocket requests and live subscriptions — are logged at
+Error level with the operation and the caller's user id, under a short error id that the caller also gets:
+`{"status":"INTERNAL","message":"Internal error (3f9c0a1b2c4d).","details":{"errorId":"3f9c0a1b2c4d"}}`. The
+exception itself is never sent to the caller.
 
 See [PROTOCOL](docs/PROTOCOL.md#6-rest-api) for full request/response examples.
 
@@ -961,6 +966,14 @@ recording costs next to nothing.
 
 Useful alarms: `hook.lag` p95 above a few minutes, any `hook.dead_letters`, `write.duration{outcome=aborted}`
 rising, `query.duration{indexed=false}` p95 above the slow-query threshold.
+
+## Upgrading to 11.0.1
+
+- REST document paths may be base64url (recommended — standard base64's `/` and `+` could break the URL); standard
+  base64 still works, and an undecodable path is now a 400 instead of a 500.
+- Unexpected errors were mapped to `INTERNAL` without being logged anywhere. They're now logged with an error id that
+  the caller also gets (REST, WebSocket requests and subscriptions). A failure in a claims mapper on REST is caught
+  and mapped too.
 
 ## Upgrading to 11.0.0
 

@@ -45,6 +45,9 @@ public sealed class ConnectionScope(
 
     public void SetClaims(IReadOnlyDictionary<string, object?> claims) => _claims = claims;
 
+    /// <summary>The connection's user id (<c>uid</c>, else <c>sub</c>), for logs.</summary>
+    public string? UserId => Wire.ErrorMapper.UserOf(_claims);
+
     /// <summary>
     /// Pushes the connection's current claims into the DocumentClaimsAccessor's AsyncLocal for
     /// this async context. Must be called before any IDocumentDatabase operation — in the message

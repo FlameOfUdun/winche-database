@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Text.Json.Nodes;
 using Winche.Database.AspNetCore.WebSockets.Protocol;
 using Winche.Database.Documents;
@@ -23,9 +25,16 @@ public static class SubscriptionPump
     /// <summary>Minimum client protocol version that receives the `deleted` change kind. v1 clients get `removed`.</summary>
     internal const long DeletedKindMinProtocol = 2;
 
+    /// <summary>Runs a query subscription (unexpected errors aren't logged; see the overload with a logger).</summary>
+    public static Task RunQueryAsync(
+        string subscriptionId, IQueryListener listener, ConnectionScope scope, WsConnection conn,
+        bool supportsDeletedKind, CancellationToken ct) =>
+        RunQueryAsync(subscriptionId, listener, scope, conn, supportsDeletedKind, NullLogger.Instance, ct);
+
+    /// <summary>Runs a query subscription; an unexpected error is logged with an error id the client also gets.</summary>
     public static async Task RunQueryAsync(
         string subscriptionId, IQueryListener listener, ConnectionScope scope, WsConnection conn,
-        bool supportsDeletedKind, CancellationToken ct)
+        bool supportsDeletedKind, ILogger logger, CancellationToken ct)
     {
         try
         {
@@ -115,13 +124,20 @@ public static class SubscriptionPump
         catch (Exception ex)
         {
             // listener failed (e.g. invalid stored query): surface once, stream ends; client may re-listen
-            SendSubscriptionError(subscriptionId, ex, conn);
+            SendSubscriptionError(subscriptionId, ex, conn, scope, logger);
         }
     }
 
+    /// <summary>Runs a document subscription (unexpected errors aren't logged; see the overload with a logger).</summary>
+    public static Task RunDocumentAsync(
+        string subscriptionId, IDocumentListener listener, ConnectionScope scope, WsConnection conn,
+        bool supportsDeletedKind, CancellationToken ct) =>
+        RunDocumentAsync(subscriptionId, listener, scope, conn, supportsDeletedKind, NullLogger.Instance, ct);
+
+    /// <summary>Runs a document subscription; an unexpected error is logged with an error id the client also gets.</summary>
     public static async Task RunDocumentAsync(
         string subscriptionId, IDocumentListener listener, ConnectionScope scope, WsConnection conn,
-        bool supportsDeletedKind, CancellationToken ct)
+        bool supportsDeletedKind, ILogger logger, CancellationToken ct)
     {
         try
         {
@@ -178,14 +194,14 @@ public static class SubscriptionPump
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            SendSubscriptionError(subscriptionId, ex, conn);
+            SendSubscriptionError(subscriptionId, ex, conn, scope, logger);
         }
     }
 
     /// <summary>Maps an exception to a wire error and sends it as the subscription's terminal frame.</summary>
-    private static void SendSubscriptionError(string subscriptionId, Exception ex, WsConnection conn)
+    private static void SendSubscriptionError(string subscriptionId, Exception ex, WsConnection conn, ConnectionScope scope, ILogger logger)
     {
-        var error = ErrorMapper.Map(ex);
+        var error = ErrorMapper.Map(ex, logger, $"WebSocket subscription {subscriptionId}", scope.UserId);
         var details = new JsonObject { ["subscriptionId"] = subscriptionId };
         if (error.Details is { } mapperDetails)
             foreach (var kvp in mapperDetails) details[kvp.Key] = kvp.Value?.DeepClone();

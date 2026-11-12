@@ -1,9 +1,12 @@
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Winche.Database.AspNetCore.Abstraction;
 using Winche.Database.Wire;
 
 namespace Winche.Database.AspNetCore.Rest.EndpointFilters;
 
-internal class ExceptionHandler : IEndpointFilter
+internal class ExceptionHandler(ILogger<ExceptionHandler> logger) : IEndpointFilter
 {
     public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
     {
@@ -18,7 +21,9 @@ internal class ExceptionHandler : IEndpointFilter
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            var error = ErrorMapper.Map(ex);
+            var http0 = context.HttpContext;
+            var user = ErrorMapper.UserOf(http0.RequestServices.GetService<DocumentClaimsAccessor>()?.GetClaims());
+            var error = ErrorMapper.Map(ex, logger, $"{http0.Request.Method} {http0.Request.Path}", user);
             var http = error.Status switch
             {
                 "NOT_FOUND" => 404,

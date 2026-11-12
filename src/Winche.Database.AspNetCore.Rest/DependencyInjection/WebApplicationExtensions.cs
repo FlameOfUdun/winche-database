@@ -23,10 +23,22 @@ public static class WebApplicationExtensions
     private static readonly JsonSerializerOptions QueryAstOptions = new() { Converters = { new QueryAstJsonConverter() } };
     private static readonly JsonSerializerOptions FieldsOptions = new() { Converters = { new FieldsJsonConverter() } };
 
-    private static string DecodeBase64(string base64)
+    /// <summary>
+    /// A document path from the URL: base64url (<c>-</c>, <c>_</c>, padding optional — recommended, since it never
+    /// contains <c>/</c> or <c>+</c>) or standard base64. Anything else is a 400, not a 500.
+    /// </summary>
+    internal static string DecodeBase64(string base64)
     {
-        byte[] bytes = Convert.FromBase64String(base64);
-        return Encoding.UTF8.GetString(bytes);
+        var s = base64.Replace('-', '+').Replace('_', '/');
+        s = s.PadRight(s.Length + (4 - s.Length % 4) % 4, '=');
+        try
+        {
+            return Encoding.UTF8.GetString(Convert.FromBase64String(s));
+        }
+        catch (FormatException)
+        {
+            throw new ArgumentException("The document path in the URL isn't base64url (or base64).");
+        }
     }
 
     /// <summary>
@@ -42,8 +54,9 @@ public static class WebApplicationExtensions
         var p = prefix.TrimStart('/');
         var group = app.MapGroup($"/{p}");
 
-        group.AddEndpointFilter<ClaimsAccessor>();
+        // ExceptionHandler first, so it's outermost: a failure in the claims mapper is mapped (and logged) too.
         group.AddEndpointFilter<ExceptionHandler>();
+        group.AddEndpointFilter<ClaimsAccessor>();
 
         group.MapPut("/{path}", async (string path, DocumentPayload body, IDocumentDatabase db, CancellationToken ct = default) =>
         {
@@ -91,8 +104,8 @@ public static class WebApplicationExtensions
         RouteHandlerBuilder Verb(string verb, Delegate handler)
         {
             var builder = app.MapPost($"/{p}:{verb}", handler)
-               .AddEndpointFilter<ClaimsAccessor>()
-               .AddEndpointFilter<ExceptionHandler>();
+               .AddEndpointFilter<ExceptionHandler>()
+               .AddEndpointFilter<ClaimsAccessor>();
             verbs.Add(builder);
             return builder;
         }

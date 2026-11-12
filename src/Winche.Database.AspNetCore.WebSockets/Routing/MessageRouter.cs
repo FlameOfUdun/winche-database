@@ -19,6 +19,14 @@ namespace Winche.Database.AspNetCore.WebSockets.Routing;
 /// </summary>
 public sealed class MessageRouter
 {
+    private readonly Microsoft.Extensions.Logging.ILogger _logger;
+
+    /// <summary>A router that doesn't log (tests).</summary>
+    public MessageRouter() : this(Microsoft.Extensions.Logging.Abstractions.NullLogger<MessageRouter>.Instance) { }
+
+    /// <summary>A router that logs unexpected errors (with an error id the client also gets).</summary>
+    public MessageRouter(Microsoft.Extensions.Logging.ILogger<MessageRouter> logger) => _logger = logger;
+
     public async Task<ServerMessage> HandleAsync(
         ConnectionScope scope, WsConnection conn, Microsoft.AspNetCore.Http.HttpContext httpContext,
         ClientMessage message, CancellationToken ct)
@@ -53,7 +61,7 @@ public sealed class MessageRouter
         }
         catch (Exception ex)
         {
-            var error = ErrorMapper.Map(ex);
+            var error = ErrorMapper.Map(ex, _logger, $"WebSocket {MessageType(message)}", scope.UserId);
             return new ErrorMessage { Id = id, Status = error.Status, Message = error.Message, Details = error.Details };
         }
     }
@@ -106,18 +114,25 @@ public sealed class MessageRouter
         Message = $"This connection already has {scope.MaxSubscriptions} live subscriptions (the limit); unlisten some first.",
     };
 
-    private static ServerMessage HandleListen(ConnectionScope scope, WsConnection conn, string id, Query query, long? resumeToken, long? clientProtocol)
+    /// <summary>A message's wire type for logs ("query", "write", …).</summary>
+    private static string MessageType(ClientMessage message)
+    {
+        var name = message.GetType().Name;
+        return name.EndsWith("Message", StringComparison.Ordinal) ? name[..^"Message".Length] : name;
+    }
+
+    private ServerMessage HandleListen(ConnectionScope scope, WsConnection conn, string id, Query query, long? resumeToken, long? clientProtocol)
     {
         if (scope.AtSubscriptionLimit) return TooManySubscriptions(scope, id);
         var listener = scope.Db.Listen(query, resumeToken is { } seq ? new ListenOptions(ResumeFrom: seq) : null);
         var subscriptionId = Guid.NewGuid().ToString("N");
         var cts = CancellationTokenSource.CreateLinkedTokenSource(conn.Closed);
         var supportsDeleted = clientProtocol >= SubscriptionPump.DeletedKindMinProtocol;
-        var pump = SubscriptionPump.RunQueryAsync(subscriptionId, listener, scope, conn, supportsDeleted, cts.Token);
+        var pump = SubscriptionPump.RunQueryAsync(subscriptionId, listener, scope, conn, supportsDeleted, _logger, cts.Token);
         return Register(scope, subscriptionId, listener, pump, cts, id);
     }
 
-    private static async Task<ServerMessage> HandleDocListen(
+    private async Task<ServerMessage> HandleDocListen(
         ConnectionScope scope, WsConnection conn, string id, string path, long? resumeToken, long? clientProtocol, CancellationToken ct)
     {
         if (scope.AtSubscriptionLimit) return TooManySubscriptions(scope, id);
@@ -126,7 +141,7 @@ public sealed class MessageRouter
         var subscriptionId = Guid.NewGuid().ToString("N");
         var cts = CancellationTokenSource.CreateLinkedTokenSource(conn.Closed);
         var supportsDeleted = clientProtocol >= SubscriptionPump.DeletedKindMinProtocol;
-        var pump = SubscriptionPump.RunDocumentAsync(subscriptionId, listener, scope, conn, supportsDeleted, cts.Token);
+        var pump = SubscriptionPump.RunDocumentAsync(subscriptionId, listener, scope, conn, supportsDeleted, _logger, cts.Token);
         return Register(scope, subscriptionId, listener, pump, cts, id);
     }
 
