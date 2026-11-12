@@ -133,14 +133,24 @@ public sealed class WincheDatabaseOptions
     }
 
     /// <summary>
-    /// Builds a <see cref="RuleSet"/> from a <see cref="RuleSetBuilder"/> delegate and adds it
-    /// to the merged set of active rulesets. Shorthand for <c>UseRules(RuleSetBuilder.Build(configure))</c>.
-    /// Multiple <c>UseRules</c> calls accumulate — each registered ruleset's blocks are
-    /// OR-combined with all others. With no <c>UseRules</c> call, access is default-deny.
+    /// Parses <paramref name="rules"/> (the rules language, as in the console's editor) and adds it like
+    /// <see cref="UseRules(RuleSet)"/>. A syntax error throws here, at startup.
     /// </summary>
-    public WincheDatabaseOptions UseRules(Action<RuleSetBuilder> configure)
+    public WincheDatabaseOptions UseRulesText(string rules)
     {
-        Rulesets.Add(RuleSetBuilder.Build(configure));
+        ArgumentNullException.ThrowIfNull(rules);
+        Rulesets.Add(RuleFiles.Parse(rules, source: null));
+        return this;
+    }
+
+    /// <summary>
+    /// Reads and parses a rules file (e.g. <c>database.rules</c>) and adds it like <see cref="UseRules(RuleSet)"/>.
+    /// A relative <paramref name="path"/> is resolved against <see cref="AppContext.BaseDirectory"/>. A missing
+    /// file or a syntax error throws here, at startup, naming the file, line and column.
+    /// </summary>
+    public WincheDatabaseOptions UseRulesFile(string path)
+    {
+        Rulesets.Add(RuleFiles.Load(path));
         return this;
     }
 }

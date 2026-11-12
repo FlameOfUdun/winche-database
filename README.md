@@ -65,13 +65,9 @@ builder.Services
         // Store behavior (optional; these are the defaults)
         config.TransactionConfig = new() { IdleTimeoutSpan = TimeSpan.FromMinutes(1) };
 
-        // Access rules (evaluated in memory on every operation)
-        config.UseRules(r =>
-            r.Match("users/{userId}", u =>
-            {
-                u.Allow(RuleOperations.Read,  Expr.Auth("uid").Eq(Expr.Param("userId")));
-                u.Allow(RuleOperations.Write, Expr.Auth("uid").Eq(Expr.Param("userId")));
-            }));
+        // Access rules (evaluated in memory on every operation). Starting rules; with the console's
+        // rules editor, the version deployed there (`winche rules deploy`) replaces them.
+        config.UseRulesFile("database.rules");
 
         // Document lifecycle hooks (at-least-once, feed-driven, must be idempotent)
         config.UseHooks(h => h.Add<MyHook>("{document=**}"));
@@ -176,21 +172,24 @@ path so one scan orders every collection with that id together.
 
 ## Access Rules
 
-Access rules determine whether a caller can perform an operation. Rules are defined with
-`UseRules(r => r.Match(path, m => m.Allow(operations, condition)))` and evaluated in-memory by
-Winche.Rules on every operation.
+Access rules determine whether a caller can perform an operation. They are written in the rules language
+(Firestore-style; see Winche.Rules) and evaluated in memory by Winche.Rules on every operation. There is no C#
+builder (11.0.0): rules are text, in one place you can read and review.
+
+```text
+// database.rules
+match users/{userId} {
+  allow read, write: if request.auth.uid == userId;
+}
+```
 
 ```csharp
-using Winche.Rules;
-using Winche.Rules.Expressions;
-
-config.UseRules(r =>
-    r.Match("users/{userId}", u =>
-    {
-        u.Allow(RuleOperations.Read,  Expr.Auth("uid").Eq(Expr.Param("userId")));
-        u.Allow(RuleOperations.Write, Expr.Auth("uid").Eq(Expr.Param("userId")));
-    }));
+config.UseRulesFile("database.rules");   // relative to AppContext.BaseDirectory; or UseRulesText("..."), UseRules(RuleSet)
 ```
+
+A missing file or a syntax error fails at startup, naming the file, line and column. With the Winche console's
+rules editor, rules are edited there or deployed from the repo with `winche rules deploy`; the deployed version
+replaces the file's rules at startup.
 
 ### Path patterns
 
@@ -199,30 +198,19 @@ config.UseRules(r =>
 
 ### Operations
 
-| Constant | Expands to |
-| --- | --- |
-| `RuleOperations.Read` | `get` + `list` |
-| `RuleOperations.Write` | `create` + `update` + `delete` |
-| `RuleOperations.All` | all five operations |
-| `RuleOperations.Of(...)` | explicit set |
+`get`, `list`, `create`, `update`, `delete`; `read` = `get` + `list`, `write` = `create` + `update` + `delete`.
 
 ### Conditions
 
-Conditions are `RuleExpr` values built with the `Expr` factory:
-
-| Expression | Maps to |
+| Expression | Means |
 | --- | --- |
-| `Expr.Auth("uid")` | `request.auth.uid` |
-| `Expr.Auth("token", "role")` | `request.auth.token.role` |
-| `Expr.Param("userId")` | path-capture variable `userId` |
-| `Expr.Resource("ownerId")` | `resource.ownerId` (a field of the existing document) |
-| `Expr.RequestResource("status")` | `request.resource.status` (the post-write document, with field transforms resolved) |
-| `Expr.Time()` | `request.time` |
-| `Expr.Exists(path)` | `exists(path)` — cross-document existence check |
-| `Expr.Get(path)` | `get(path)` — cross-document read |
-| `Expr.Any(a, b)` | `a \|\| b` (OR) |
-| `Expr.All(a, b)` | `a && b` (AND) |
-| `.Eq(...)` / `.Ne(...)` / `.Lt(...)` etc. | comparison operators |
+| `request.auth.uid`, `request.auth.token.role` | caller claims |
+| `userId` | a path capture from the `match` pattern |
+| `resource.ownerId` | a field of the existing document |
+| `request.resource.status` | the post-write document (field transforms resolved) |
+| `request.time` | the request time |
+| `exists(path)` / `get(path)` | cross-document existence check / read |
+| `a \|\| b`, `a && b`, `!a`, `==`, `!=`, `<`, `in`, `is`, functions | see Winche.Rules |
 
 A document's own fields are exposed at the top level of `resource` (so `resource.ownerId`).
 `resource.data` (10.5.0) is the fields alone, without the storage columns below — what `keys()` and
@@ -251,7 +239,7 @@ be allowed and let default-deny cover the rest.
 
 ### Hot-swapping rules at runtime (10.0.0+)
 
-Rules are backed by a **mutable rule-set repository** seeded from your `UseRules(...)` calls at
+Rules are backed by a **mutable rule-set repository** seeded from your `UseRules*(...)` calls at
 startup, and the engine reads the current ruleset on **every** evaluation. A running host can
 therefore replace the active ruleset without a restart or container rebuild — the change takes effect
 on the next operation. The engine and its repository are registered under the public key
@@ -261,15 +249,17 @@ on the next operation. The engine and its repository are registered under the pu
 using Microsoft.Extensions.DependencyInjection;
 using Winche.Database.Constants;
 using Winche.Rules;
-using Winche.Rules.Expressions;
+using Winche.Rules.Text;
 
 // Resolve the mutable repository registered under the public key (e.g. from an admin endpoint):
 var rules = provider.GetRequiredKeyedService<IMutableRuleSetRepository>(WincheDatabaseKeys.RuleEngine);
 
 // Replace the active ruleset — effective on the next operation, no restart:
-rules.Update(RuleSetBuilder.Build(r =>
-    r.Match("users/{userId}", u =>
-        u.Allow(RuleOperations.Read, Expr.Auth("uid").Eq(Expr.Param("userId"))))));
+rules.Update(RuleText.ParseRuleSet("""
+    match users/{userId} {
+      allow read: if request.auth.uid == userId;
+    }
+    """));
 ```
 
 An in-flight evaluation keeps the ruleset snapshot it started with; the next one observes the new
@@ -971,6 +961,13 @@ recording costs next to nothing.
 
 Useful alarms: `hook.lag` p95 above a few minutes, any `hook.dead_letters`, `write.duration{outcome=aborted}`
 rising, `query.duration{indexed=false}` p95 above the slow-query threshold.
+
+## Upgrading to 11.0.0
+
+Rules are text only, as in Firebase: `UseRules(r => r.Match(...).Allow(...))` is gone, and Winche.Rules 4.0.0 makes
+`RuleSetBuilder` and `Expr` internal. Move each ruleset into a `.rules` file (the console's editor shows a live
+ruleset as text, and `RuleText.FormatRuleSet(ruleSet)` prints one) and load it with `UseRulesFile(path)`, or pass
+the text to `UseRulesText(...)`. `UseRules(RuleSet)` still takes a parsed ruleset.
 
 ## Upgrading to 10.5.0
 

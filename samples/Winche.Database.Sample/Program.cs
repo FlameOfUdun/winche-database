@@ -3,8 +3,6 @@ using Winche.Database.AspNetCore.Rest.DependencyInjection;
 using Winche.Database.AspNetCore.WebSockets.DependencyInjection;
 using Winche.Database.DependencyInjection;
 using Winche.Database.Sample.Configurations;
-using Winche.Rules;
-using Winche.Rules.Expressions;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -38,13 +36,7 @@ builder.Services
             return new Dictionary<string, object?> { ["uid"] = token };
         });
 
-        opts.UseRules(r =>
-        {
-            r.Match("userData/{userId}/{document=**}", owned =>
-            {
-                owned.Allow(RuleOperations.All, Expr.Auth("uid").Eq(Expr.Param("userId")));
-            });
-        });
+        opts.UseRulesFile("database.rules");
 
         opts.UseIndexes(ib =>
         {
