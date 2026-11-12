@@ -38,7 +38,32 @@ public static class ServiceCollectionExtensions
 
         services.AddNpgsqlDataSource(connectionString, serviceKey: WincheDatabaseKeys.DataSource);
 
-        services.AddSingleton<CollectionIndexResolver>();
+        // The indexes and expiry policies in force: the code's, or the console's with UseSettings().
+        Winche.Config.SettingsArea<Settings.DatabaseSettings>? area = null;
+        if (options.SettingsEnabled)
+        {
+            var codeIndexes = services.Where(d => d.ServiceType == typeof(Documents.IndexDefinition) && d.ImplementationInstance is not null)
+                .Select(d => (Documents.IndexDefinition)d.ImplementationInstance!).ToList();
+            var codeTtl = services.Where(d => d.ServiceType == typeof(Runtime.Ttl.TtlPolicy) && d.ImplementationInstance is not null)
+                .Select(d => (Runtime.Ttl.TtlPolicy)d.ImplementationInstance!).ToList();
+            area = Winche.Config.ServiceCollectionExtensions.AddWincheSettingsArea(services, Settings.DatabaseSettings.Area, "Database",
+                Settings.DatabaseSettings.From(options, codeIndexes, codeTtl), s => s.Problems());
+            area.Changed += s => s.ApplyTo(options);
+            services.AddHostedService<Settings.IndexSyncService>();
+        }
+        services.AddSingleton(sp =>
+        {
+            var catalog = new IndexCatalog(sp.GetServices<Documents.IndexDefinition>(), sp.GetServices<Runtime.Ttl.TtlPolicy>());
+            if (area is not null)
+            {
+                void Follow(Settings.DatabaseSettings s) => catalog.Replace(s.IndexDefinitions(), s.TtlPolicies());
+                Follow(area.Current);
+                area.Changed += Follow;
+            }
+            return catalog;
+        });
+        services.AddSingleton(sp => new CollectionIndexResolver(sp.GetRequiredService<IndexCatalog>(),
+            sp.GetService<Microsoft.Extensions.Logging.ILogger<CollectionIndexResolver>>(), sp.GetRequiredService<IOptions<WincheDatabaseOptions>>()));
         services.AddSingleton(sp => new QueryListenerRegistry(
             sp.GetRequiredKeyedService<NpgsqlDataSource>(WincheDatabaseKeys.DataSource),
             sp.GetRequiredService<CollectionIndexResolver>(),
@@ -104,11 +129,11 @@ public static class ServiceCollectionExtensions
                 ),
                 sp.GetRequiredKeyedService<RuleEngine>(WincheDatabaseKeys.RuleEngine),
                 sp.GetRequiredService<IRuleClaimsAccessor>(),
-                options.RequestLog is { } requestLog
+                options.RequestLog is not null || options.SettingsEnabled
                     ? new Runtime.Logging.RequestLog(
                         (sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>() ?? Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance)
                             .CreateLogger(Runtime.Logging.RequestLog.Category),
-                        requestLog, sp.GetRequiredService<IRuleClaimsAccessor>())
+                        () => options.RequestLog, sp.GetRequiredService<IRuleClaimsAccessor>())
                     : null)
             );
 

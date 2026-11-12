@@ -20,6 +20,10 @@ public static class HostExtensions
         var source = scope.ServiceProvider.GetRequiredKeyedService<NpgsqlDataSource>(WincheDatabaseKeys.DataSource);
         await using var _ = await AdvisoryLease.AcquireAsync(source, "schema", TimeSpan.FromSeconds(30), ct);
 
+        // Saved settings first, so the console's indexes are synced rather than dropped and rebuilt.
+        if (scope.ServiceProvider.GetService<Winche.Config.SettingsArea<Settings.DatabaseSettings>>() is not null
+            && scope.ServiceProvider.GetService<Winche.Config.SettingsStore>() is { } settings)
+            await settings.EnsureLoadedAsync(ct);
         var schema = scope.ServiceProvider.GetRequiredService<ISchemaManager>();
         await schema.EnsureCreatedAsync(ct);
         await schema.SyncIndexesAsync(ct);

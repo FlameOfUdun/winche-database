@@ -13,11 +13,13 @@ public sealed class SchemaManager(
     [FromKeyedServices(WincheDatabaseKeys.DataSource)] NpgsqlDataSource source,
     IEnumerable<IndexDefinition> indexes,
     IOptions<WincheDatabaseOptions>? options = null,
-    ILogger<SchemaManager>? logger = null
+    ILogger<SchemaManager>? logger = null,
+    IndexCatalog? catalog = null
 ) : ISchemaManager
 {
-    private readonly IReadOnlyList<IndexDefinition> _indexes = indexes.ToList();
-    private readonly bool _dropUndeclared = options?.Value.DropUndeclaredIndexes ?? true;
+    private readonly IReadOnlyList<IndexDefinition> _declared = indexes.ToList();
+    private IReadOnlyList<IndexDefinition> _indexes => catalog?.Indexes ?? _declared;
+    private bool _dropUndeclared => options?.Value.DropUndeclaredIndexes ?? true;
 
     public async Task EnsureCreatedAsync(CancellationToken ct = default)
     {

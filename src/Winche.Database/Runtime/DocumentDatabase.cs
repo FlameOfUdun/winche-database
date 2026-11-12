@@ -39,10 +39,15 @@ public sealed class DocumentDatabase : IDocumentDatabase
         IWriteAuthorizer? writeAuthorizer, DocumentListenerRegistry? docListeners, Authorization.IRuleClaimsAccessor? claims)
     {
         _source = source;
-        var history = options.Value.History is not null;
-        _applier = new WriteApplier(source, writeAuthorizer, options.Value.WriteLimits, options.Value.HookSnapshotPaths,
-            snapshotAll: history,
-            actor: history ? () => History.DocumentWriteActor.Current ?? Wire.ErrorMapper.UserOf(claims?.GetClaims()) : null);
+        // History and limits are read on each write: the console can change them while running.
+        var o = options.Value;
+        _applier = new WriteApplier(source, writeAuthorizer, o.WriteLimits, o.HookSnapshotPaths,
+            snapshotAll: o.History is not null,
+            actor: () => History.DocumentWriteActor.Current ?? Wire.ErrorMapper.UserOf(claims?.GetClaims()))
+        {
+            LimitsSource = () => o.WriteLimits,
+            HistorySource = () => o.History is not null,
+        };
         _ledger = options.Value.TransactionConfig.Store == TransactionStore.Memory
             ? new MemoryTransactionLedger(options.Value.TransactionConfig)
             : new PostgresTransactionLedger(source, options.Value.TransactionConfig);

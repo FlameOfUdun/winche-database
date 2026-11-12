@@ -21,8 +21,10 @@ public sealed class RequestLogOptions
 /// "u2 was denied reading users/u1: no rule allows it". Denied (Warning) and slow (Warning) requests are always
 /// logged; successful ones (Information) are sampled. Unexpected errors are logged where they're mapped, with an id.
 /// </summary>
-internal sealed class RequestLog(ILogger logger, RequestLogOptions options, IRuleClaimsAccessor claims)
+internal sealed class RequestLog(ILogger logger, Func<RequestLogOptions?> current, IRuleClaimsAccessor claims)
 {
+    public RequestLog(ILogger logger, RequestLogOptions options, IRuleClaimsAccessor claims) : this(logger, () => options, claims) { }
+
     public const string Category = "Winche.Database.Requests";
 
     public async Task<T> RunAsync<T>(string operation, string path, Func<Task<T>> body)
@@ -77,6 +79,7 @@ internal sealed class RequestLog(ILogger logger, RequestLogOptions options, IRul
 
     private void Done(string operation, string path, string outcome, Stopwatch watch)
     {
+        if (current() is not { } options) return;   // logging turned off
         var ms = watch.ElapsedMilliseconds;
         var slow = ms >= options.SlowThreshold.TotalMilliseconds;
         var level = outcome is "ok" or "notFound" && !slow ? LogLevel.Information : LogLevel.Warning;

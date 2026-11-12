@@ -84,7 +84,7 @@ public sealed class WincheDatabaseOptions
     /// singleton so <c>GetServices&lt;TtlPolicy&gt;()</c> returns them all for the TTL sweeper at startup.
     /// </summary>
     /// <summary>What's logged about requests (<see cref="LogRequests"/>), or null when off.</summary>
-    public Runtime.Logging.RequestLogOptions? RequestLog { get; private set; }
+    public Runtime.Logging.RequestLogOptions? RequestLog { get; internal set; }
 
     /// <summary>
     /// Log app requests that go through the access rules (11.1.0), as structured entries in the category
@@ -100,7 +100,21 @@ public sealed class WincheDatabaseOptions
     }
 
     /// <summary>The document history kept (<see cref="KeepHistory"/>), or null when off.</summary>
-    public HistoryConfig? History { get; private set; }
+    public HistoryConfig? History { get; internal set; }
+
+    /// <summary>
+    /// Lets the console change indexes, expiry (TTL), history, write limits, the slow-query threshold and request
+    /// logging without a deploy (11.1.0); what's set here becomes the starting values. Needs <c>AddWincheConfig(…)</c>
+    /// to save changes. Rules, hooks and the connection stay in code.
+    /// </summary>
+    public WincheDatabaseOptions UseSettings()
+    {
+        SettingsEnabled = true;
+        return this;
+    }
+
+    /// <summary>Whether the console may change these settings (<see cref="UseSettings"/>).</summary>
+    public bool SettingsEnabled { get; private set; }
 
     /// <summary>
     /// Keep every document's history (11.1.0): each change records the document before and after it, and who made it

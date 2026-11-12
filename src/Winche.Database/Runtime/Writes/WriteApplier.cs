@@ -21,7 +21,14 @@ public sealed class WriteApplier(
     NpgsqlDataSource source, IWriteAuthorizer? authorizer = null, WriteLimits? limits = null,
     IReadOnlyList<string>? snapshotPaths = null, bool snapshotAll = false, Func<string?>? actor = null)
 {
-    private readonly WriteLimits _limits = limits ?? new();
+    private readonly WriteLimits _fixedLimits = limits ?? new();
+    private WriteLimits _limits => LimitsSource?.Invoke() ?? _fixedLimits;
+
+    /// <summary>Where the limits come from when they can change while running (the database's options).</summary>
+    internal Func<WriteLimits>? LimitsSource { get; init; }
+
+    /// <summary>Whether every write is snapshotted for history, when that can change while running.</summary>
+    internal Func<bool>? HistorySource { get; init; }
     private readonly IReadOnlyList<string> _snapshotPaths = snapshotPaths ?? [];
 
     private sealed class DocState
@@ -452,7 +459,7 @@ public sealed class WriteApplier(
             changePaths.Add(path);
             changeCollections.Add(info.Collection);
             changeVersions.Add(doc.Exists ? doc.Version : doc.VersionBefore);
-            var snapshot = snapshotAll || (_snapshotPaths.Count > 0 && _snapshotPaths.Any(p => Winche.Rules.Matching.PathMatcher.IsMatch(p, path)));
+            var snapshot = (HistorySource?.Invoke() ?? snapshotAll) || (_snapshotPaths.Count > 0 && _snapshotPaths.Any(p => Winche.Rules.Matching.PathMatcher.IsMatch(p, path)));
             changeBefore.Add(snapshot && doc.ExistedBefore ? ChangeFeed.ChangeSnapshots.Encode(doc.BeforeFields!, doc.BeforeCreatedAt, doc.BeforeUpdatedAt, doc.VersionBefore) : null);
             changeAfter.Add(snapshot && doc.Exists ? ChangeFeed.ChangeSnapshots.Encode(doc.Fields, doc.CreatedAt, doc.UpdatedAt, doc.Version) : null);
         }
@@ -470,7 +477,7 @@ public sealed class WriteApplier(
             await using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
             WriteSql.InsertChanges(changeTypes, changePaths, changeCollections, changeVersions, changeBefore, changeAfter, commitTime,
-                actor?.Invoke()).Apply(cmd);
+                (HistorySource is null || HistorySource() ? actor?.Invoke() : null)).Apply(cmd);
             await cmd.ExecuteNonQueryAsync(ct);
         }
     }

@@ -15,11 +15,20 @@ namespace Winche.Database.Querying;
 /// </summary>
 public sealed class CollectionIndexResolver
 {
-    private readonly IReadOnlyList<IndexDefinition> _indexes;
-    private readonly HashSet<string> _declaredCollectionIds;
-    private readonly HashSet<(string CollectionId, string Field)> _arrayIndexed;
+    private sealed record IndexState(IReadOnlyList<IndexDefinition> Indexes, HashSet<string> Declared, HashSet<(string CollectionId, string Field)> ArrayIndexed)
+    {
+        public static IndexState Of(IReadOnlyList<IndexDefinition> indexes) => new(indexes,
+            indexes.Select(i => i.CollectionId).ToHashSet(StringComparer.Ordinal),
+            indexes.Where(i => i.Kind == IndexKind.ArrayMembership).Select(i => (i.CollectionId, i.Fields[0].Path)).ToHashSet());
+    }
+
+    private volatile IndexState _state;
+    private IReadOnlyList<IndexDefinition> _indexes => _state.Indexes;
+    private HashSet<string> _declaredCollectionIds => _state.Declared;
+    private HashSet<(string CollectionId, string Field)> _arrayIndexed => _state.ArrayIndexed;
+    private readonly IOptions<WincheDatabaseOptions>? _options;
     private readonly ILogger<CollectionIndexResolver>? _logger;
-    private readonly TimeSpan? _slowQuery;
+    private TimeSpan? _slowQuery => _options is null ? TimeSpan.FromMilliseconds(500) : _options.Value.SlowQueryThreshold;
     private readonly ConcurrentDictionary<string, bool> _advised = new(StringComparer.Ordinal);
 
     public CollectionIndexResolver(
@@ -27,13 +36,22 @@ public sealed class CollectionIndexResolver
         ILogger<CollectionIndexResolver>? logger = null,
         IOptions<WincheDatabaseOptions>? options = null)
     {
-        _indexes = indexes.ToList();
-        _declaredCollectionIds = _indexes.Select(i => i.CollectionId).ToHashSet(StringComparer.Ordinal);
-        _arrayIndexed = _indexes.Where(i => i.Kind == IndexKind.ArrayMembership)
-            .Select(i => (i.CollectionId, i.Fields[0].Path)).ToHashSet();
+        _state = IndexState.Of([.. indexes]);
         _logger = logger;
-        _slowQuery = options is null ? TimeSpan.FromMilliseconds(500) : options.Value.SlowQueryThreshold;
+        _options = options;
     }
+
+    /// <summary>Follows <paramref name="catalog"/>: index changes apply to the next query.</summary>
+    public CollectionIndexResolver(
+        Schema.IndexCatalog catalog,
+        ILogger<CollectionIndexResolver>? logger = null,
+        IOptions<WincheDatabaseOptions>? options = null) : this(catalog.Indexes, logger, options)
+    {
+        catalog.Changed += () => _state = IndexState.Of(catalog.Indexes);
+    }
+
+    /// <summary>Raised when a slow query has no index; the console offers to create the suggested one.</summary>
+    public event Action<IndexSuggestion>? Suggested;
 
     /// <summary>The collection id to add as a predicate (null when no index covers it). A collection group query
     /// always filters by its id, so it needs none.</summary>
@@ -86,13 +104,17 @@ public sealed class CollectionIndexResolver
         if (_logger is null || _slowQuery is not { } threshold || elapsed < threshold) return;
         var advice = Advise(query, plan);
         if (advice is null || !_advised.TryAdd(advice, true)) return;
+        if (SuggestionFor(query, plan) is { } suggestion) Suggested?.Invoke(suggestion with { ElapsedMs = (long)elapsed.TotalMilliseconds });
         _logger.LogWarning(
             "Query on '{Collection}' took {Elapsed} ms and no declared index serves it. Add: {Index}",
             query.Collection, (long)elapsed.TotalMilliseconds, advice);
     }
 
     /// <summary>The index declaration that would serve <paramref name="query"/>, or null when one exists or none would help.</summary>
-    internal string? Advise(Query query, LogicalPlan plan)
+    internal string? Advise(Query query, LogicalPlan plan) => SuggestionFor(query, plan)?.Code;
+
+    /// <summary>The index that would serve <paramref name="query"/>, or null when one exists or none would help.</summary>
+    internal IndexSuggestion? SuggestionFor(Query query, LogicalPlan plan)
     {
         var id = DocumentPathParser.CollectionIdOf(query.Collection);
         var conjuncts = plan.Nodes.OfType<FilterNode>().FirstOrDefault() is { } f ? Conjuncts(f.Predicate).ToList() : [];
@@ -101,7 +123,8 @@ public sealed class CollectionIndexResolver
                      .Where(c => c.Op is FilterOperator.ArrayContains or FilterOperator.ArrayContainsAny or FilterOperator.ArrayContainsAll))
         {
             if (!_arrayIndexed.Contains((id, array.Field.ToString())))
-                return $"ib.AddArray(\"{id}\", \"{array.Field}\")";
+                return new IndexSuggestion(id, [new IndexField(array.Field.ToString())], IndexKind.ArrayMembership, false,
+                    $"ib.AddArray(\"{id}\", \"{array.Field}\")");
         }
 
         static bool IsName(FieldPath p) => p.Segments is ["__name__"];
@@ -125,7 +148,9 @@ public sealed class CollectionIndexResolver
 
         var fields = equality.Select(e => $"new(\"{e}\")")
             .Concat(order.Select(o => o.Direction == SortDirection.Desc ? $"new(\"{o.Path}\", SortDirection.Desc)" : $"new(\"{o.Path}\")"));
-        return $"ib.{(query.CollectionGroup ? "AddGroup" : "Add")}(\"{id}\", [{string.Join(", ", fields)}])";
+        return new IndexSuggestion(id,
+            [.. equality.Select(e => new IndexField(e)), .. order.Select(o => new IndexField(o.Path, o.Direction))], IndexKind.Ordered, query.CollectionGroup,
+            $"ib.{(query.CollectionGroup ? "AddGroup" : "Add")}(\"{id}\", [{string.Join(", ", fields)}])");
     }
 
     // An index serves the query when it starts with the equality fields (any order), then the order fields
@@ -152,3 +177,10 @@ public sealed class CollectionIndexResolver
 /// <c>winche_array_keys(field) @&gt; / &amp;&amp; ARRAY[winche_key(value), …]</c>. SQL only (never evaluated in memory).
 /// </summary>
 internal sealed record ArrayKeysFilter(FieldPath Field, FilterOperator Op, IReadOnlyList<Values.Value> Values) : Filter;
+
+/// <summary>An index a slow query would have used, with the code to declare it.</summary>
+public sealed record IndexSuggestion(string CollectionId, IReadOnlyList<IndexField> Fields, IndexKind Kind, bool CollectionGroup, string Code,
+    long ElapsedMs = 0)
+{
+    public IndexDefinition ToDefinition() => new(CollectionId, Fields, Kind: Kind, CollectionGroup: CollectionGroup);
+}
