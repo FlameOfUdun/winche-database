@@ -34,4 +34,16 @@ public sealed class WsOptions
 
     /// <summary>Requests a connection may send at once before <see cref="RequestsPerSecond"/> applies (default 100).</summary>
     public int RequestBurst { get; set; } = 100;
+
+    /// <summary>
+    /// Lets the console change the per-user and per-connection limits (settings area <c>database.live</c>); what's set
+    /// here becomes the starting values. New connections get the new limits. Needs <c>AddWincheConfig(…)</c> to save.
+    /// </summary>
+    public WsOptions UseSettings()
+    {
+        SettingsEnabled = true;
+        return this;
+    }
+
+    internal bool SettingsEnabled { get; private set; }
 }

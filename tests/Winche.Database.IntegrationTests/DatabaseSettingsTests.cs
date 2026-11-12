@@ -175,4 +175,26 @@ public class DatabaseSettingsTests(PostgresFixture fx) : IAsyncLifetime
         Assert.Contains(ex.Errors, e => e.Contains("exactly one field"));
         Assert.Contains(ex.Errors, e => e.Contains("1 KB to 16 MB"));
     }
+
+    [Fact]
+    public async Task Live_connection_limits_change_for_new_connections()
+    {
+        var services = new ServiceCollection().AddLogging();
+        services.AddWincheConfig(o => o.ConnectionString = fx.ConnectionString);
+        services.AddWincheDatabase(o => { o.ConnectionString = fx.ConnectionString; o.UseRulesText("match {document=**} { allow read: if true; }"); });
+        Winche.Database.AspNetCore.WebSockets.DependencyInjection.ServiceCollectionExtensions.AddWincheDatabaseWsApi(services, o => { o.MaxConnectionsPerUser = 3; o.UseSettings(); });
+        await using var sp = services.BuildServiceProvider();
+        var area = sp.GetRequiredService<SettingsArea<Winche.Database.AspNetCore.WebSockets.Connections.LiveConnectionSettings>>();
+        Assert.Equal(3, area.Current.MaxConnectionsPerUser);   // the code's value to start with
+        var store = sp.GetRequiredService<SettingsStore>();
+        await store.EnsureLoadedAsync();
+        await store.SaveAsync(Winche.Database.AspNetCore.WebSockets.Connections.LiveConnectionSettings.Area,
+            JsonSerializer.SerializeToNode(area.Current with { MaxConnectionsPerUser = 2, MaxMessageKb = 64 }, SettingsArea.Json)!, null, "Tighter");
+        var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Winche.Database.AspNetCore.WebSockets.Connections.WsOptions>>().Value;
+        Assert.Equal((2, 64 * 1024), (options.MaxConnectionsPerUser, options.MaxFrameBytes));
+        var bad = area.Current with { RequestsPerSecond = 100, RequestBurst = 10 };
+        var ex = await Assert.ThrowsAsync<SettingsValidationException>(() => store.SaveAsync(Winche.Database.AspNetCore.WebSockets.Connections.LiveConnectionSettings.Area,
+            JsonSerializer.SerializeToNode(bad, SettingsArea.Json)!, null, "x"));
+        Assert.Contains(ex.Errors, e => e.Contains("burst"));
+    }
 }
