@@ -203,6 +203,12 @@ public static class SchemaSql
             ADD COLUMN IF NOT EXISTS before jsonb,
             ADD COLUMN IF NOT EXISTS after  jsonb;
 
+        -- Who made the change, for document history (11.1.0): the caller's user id, or DocumentWriteActor's.
+        ALTER TABLE {{WincheDatabaseTables.Changes}} ADD COLUMN IF NOT EXISTS actor text;
+        -- A document's history, or everything under a path (byte order, like the documents' path index).
+        CREATE INDEX IF NOT EXISTS idx_{{WincheDatabaseTables.Changes}}_path_seq
+            ON {{WincheDatabaseTables.Changes}} (document_path COLLATE "C", seq);
+
         -- A durable consumer's failing change (the one right after its cursor): when it started failing and
         -- how often, so the give-up deadline survives restarts and moves between nodes. Cleared on success.
         ALTER TABLE {{WincheDatabaseTables.FeedCursors}}

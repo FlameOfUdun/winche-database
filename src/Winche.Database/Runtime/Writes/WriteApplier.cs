@@ -19,7 +19,7 @@ namespace Winche.Database.Runtime.Writes;
 /// </summary>
 public sealed class WriteApplier(
     NpgsqlDataSource source, IWriteAuthorizer? authorizer = null, WriteLimits? limits = null,
-    IReadOnlyList<string>? snapshotPaths = null)
+    IReadOnlyList<string>? snapshotPaths = null, bool snapshotAll = false, Func<string?>? actor = null)
 {
     private readonly WriteLimits _limits = limits ?? new();
     private readonly IReadOnlyList<string> _snapshotPaths = snapshotPaths ?? [];
@@ -452,7 +452,7 @@ public sealed class WriteApplier(
             changePaths.Add(path);
             changeCollections.Add(info.Collection);
             changeVersions.Add(doc.Exists ? doc.Version : doc.VersionBefore);
-            var snapshot = _snapshotPaths.Count > 0 && _snapshotPaths.Any(p => Winche.Rules.Matching.PathMatcher.IsMatch(p, path));
+            var snapshot = snapshotAll || (_snapshotPaths.Count > 0 && _snapshotPaths.Any(p => Winche.Rules.Matching.PathMatcher.IsMatch(p, path)));
             changeBefore.Add(snapshot && doc.ExistedBefore ? ChangeFeed.ChangeSnapshots.Encode(doc.BeforeFields!, doc.BeforeCreatedAt, doc.BeforeUpdatedAt, doc.VersionBefore) : null);
             changeAfter.Add(snapshot && doc.Exists ? ChangeFeed.ChangeSnapshots.Encode(doc.Fields, doc.CreatedAt, doc.UpdatedAt, doc.Version) : null);
         }
@@ -469,7 +469,8 @@ public sealed class WriteApplier(
         {
             await using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
-            WriteSql.InsertChanges(changeTypes, changePaths, changeCollections, changeVersions, changeBefore, changeAfter, commitTime).Apply(cmd);
+            WriteSql.InsertChanges(changeTypes, changePaths, changeCollections, changeVersions, changeBefore, changeAfter, commitTime,
+                actor?.Invoke()).Apply(cmd);
             await cmd.ExecuteNonQueryAsync(ct);
         }
     }

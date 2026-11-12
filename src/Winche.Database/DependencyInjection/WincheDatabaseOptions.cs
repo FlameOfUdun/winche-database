@@ -83,6 +83,21 @@ public sealed class WincheDatabaseOptions
     /// <see cref="UseIndexes(Action{IndexBuilder})"/>). Multiple calls accumulate — each policy is a
     /// singleton so <c>GetServices&lt;TtlPolicy&gt;()</c> returns them all for the TTL sweeper at startup.
     /// </summary>
+    /// <summary>The document history kept (<see cref="KeepHistory"/>), or null when off.</summary>
+    public HistoryConfig? History { get; private set; }
+
+    /// <summary>
+    /// Keep every document's history (11.1.0): each change records the document before and after it, and who made it
+    /// (the caller's user id, or the actor set with <see cref="Runtime.History.DocumentWriteActor"/>). Read it with
+    /// <see cref="Runtime.History.DocumentHistory"/>. Change-feed rows are then kept at least <paramref name="retention"/>
+    /// (default 30 days). Costs a copy of each written document in the feed.
+    /// </summary>
+    public WincheDatabaseOptions KeepHistory(TimeSpan? retention = null)
+    {
+        History = new HistoryConfig { Retention = retention ?? TimeSpan.FromDays(30) };
+        return this;
+    }
+
     public WincheDatabaseOptions UseTtl(Action<TtlBuilder> configure)
     {
         var builder = new TtlBuilder(Services);
@@ -216,6 +231,12 @@ public sealed record ListenerConfig
 
     /// <summary>How many live queries (and document listeners) a node updates at once per change batch (default 8).</summary>
     public int MaxParallelUpdates { get; init; } = 8;
+}
+
+/// <summary>How long document history is kept (<see cref="WincheDatabaseOptions.KeepHistory"/>).</summary>
+public sealed record HistoryConfig
+{
+    public TimeSpan Retention { get; init; } = TimeSpan.FromDays(30);
 }
 
 public sealed record TtlConfig

@@ -967,6 +967,31 @@ recording costs next to nothing.
 Useful alarms: `hook.lag` p95 above a few minutes, any `hook.dead_letters`, `write.duration{outcome=aborted}`
 rising, `query.duration{indexed=false}` p95 above the slow-query threshold.
 
+## Document history (11.1.0)
+
+```csharp
+config.KeepHistory(TimeSpan.FromDays(30));   // opt in; default 30 days
+```
+
+Every change then records the document **before and after** it and **who made it**: the caller's user id (their
+claims' `uid`, else `sub`), or an actor set for the flow — `using (DocumentWriteActor.Use("console:admin@x")) …`
+(the Winche console does this for its own edits); a write with neither (a hook, a background job) has no actor.
+Read it back with `DocumentHistory` (registered by `AddWincheDatabase`):
+
+```csharp
+var entries = await history.QueryAsync(new HistoryQuery { Path = "users/u1" });          // one document
+var recent  = await history.QueryAsync(new HistoryQuery { Under = "users", Limit = 50 }); // a collection's subtree
+// each: Type (added | modified | removed), At, Actor, Before, After, Fields (added/changed/removed, old → new)
+```
+
+It's stored in the change feed (`before`, `after` and a new `actor` column), whose rows are then kept at least the
+history's retention (`ChangeFeed.Retention` and `MaxRetention` still apply when longer). It costs a copy of each
+written document per change, so it's off by default. Changes made before it was turned on have no `Fields`.
+
+## Upgrading to 11.1.0
+
+Additive: startup adds an `actor` column and a path index to the change feed. `KeepHistory` (above) is opt-in.
+
 ## Upgrading to 11.0.1
 
 - REST document paths may be base64url (recommended — standard base64's `/` and `+` could break the URL); standard

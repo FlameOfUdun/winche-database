@@ -29,9 +29,20 @@ public sealed class DocumentDatabase : IDocumentDatabase
     public DocumentDatabase(NpgsqlDataSource source, IOptions<WincheDatabaseOptions> options,
         QueryListenerRegistry? listeners = null, CollectionIndexResolver? scopes = null,
         IWriteAuthorizer? writeAuthorizer = null, DocumentListenerRegistry? docListeners = null)
+        : this(source, options, listeners, scopes, writeAuthorizer, docListeners, claims: null)
+    {
+    }
+
+    /// <summary>As above; <paramref name="claims"/> attributes writes to the caller in the document history.</summary>
+    public DocumentDatabase(NpgsqlDataSource source, IOptions<WincheDatabaseOptions> options,
+        QueryListenerRegistry? listeners, CollectionIndexResolver? scopes,
+        IWriteAuthorizer? writeAuthorizer, DocumentListenerRegistry? docListeners, Authorization.IRuleClaimsAccessor? claims)
     {
         _source = source;
-        _applier = new WriteApplier(source, writeAuthorizer, options.Value.WriteLimits, options.Value.HookSnapshotPaths);
+        var history = options.Value.History is not null;
+        _applier = new WriteApplier(source, writeAuthorizer, options.Value.WriteLimits, options.Value.HookSnapshotPaths,
+            snapshotAll: history,
+            actor: history ? () => History.DocumentWriteActor.Current ?? Wire.ErrorMapper.UserOf(claims?.GetClaims()) : null);
         _ledger = options.Value.TransactionConfig.Store == TransactionStore.Memory
             ? new MemoryTransactionLedger(options.Value.TransactionConfig)
             : new PostgresTransactionLedger(source, options.Value.TransactionConfig);

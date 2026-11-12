@@ -54,8 +54,11 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IOptions<WincheDatabaseOptions>>(),
             sp.GetRequiredService<QueryListenerRegistry>(),
             sp.GetRequiredService<CollectionIndexResolver>(),
-            docListeners: sp.GetRequiredService<DocumentListenerRegistry>()
+            writeAuthorizer: null,
+            docListeners: sp.GetRequiredService<DocumentListenerRegistry>(),
+            claims: sp.GetRequiredService<IRuleClaimsAccessor>()
         ));
+        services.AddSingleton<Runtime.History.DocumentHistory>();
 
         services.AddSingleton<ISchemaManager, SchemaManager>();
 
@@ -96,7 +99,8 @@ public static class ServiceCollectionExtensions
                     sp.GetRequiredService<QueryListenerRegistry>(),
                     sp.GetRequiredService<CollectionIndexResolver>(),
                     sp.GetRequiredService<IWriteAuthorizer>(),
-                    docListeners: sp.GetRequiredService<DocumentListenerRegistry>()
+                    docListeners: sp.GetRequiredService<DocumentListenerRegistry>(),
+                    claims: sp.GetRequiredService<IRuleClaimsAccessor>()
                 ),
                 sp.GetRequiredKeyedService<RuleEngine>(WincheDatabaseKeys.RuleEngine),
                 sp.GetRequiredService<IRuleClaimsAccessor>())

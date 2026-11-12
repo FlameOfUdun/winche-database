@@ -53,12 +53,13 @@ internal static class WriteSql
 
     internal static CompiledSql InsertChanges(
         IReadOnlyList<string> types, IReadOnlyList<string> paths, IReadOnlyList<string> collections,
-        IReadOnlyList<long> versions, IReadOnlyList<string?> before, IReadOnlyList<string?> after, DateTimeOffset commitTime)
+        IReadOnlyList<long> versions, IReadOnlyList<string?> before, IReadOnlyList<string?> after, DateTimeOffset commitTime,
+        string? actor = null)
     {
         var bag = new ParameterBag();
         var sql = $"""
-            INSERT INTO {WincheDatabaseTables.Changes} (type, document_path, collection_path, version, commit_time, before, after)
-            SELECT t, p, c, v, {bag.Add(commitTime)}, b, a
+            INSERT INTO {WincheDatabaseTables.Changes} (type, document_path, collection_path, version, commit_time, before, after, actor)
+            SELECT t, p, c, v, {bag.Add(commitTime)}, b, a, {bag.Add((object?)actor ?? DBNull.Value)}::text
             FROM unnest({bag.Add(types.ToArray())}::text[], {bag.Add(paths.ToArray())}::text[],
                         {bag.Add(collections.ToArray())}::text[], {bag.Add(versions.ToArray())}::bigint[],
                         {bag.AddJsonbArray([.. before])}, {bag.AddJsonbArray([.. after])}) AS u(t, p, c, v, b, a)

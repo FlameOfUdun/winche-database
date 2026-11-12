@@ -30,8 +30,12 @@ public sealed class RetentionPruner(
             try
             {
                 var now = DateTimeOffset.UtcNow;
+                // Document history (KeepHistory) needs the rows for its retention.
+                var history = options.Value.History?.Retention ?? TimeSpan.Zero;
+                var retention = config.Retention > history ? config.Retention : history;
+                var maxRetention = config.MaxRetention > history ? config.MaxRetention : history;
                 var (pruned, undelivered) = await reader.PruneAsync(
-                    now - config.Retention, now - config.MaxRetention, consumers.DurableNames, stoppingToken);
+                    now - retention, now - maxRetention, consumers.DurableNames, stoppingToken);
                 if (undelivered > 0)
                     logger.LogError(
                         "Pruned {Count} change-feed rows older than {MaxRetention} that a durable consumer had not delivered; " +
