@@ -143,4 +143,23 @@ public class ExpandTests(PostgresFixture fx) : QueryTestBase(fx)
             && (string?)f["included"]![other]!["fields"]!["name"]!["stringValue"] == "Dr Three");
         Assert.Empty(renamed["changes"]!.AsArray());
     }
+
+    [Fact]
+    public async Task An_expanded_subscription_resumed_with_a_token_still_gets_a_full_snapshot()
+    {
+        var (p, d, _, _, _, _, _) = await SeedAsync();
+        await using var host = await Host();
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server, "uid:ann");
+        var first = await ws.RequestAsync(new JsonObject { ["type"] = "doc.listen", ["path"] = p, ["expand"] = new JsonArray("doctor") });
+        var sub = (string?)first["result"]!["subscriptionId"];
+        var snap = await ws.WaitForAsync(f => (string?)f["type"] == "listen.snapshot" && (string?)f["subscriptionId"] == sub);
+        var token = (long)snap["resumeToken"]!;
+
+        // Reconnect-style resume with the current token: a plain subscription would get listen.current.
+        var again = await ws.RequestAsync(new JsonObject { ["type"] = "doc.listen", ["path"] = p, ["expand"] = new JsonArray("doctor"), ["resumeToken"] = token });
+        var sub2 = (string?)again["result"]!["subscriptionId"];
+        var full = await ws.WaitForAsync(f => (string?)f["subscriptionId"] == sub2 && (string?)f["type"] is "listen.snapshot" or "listen.current");
+        Assert.Equal("listen.snapshot", (string?)full["type"]);
+        Assert.True(full["included"]!.AsObject().ContainsKey(d));
+    }
 }

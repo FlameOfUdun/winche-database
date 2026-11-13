@@ -167,6 +167,9 @@ public sealed class MessageRouter
         ExpandRequest? expand)
     {
         if (scope.AtSubscriptionLimit) return TooManySubscriptions(scope, id);
+        // An expanded subscription always starts with a full snapshot: a resume ("you're current") would leave the client
+        // with the referenced documents it had, which may have changed, or now be others, while it was away.
+        if (expand is not null) resumeToken = null;
         var listener = scope.Db.Listen(query, resumeToken is { } seq ? new ListenOptions(ResumeFrom: seq) : null);
         var subscriptionId = Guid.NewGuid().ToString("N");
         var cts = CancellationTokenSource.CreateLinkedTokenSource(conn.Closed);
@@ -180,6 +183,7 @@ public sealed class MessageRouter
         ConnectionScope scope, WsConnection conn, string id, string path, long? resumeToken, long? clientProtocol, ExpandRequest? expand, CancellationToken ct)
     {
         if (scope.AtSubscriptionLimit) return TooManySubscriptions(scope, id);
+        if (expand is not null) resumeToken = null;   // always a full snapshot (see HandleListen)
         var options = resumeToken is { } seq ? new ListenOptions(ResumeFrom: seq) : null;
         var listener = await scope.Db.ListenToDocumentAsync(path, options, ct);   // get-authorized; throws → mapped to error frame
         var subscriptionId = Guid.NewGuid().ToString("N");

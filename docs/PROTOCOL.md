@@ -1114,7 +1114,9 @@ The **send queue** is bounded at 64 frames (configurable). If it fills up, the c
 - **Listening:** `listen.snapshot` carries the full `included`. Each `listen.delta` carries `included` (referenced
   documents new or changed since the last frame) and `excluded` (paths no longer included: deleted, unreadable, or no
   longer referenced). When only a referenced document changed, the delta has `"changes": []`. The server listens to
-  every referenced document, so a change to one reaches the subscriber within the usual listener latency.
+  every referenced document, so a change to one reaches the subscriber within the usual listener latency. A
+  subscription with `expand` ignores `resumeToken` and always starts with a full `listen.snapshot` (never
+  `listen.current`): the referenced documents may have changed while the client was away.
 
 ## 8. Operational Notes
 
