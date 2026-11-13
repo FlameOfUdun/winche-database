@@ -7,7 +7,12 @@ namespace Winche.Database.Runtime.Expansion;
 /// <summary>What changed in a subscription's included documents since the last time: new or changed ones, and gone ones.</summary>
 public sealed record IncludedChange(IReadOnlyDictionary<string, Document> Upserted, IReadOnlyList<string> Removed, IReadOnlyDictionary<string, Document> All)
 {
-    public bool IsEmpty => Upserted.Count == 0 && Removed.Count == 0;
+    /// <summary>Resolved values (<c>kind:value</c>) new or changed, gone, and all of them.</summary>
+    public IReadOnlyDictionary<string, System.Text.Json.Nodes.JsonObject> ResolvedUpserted { get; init; } = new Dictionary<string, System.Text.Json.Nodes.JsonObject>();
+    public IReadOnlyList<string> ResolvedRemoved { get; init; } = [];
+    public IReadOnlyDictionary<string, System.Text.Json.Nodes.JsonObject> AllResolved { get; init; } = new Dictionary<string, System.Text.Json.Nodes.JsonObject>();
+
+    public bool IsEmpty => Upserted.Count == 0 && Removed.Count == 0 && ResolvedUpserted.Count == 0 && ResolvedRemoved.Count == 0;
 }
 
 /// <summary>
@@ -16,8 +21,26 @@ public sealed record IncludedChange(IReadOnlyDictionary<string, Document> Upsert
 /// created or deleted), so the subscriber can <see cref="RefreshAsync"/> and send what changed. Reads and listens as
 /// the caller: a referenced document they may not read is never included or listened to.
 /// </summary>
-public sealed class LiveExpansion(IDocumentDatabase db, ExpandRequest request) : IAsyncDisposable
+public sealed class LiveExpansion : IAsyncDisposable
 {
+    private readonly IDocumentDatabase db;
+    private readonly ExpandRequest request;
+    private readonly ReferenceResolvers? resolvers;
+    private readonly IDisposable? _resolverWatch;
+    private Dictionary<string, System.Text.Json.Nodes.JsonObject> _sentResolved = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// <paramref name="resolvers"/> resolve kinded paths (<c>file:</c>, <c>user:</c>) as the caller; their change
+    /// notifications refresh this subscription too.
+    /// </summary>
+    public LiveExpansion(IDocumentDatabase db, ExpandRequest request, ReferenceResolvers? resolvers = null)
+    {
+        this.db = db;
+        this.request = request;
+        this.resolvers = resolvers;
+        if (resolvers is not null && request.Kinds.Any()) _resolverWatch = resolvers.Watch(request.Kinds, () => _changed.Writer.TryWrite(true));
+    }
+
     private readonly Channel<bool> _changed = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });
     private readonly Dictionary<string, Watch> _watching = new(StringComparer.Ordinal);
     private readonly CancellationTokenSource _stop = new();
@@ -40,14 +63,22 @@ public sealed class LiveExpansion(IDocumentDatabase db, ExpandRequest request) :
     public async Task<IncludedChange> RefreshAsync(CancellationToken ct)
     {
         while (_changed.Reader.TryRead(out _)) { }   // this refresh covers them
-        var expansion = await ReferenceExpander.ExpandAsync(db, _roots, request, ct);
+        var expansion = await ReferenceExpander.ExpandAsync(db, _roots, request, ct, resolvers?.For(db));
         await WatchAsync(expansion.Referenced, ct);
         var upserted = expansion.Included
             .Where(kv => !_sent.TryGetValue(kv.Key, out var before) || before.UpdateTime != kv.Value.UpdateTime || before.Version != kv.Value.Version)
             .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
         var removed = _sent.Keys.Where(k => !expansion.Included.ContainsKey(k)).ToList();
         _sent = new Dictionary<string, Document>(expansion.Included, StringComparer.Ordinal);
-        return new IncludedChange(upserted, removed, _sent);
+        var resolvedUpserted = expansion.Resolved
+            .Where(kv => !_sentResolved.TryGetValue(kv.Key, out var before) || !System.Text.Json.Nodes.JsonNode.DeepEquals(before, kv.Value))
+            .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+        var resolvedRemoved = _sentResolved.Keys.Where(k => !expansion.Resolved.ContainsKey(k)).ToList();
+        _sentResolved = new Dictionary<string, System.Text.Json.Nodes.JsonObject>(expansion.Resolved, StringComparer.Ordinal);
+        return new IncludedChange(upserted, removed, _sent)
+        {
+            ResolvedUpserted = resolvedUpserted, ResolvedRemoved = resolvedRemoved, AllResolved = _sentResolved,
+        };
     }
 
     private async Task WatchAsync(IReadOnlySet<string> paths, CancellationToken ct)
@@ -92,6 +123,7 @@ public sealed class LiveExpansion(IDocumentDatabase db, ExpandRequest request) :
 
     public async ValueTask DisposeAsync()
     {
+        _resolverWatch?.Dispose();
         await _stop.CancelAsync();
         foreach (var w in _watching.Values)
             if (w.Listener is { } l) await l.DisposeAsync();

@@ -78,6 +78,7 @@ public static class SubscriptionPump
                         ReadTime = snapshot.ReadTime,
                         ResumeToken = snapshot.ResumeToken,
                         Included = included?.All,
+                        Resolved = included?.AllResolved,
                     });
                     sent = snapshot.Documents;
                     continue;
@@ -136,6 +137,8 @@ public static class SubscriptionPump
                     ResumeToken = snapshot.ResumeToken,
                     Included = Upserted(included),
                     Excluded = Removed(included),
+                    Resolved = included is { ResolvedUpserted.Count: > 0 } r ? r.ResolvedUpserted : null,
+                    Unresolved = included is { ResolvedRemoved.Count: > 0 } u ? u.ResolvedRemoved : null,
                 });
             }
         }
@@ -202,6 +205,7 @@ public static class SubscriptionPump
                         ReadTime = snapshot.ReadTime,
                         ResumeToken = snapshot.ResumeToken,
                         Included = included?.All,
+                        Resolved = included?.AllResolved,
                     });
                     sent = snapshot.Document;
                     sentAny = true;
@@ -225,6 +229,8 @@ public static class SubscriptionPump
                     ResumeToken = snapshot.ResumeToken,
                     Included = Upserted(included),
                     Excluded = Removed(included),
+                    Resolved = included is { ResolvedUpserted.Count: > 0 } r ? r.ResolvedUpserted : null,
+                    Unresolved = included is { ResolvedRemoved.Count: > 0 } u ? u.ResolvedRemoved : null,
                 });
             }
         }
@@ -248,6 +254,8 @@ public static class SubscriptionPump
         ResumeToken = resumeToken,
         Included = Upserted(change),
         Excluded = Removed(change),
+        Resolved = change.ResolvedUpserted.Count > 0 ? change.ResolvedUpserted : null,
+        Unresolved = change.ResolvedRemoved.Count > 0 ? change.ResolvedRemoved : null,
     };
 
     /// <summary>

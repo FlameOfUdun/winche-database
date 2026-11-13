@@ -112,6 +112,11 @@ public static class ServiceCollectionExtensions
         services.AddWincheRules(WincheDatabaseKeys.RuleEngine, o => o
             .WithMutableRuleSetRepository(RuleSet.Merge(options.Rulesets)));
 
+        // expand's file:/user:/… resolvers (Winche.Storage, Winche Auth, the app's own register them).
+        services.AddSingleton(sp => new Runtime.Expansion.ReferenceResolvers(sp.GetServices<IWincheReferenceResolver>(),
+            sp.GetRequiredService<IRuleClaimsAccessor>(), sp.GetRequiredKeyedService<NpgsqlDataSource>(WincheDatabaseKeys.DataSource),
+            sp.GetService<Microsoft.Extensions.Logging.ILogger<Runtime.Expansion.ReferenceResolvers>>()));
+
         services.AddSingleton<IWriteAuthorizer>(sp => new RulesWriteAuthorizer(
             sp.GetRequiredKeyedService<RuleEngine>(WincheDatabaseKeys.RuleEngine),
             sp.GetRequiredService<IRuleClaimsAccessor>())

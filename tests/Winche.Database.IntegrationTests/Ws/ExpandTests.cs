@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Options;
 using Winche.Database.Authorization;
@@ -161,5 +162,64 @@ public class ExpandTests(PostgresFixture fx) : QueryTestBase(fx)
         var full = await ws.WaitForAsync(f => (string?)f["subscriptionId"] == sub2 && (string?)f["type"] is "listen.snapshot" or "listen.current");
         Assert.Equal("listen.snapshot", (string?)full["type"]);
         Assert.True(full["included"]!.AsObject().ContainsKey(d));
+    }
+
+    /// <summary>A resolver for "thing:" values: an in-memory table, with "secret" hidden from callers (not from the app).</summary>
+    private sealed class Things : IWincheReferenceResolver
+    {
+        public System.Collections.Concurrent.ConcurrentDictionary<string, string> Names { get; } = new();
+        public System.Collections.Concurrent.ConcurrentBag<ReferenceCaller> Callers { get; } = [];
+        public string Kind => "thing";
+        public string? ChangeChannel => "test_things_changed";
+        public Task<IReadOnlyDictionary<string, JsonObject>> ResolveAsync(IReadOnlyList<string> keys, ReferenceCaller caller, CancellationToken ct)
+        {
+            Callers.Add(caller);
+            IReadOnlyDictionary<string, JsonObject> found = keys
+                .Where(k => Names.ContainsKey(k) && (k != "secret" || caller.Trusted))
+                .ToDictionary(k => k, k => new JsonObject { ["name"] = Names[k] });
+            return Task.FromResult(found);
+        }
+    }
+
+    [Fact]
+    public async Task Kinded_paths_are_resolved_as_the_caller_and_follow_documents_on_the_way()
+    {
+        var things = new Things();
+        things.Names["t1"] = "First"; things.Names["t2"] = "Second"; things.Names["secret"] = "Hidden";
+        var owner = $"{U("owners")}/o";
+        var item = $"{U("items")}/i";
+        await Core().WriteAsync([
+            new SetWrite { Path = owner, Fields = F(("badge", new StringValue("t2"))) },
+            new SetWrite { Path = item, Fields = F(("thing", new StringValue("t1")), ("more", new ArrayValue([new StringValue("secret"), new StringValue("nope")]))
+                , ("owner", Ref(owner))) },
+        ]);
+        await using var host = await WsTestHost.StartAsync(Fx.ConnectionString, o => { o.UseRules(Rules); o.Services.AddSingleton<IWincheReferenceResolver>(things); });
+        await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server, "uid:ann");
+
+        var get = await ws.RequestAsync(new JsonObject { ["type"] = "doc.get", ["path"] = item, ["expand"] = new JsonArray("thing:thing", "thing:more", "thing:owner.badge") });
+        var resolved = get["result"]!["resolved"]!.AsObject();
+        Assert.Equal("First", (string?)resolved["thing:t1"]!["name"]);
+        Assert.Equal("Second", (string?)resolved["thing:t2"]!["name"]);   // through the owner's document
+        Assert.False(resolved.ContainsKey("thing:secret"));                  // hidden from the caller
+        Assert.False(resolved.ContainsKey("thing:nope"));
+        Assert.True(get["result"]!["included"]!.AsObject().ContainsKey(owner));
+        Assert.Contains(things.Callers, c => c.Uid == "ann" && !c.Trusted);
+
+        var unknown = await ws.RequestAsync(new JsonObject { ["type"] = "doc.get", ["path"] = item, ["expand"] = new JsonArray("photo:thing") });
+        Assert.Equal("invalid-argument", (string?)unknown["error"]!["code"]);
+
+        // Live: a change the resolver announces reaches the subscriber.
+        var resp = await ws.RequestAsync(new JsonObject { ["type"] = "doc.listen", ["path"] = item, ["expand"] = new JsonArray("thing:thing") });
+        var sub = (string?)resp["result"]!["subscriptionId"];
+        var snap = await ws.WaitForAsync(f => (string?)f["type"] == "listen.snapshot" && (string?)f["subscriptionId"] == sub);
+        Assert.Equal("First", (string?)snap["resolved"]!["thing:t1"]!["name"]);
+        things.Names["t1"] = "Renamed";
+        await using (var cmd = Fx.DataSource.CreateCommand("SELECT pg_notify('test_things_changed', '')")) await cmd.ExecuteNonQueryAsync();
+        var delta = await ws.WaitForAsync(f => (string?)f["type"] == "listen.delta" && (string?)f["subscriptionId"] == sub && f["resolved"] is not null);
+        Assert.Equal("Renamed", (string?)delta["resolved"]!["thing:t1"]!["name"]);
+        things.Names.TryRemove("t1", out _);
+        await using (var cmd = Fx.DataSource.CreateCommand("SELECT pg_notify('test_things_changed', '')")) await cmd.ExecuteNonQueryAsync();
+        var gone = await ws.WaitForAsync(f => (string?)f["type"] == "listen.delta" && (string?)f["subscriptionId"] == sub && f["unresolved"] is not null);
+        Assert.Equal(["thing:t1"], gone["unresolved"]!.AsArray().Select(x => (string)x!));
     }
 }

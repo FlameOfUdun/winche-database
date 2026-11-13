@@ -42,6 +42,9 @@ public sealed record ListenSnapshotMessage : ServerMessage
     /// <summary>With <c>expand</c>: every referenced document the caller may read, by path (replaces what the client had).</summary>
     [JsonPropertyName("included"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyDictionary<string, Document>? Included { get; init; }
+    /// <summary>With kinded <c>expand</c> paths: every resolved value, by <c>kind:value</c> (replaces what the client had).</summary>
+    [JsonPropertyName("resolved"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyDictionary<string, JsonObject>? Resolved { get; init; }
 }
 
 public sealed record ListenCurrentMessage : ServerMessage
@@ -71,4 +74,10 @@ public sealed record ListenDeltaMessage : ServerMessage
     /// <summary>With <c>expand</c>: referenced documents no longer included (deleted, unreadable, or no longer referenced).</summary>
     [JsonPropertyName("excluded"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<string>? Excluded { get; init; }
+    /// <summary>Resolved values new or changed since the last frame, by <c>kind:value</c>.</summary>
+    [JsonPropertyName("resolved"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyDictionary<string, JsonObject>? Resolved { get; init; }
+    /// <summary>Resolved values no longer there (deleted, unreadable, no longer referenced).</summary>
+    [JsonPropertyName("unresolved"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? Unresolved { get; init; }
 }

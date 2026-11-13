@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -66,7 +67,7 @@ public static class WebApplicationExtensions
         });
 
         // ?expand=patient,patient.doctor: the referenced documents come back under "included" (by path).
-        group.MapGet("/{path}", async (string path, string? expand, IDocumentDatabase db, CancellationToken ct = default) =>
+        group.MapGet("/{path}", async (string path, string? expand, IDocumentDatabase db, ReferenceResolvers resolvers, CancellationToken ct = default) =>
         {
             var decoded = DecodeBase64(path);
             var document = await db.GetAsync(decoded, ct);
@@ -74,7 +75,7 @@ public static class WebApplicationExtensions
             var request = ExpandRequest.Parse(expand);
             if (request is null) return Results.Json(document, statusCode: 200, contentType: "application/json");
             var body = JsonSerializer.SerializeToNode(document)!.AsObject();
-            body["included"] = await IncludedAsync(db, [document], request, ct);
+            await AddIncludedAsync(body, db, resolvers, [document], request, ct);
             return Results.Json(body, statusCode: 200, contentType: "application/json");
         });
 
@@ -176,7 +177,9 @@ public static class WebApplicationExtensions
                 docs = list;
             }
             if (Expand(node) is not { } expandDocs) return Results.Json(new { documents = docs }, statusCode: 200, contentType: "application/json");
-            return Results.Json(new { documents = docs, included = await IncludedAsync(db, docs, expandDocs, ct) }, statusCode: 200, contentType: "application/json");
+            var batch = new JsonObject { ["documents"] = JsonSerializer.SerializeToNode(docs) };
+            await AddIncludedAsync(batch, db, request.HttpContext.RequestServices.GetRequiredService<ReferenceResolvers>(), docs, expandDocs, ct);
+            return Results.Json(batch, statusCode: 200, contentType: "application/json");
         });
 
         Verb("runQuery", async (HttpRequest request, IDocumentDatabase db, CancellationToken ct) =>
@@ -193,7 +196,7 @@ public static class WebApplicationExtensions
                 : await db.QueryAsync(transaction, query, ct);
             if (Expand(node) is not { } expandQuery) return Results.Json(result, statusCode: 200, contentType: "application/json");
             var body = JsonSerializer.SerializeToNode(result)!.AsObject();
-            body["included"] = await IncludedAsync(db, result.Documents, expandQuery, ct);
+            await AddIncludedAsync(body, db, request.HttpContext.RequestServices.GetRequiredService<ReferenceResolvers>(), result.Documents, expandQuery, ct);
             return Results.Json(body, statusCode: 200, contentType: "application/json");
         });
 
@@ -256,13 +259,20 @@ public static class WebApplicationExtensions
         _ => throw new RuntimeException(RuntimeStatus.InvalidArgument, "'expand' is a list of field paths."),
     };
 
-    /// <summary>The readable referenced documents, by path.</summary>
-    private static async Task<JsonObject> IncludedAsync(IDocumentDatabase db, IEnumerable<Document?> docs, ExpandRequest request, CancellationToken ct)
+    /// <summary>Adds the readable referenced documents (<c>included</c>, by path) and resolved values (<c>resolved</c>).</summary>
+    private static async Task AddIncludedAsync(JsonObject body, IDocumentDatabase db, ReferenceResolvers resolvers, IEnumerable<Document?> docs,
+        ExpandRequest request, CancellationToken ct)
     {
-        var expansion = await ReferenceExpander.ExpandAsync(db, docs, request, ct);
+        var expansion = await ReferenceExpander.ExpandAsync(db, docs, request, ct, resolvers.For(db));
         var included = new JsonObject();
         foreach (var (path, doc) in expansion.Included) included[path] = JsonSerializer.SerializeToNode(doc);
-        return included;
+        body["included"] = included;
+        if (request.Kinds.Any())
+        {
+            var resolved = new JsonObject();
+            foreach (var (key, value) in expansion.Resolved) resolved[key] = value.DeepClone();
+            body["resolved"] = resolved;
+        }
     }
 }
 

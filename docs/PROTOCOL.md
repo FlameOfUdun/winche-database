@@ -1111,6 +1111,14 @@ The **send queue** is bounded at 64 frames (configurable). If it fills up, the c
   (cycles included).
 - **Rules:** each referenced document is read as the caller (its `get` rule). One they may not read, or that doesn't
   exist, is simply not in `included`: the client keeps the pointer, and can't tell which.
+- **Files, users and other kinds:** a path may start with a kind, `file:scan`, `user:author`,
+  `user:patient.author`: the value it ends at (a string: a file's path, a uid) is resolved by that kind's resolver
+  (Winche.Storage registers `file`, Winche Auth `user`; apps may add their own) and comes back under
+  `"resolved": { "<kind>:<value>": {…} }`; the field keeps its value. `file:` gives the file's record (as storage
+  returns it, never a download link), if the storage rules let the caller `get` it; `user:` gives the public profile
+  (`uid`, `displayName`, `photoUrl`, and the claims the app lists as public) to signed-in callers, the whole account to
+  its own user. An unknown kind is `invalid-argument`. Live, `listen.snapshot` carries the full `resolved`, deltas
+  `resolved` (new or changed) and `unresolved` (keys gone); a change in storage or Winche Auth refreshes them.
 - **Listening:** `listen.snapshot` carries the full `included`. Each `listen.delta` carries `included` (referenced
   documents new or changed since the last frame) and `excluded` (paths no longer included: deleted, unreadable, or no
   longer referenced). When only a referenced document changed, the delta has `"changes": []`. The server listens to
