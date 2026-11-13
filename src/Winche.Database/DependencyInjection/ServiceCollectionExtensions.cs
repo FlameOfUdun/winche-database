@@ -107,7 +107,6 @@ public static class ServiceCollectionExtensions
         // rulesets (empty => deny-all), using the engine-faithful comparer. The engine is hot-swappable
         // via a mutable rule-set repository, still isolated under the package-specific key.
         services.AddWincheRules(WincheDatabaseKeys.RuleEngine, o => o
-            .WithRuleValueComparer(WincheRuleValueComparer.Instance)
             .WithMutableRuleSetRepository(RuleSet.Merge(options.Rulesets)));
 
         services.AddSingleton<IWriteAuthorizer>(sp => new RulesWriteAuthorizer(

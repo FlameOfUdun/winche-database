@@ -6,7 +6,7 @@ using Winche.Database.Runtime;
 using Winche.Database.Runtime.Listening;
 using Winche.Database.Runtime.Transactions;
 using Winche.Database.Runtime.Writes;
-using Winche.Database.Values;
+using Winche.Values;
 using Winche.Rules;
 
 namespace Winche.Database.Tests.Authorization;
@@ -93,10 +93,10 @@ public class PostgresDocumentSourceTests
         var source = new PostgresDocumentSource(core);
 
         var result = await source.GetAsync("users/u2");
-        Assert.Equal(RuleValueKind.Map, result.Kind);
+        Assert.IsType<MapValue>(result);
         Assert.Equal("Bob", result.AsMap["name"].AsString);
         Assert.Equal("u2", result.AsMap["id"].AsString);
-        Assert.Equal(RuleValueKind.Path, result.AsMap["path"].Kind);
+        Assert.IsType<ReferenceValue>(result.AsMap["path"]);
     }
 
     [Fact]
@@ -106,7 +106,7 @@ public class PostgresDocumentSourceTests
         var source = new PostgresDocumentSource(core);
 
         var result = await source.GetAsync("users/ghost");
-        Assert.Equal(RuleValueKind.Null, result.Kind);
+        Assert.IsType<NullValue>(result);
     }
 
     // ── Per-instance cache ────────────────────────────────────────────────────

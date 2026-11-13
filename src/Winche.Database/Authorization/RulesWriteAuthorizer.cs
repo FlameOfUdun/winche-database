@@ -1,6 +1,7 @@
 using Winche.Database.Runtime.Writes;
 using Winche.Rules;
 using Winche.Rules.Evaluation;
+using Winche.Values;
 
 namespace Winche.Database.Authorization;
 
@@ -33,13 +34,13 @@ public sealed class RulesWriteAuthorizer(
                 _ => throw new NotSupportedException($"Unknown write type: {pw.Write.GetType().Name}"),
             };
 
-            var resource = pw.Before is not null ? DocumentToResource.Convert(pw.Before) : RuleValue.Null;
-            var requestResource = pw.After is not null ? DocumentToResource.Convert(pw.After) : RuleValue.Null;
+            var resource = pw.Before is not null ? (Value)DocumentToResource.Convert(pw.Before) : RuleValues.Null;
+            var requestResource = pw.After is not null ? (Value)DocumentToResource.Convert(pw.After) : RuleValues.Null;
 
             var request = new RuleRequest
             {
                 Resource = resource,
-                Request = RequestBuilder.Build(claims, method, requestResource, commitTime),
+                Request = RuleValues.Request(claims, method, requestResource, commitTime),
                 Provider = documents,
             };
 

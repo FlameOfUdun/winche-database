@@ -12,7 +12,7 @@ using Winche.Database.Querying.Ast;
 using Winche.Database.Querying.Ast.Serialization;
 using Winche.Database.Runtime;
 using Winche.Database.Runtime.Writes;
-using Winche.Database.Values;
+using Winche.Values;
 
 namespace Winche.Database.AspNetCore.Rest.DependencyInjection;
 

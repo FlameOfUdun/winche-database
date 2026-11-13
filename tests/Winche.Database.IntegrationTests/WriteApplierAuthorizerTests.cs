@@ -3,7 +3,7 @@ using Winche.Database.DependencyInjection;
 using Winche.Database.Documents;
 using Winche.Database.Runtime;
 using Winche.Database.Runtime.Writes;
-using Winche.Database.Values;
+using Winche.Values;
 using Xunit;
 
 namespace Winche.Database.IntegrationTests;

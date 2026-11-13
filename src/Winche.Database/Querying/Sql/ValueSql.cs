@@ -1,6 +1,6 @@
 // src/Winche.Database/Querying/Sql/ValueSql.cs
 using System.Globalization;
-using Winche.Database.Values;
+using Winche.Values;
 
 namespace Winche.Database.Querying.Sql;
 

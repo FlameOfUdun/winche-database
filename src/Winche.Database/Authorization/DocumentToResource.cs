@@ -1,5 +1,6 @@
 using Winche.Database.Documents;
 using Winche.Rules;
+using Winche.Values;
 
 namespace Winche.Database.Authorization;
 
@@ -18,22 +19,19 @@ namespace Winche.Database.Authorization;
 /// </remarks>
 internal static class DocumentToResource
 {
-    public static RuleValue Convert(Document document)
+    public static MapValue Convert(Document document)
     {
-        var map = new Dictionary<string, RuleValue>(StringComparer.Ordinal);
-
-        foreach (var (key, value) in document.Fields)
-            map[key] = ValueToRuleValue.Convert(value);
-        var data = RuleValue.Map(new Dictionary<string, RuleValue>(map, StringComparer.Ordinal));
-
-        map["id"] = RuleValue.String(document.Id);
-        map["path"] = RuleValue.Path(document.Path);
-        map["collection"] = RuleValue.String(document.Collection);
-        map["createdAt"] = RuleValue.Timestamp(document.CreateTime);
-        map["updatedAt"] = RuleValue.Timestamp(document.UpdateTime);
-        map["version"] = RuleValue.Int(document.Version);
-        map.TryAdd("data", data);
-
-        return RuleValue.Map(map);
+        // The stored values are the rule values: no copy of the data, only the top-level map with the metadata.
+        var map = new Dictionary<string, Value>(document.Fields, StringComparer.Ordinal)
+        {
+            ["id"] = new StringValue(document.Id),
+            ["path"] = new ReferenceValue(document.Path),
+            ["collection"] = new StringValue(document.Collection),
+            ["createdAt"] = new TimestampValue(document.CreateTime),
+            ["updatedAt"] = new TimestampValue(document.UpdateTime),
+            ["version"] = new IntegerValue(document.Version),
+        };
+        map.TryAdd("data", new MapValue(document.Fields));
+        return new MapValue(map);
     }
 }

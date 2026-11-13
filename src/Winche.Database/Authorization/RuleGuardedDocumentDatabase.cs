@@ -5,7 +5,7 @@ using Winche.Database.Runtime;
 using Winche.Database.Runtime.Listening;
 using Winche.Database.Runtime.Transactions;
 using Winche.Database.Runtime.Writes;
-using Winche.Database.Values;
+using Winche.Values;
 using Winche.Rules;
 using Winche.Rules.Evaluation;
 
@@ -185,11 +185,11 @@ public sealed class RuleGuardedDocumentDatabase(
     /// </summary>
     private async Task AuthorizeGetAsync(string path, Document? doc, CancellationToken ct)
     {
-        var resource = doc is not null ? DocumentToResource.Convert(doc) : RuleValue.Null;
+        var resource = doc is not null ? (Value)DocumentToResource.Convert(doc) : RuleValues.Null;
         var request = new RuleRequest
         {
             Resource = resource,
-            Request = RequestBuilder.Build(claimsAccessor.GetClaims(), "get", RuleValue.Null),
+            Request = RuleValues.Request(claimsAccessor.GetClaims(), "get", RuleValues.Null),
             Provider = new PostgresDocumentSource(inner),
         };
         if (!await engine.AllowsAsync(RuleOperation.Get, path, request, ct))
@@ -206,7 +206,7 @@ public sealed class RuleGuardedDocumentDatabase(
         var constraints = QueryToConstraints.Convert(query);
         var request = new RuleRequest
         {
-            Request = RequestBuilder.Build(claimsAccessor.GetClaims(), "list", RuleValue.Null),
+            Request = RuleValues.Request(claimsAccessor.GetClaims(), "list", RuleValues.Null),
             Provider = new PostgresDocumentSource(inner),
         };
         if (!engine.Allows(constraints, request))

@@ -625,7 +625,7 @@ All queries use the typed `Query`; the wire JSON and C# AST share the same shape
 ```csharp
 using Winche.Database.Querying.Ast;
 using Winche.Database.Documents;
-using Winche.Database.Values;
+using Winche.Values;   // Winche.Core: the values every Winche package shares
 
 var query = new Query(
     Collection: "users",

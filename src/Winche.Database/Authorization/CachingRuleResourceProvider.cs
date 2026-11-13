@@ -1,6 +1,7 @@
 using Winche.Database.Documents;
 using Winche.Rules;
 using Winche.Rules.Evaluation;
+using Winche.Values;
 
 namespace Winche.Database.Authorization;
 
@@ -14,19 +15,19 @@ namespace Winche.Database.Authorization;
 internal abstract class CachingRuleResourceProvider : IRuleResourceProvider
 {
     // Cache keyed by path; null entry = document does not exist.
-    private readonly Dictionary<string, RuleValue?> _cache = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Value?> _cache = new(StringComparer.Ordinal);
 
     public async Task<bool> ExistsAsync(string path, CancellationToken ct = default) =>
         await FetchAsync(path, ct) is not null;
 
-    public async Task<RuleValue> GetAsync(string path, CancellationToken ct = default) =>
-        await FetchAsync(path, ct) ?? RuleValue.Null;
+    public async Task<Value> GetAsync(string path, CancellationToken ct = default) =>
+        await FetchAsync(path, ct) ?? RuleValues.Null;
 
-    private async Task<RuleValue?> FetchAsync(string path, CancellationToken ct)
+    private async Task<Value?> FetchAsync(string path, CancellationToken ct)
     {
         if (_cache.TryGetValue(path, out var cached)) return cached;
         var doc = await FetchDocumentAsync(path, ct);
-        var value = doc is not null ? DocumentToResource.Convert(doc) : (RuleValue?)null;
+        var value = doc is not null ? DocumentToResource.Convert(doc) : (Value?)null;
         _cache[path] = value;
         return value;
     }

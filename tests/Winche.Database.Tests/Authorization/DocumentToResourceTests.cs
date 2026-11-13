@@ -1,6 +1,6 @@
 using Winche.Database.Authorization;
 using Winche.Database.Documents;
-using Winche.Database.Values;
+using Winche.Values;
 using Winche.Rules;
 
 namespace Winche.Database.Tests.Authorization;
@@ -39,8 +39,8 @@ public class DocumentToResourceTests
         Assert.Equal("u1", map["id"].AsString);
         Assert.Equal("users/u1", map["path"].AsPath);
         Assert.Equal("users", map["collection"].AsString);
-        Assert.Equal(RuleValueKind.Timestamp, map["createdAt"].Kind);
-        Assert.Equal(RuleValueKind.Timestamp, map["updatedAt"].Kind);
+        Assert.IsType<TimestampValue>(map["createdAt"]);
+        Assert.IsType<TimestampValue>(map["updatedAt"]);
         Assert.Equal(1L, map["version"].AsInt);
 
         // "__name__" is gone.
@@ -51,7 +51,7 @@ public class DocumentToResourceTests
     public void Convert_Path_IsFullPathAsRulePath()
     {
         var map = DocumentToResource.Convert(MakeDocument("users/u42", "u42", "users")).AsMap;
-        Assert.Equal(RuleValueKind.Path, map["path"].Kind);
+        Assert.IsType<ReferenceValue>(map["path"]);
         Assert.Equal("users/u42", map["path"].AsPath);
     }
 

@@ -5,6 +5,7 @@ using Winche.Database.Runtime;
 using Winche.Database.Runtime.Listening;
 using Winche.Rules;
 using Winche.Rules.Expressions;
+using Winche.Values;
 
 namespace Winche.Database.IntegrationTests;
 
@@ -12,7 +13,7 @@ namespace Winche.Database.IntegrationTests;
 public class RuleGuardedDocListenTests(PostgresFixture fx) : QueryTestBase(fx)
 {
     private static RuleGuardedDocumentDatabase Guard(DocumentDatabase core, RuleSet ruleset, IReadOnlyDictionary<string, object?>? claims) =>
-        new(core, new RuleEngine(new StaticRuleSetRepository(ruleset), WincheRuleValueComparer.Instance), new StaticClaimsAccessor(claims));
+        new(core, new RuleEngine(new StaticRuleSetRepository(ruleset)), new StaticClaimsAccessor(claims));
 
     private DocumentDatabase CoreWithDocListeners() =>
         new(Fx.DataSource, Options.Create(new WincheDatabaseOptions()), docListeners: new DocumentListenerRegistry(Fx.DataSource));

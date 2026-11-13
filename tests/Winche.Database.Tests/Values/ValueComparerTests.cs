@@ -1,5 +1,5 @@
 // tests/Winche.Database.Tests/Values/ValueComparerTests.cs
-using Winche.Database.Values;
+using Winche.Values;
 
 namespace Winche.Database.Tests.Values;
 

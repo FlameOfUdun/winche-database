@@ -3,7 +3,7 @@ using Winche.Database.Constants;
 using Winche.Database.Querying.Sql;
 using Winche.Database.Runtime.ChangeFeed;
 using Winche.Database.Runtime.Writes;
-using Winche.Database.Values;
+using Winche.Values;
 
 namespace Winche.Database.IntegrationTests;
 

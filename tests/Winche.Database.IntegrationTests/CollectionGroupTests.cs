@@ -13,7 +13,7 @@ using Winche.Database.Runtime.ChangeFeed;
 using Winche.Database.Runtime.Listening;
 using Winche.Database.Runtime.Writes;
 using Winche.Database.Schema;
-using Winche.Database.Values;
+using Winche.Values;
 using Winche.Rules;
 using Winche.Rules.Text;
 
@@ -115,7 +115,7 @@ public class CollectionGroupTests(PostgresFixture fx) : QueryTestBase(fx)
     // ── rules ─────────────────────────────────────────────────────────────
 
     private RuleGuardedDocumentDatabase Guard(string rules, string uid) =>
-        new(Core(), new RuleEngine(new StaticRuleSetRepository(RuleText.ParseRuleSet(rules)), WincheRuleValueComparer.Instance),
+        new(Core(), new RuleEngine(new StaticRuleSetRepository(RuleText.ParseRuleSet(rules))),
             new StaticClaimsAccessor(new Dictionary<string, object?> { ["uid"] = uid }));
 
     [Fact]

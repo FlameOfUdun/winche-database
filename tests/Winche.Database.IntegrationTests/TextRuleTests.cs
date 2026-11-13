@@ -3,7 +3,7 @@ using Winche.Database.Authorization;
 using Winche.Database.DependencyInjection;
 using Winche.Database.Runtime;
 using Winche.Database.Runtime.Writes;
-using Winche.Database.Values;
+using Winche.Values;
 using Winche.Rules;
 using Winche.Rules.Text;
 
@@ -40,7 +40,7 @@ public class TextRuleTests(PostgresFixture fx) : QueryTestBase(fx)
     private DocumentDatabase As(string uid) =>
         new(Fx.DataSource, Options.Create(new WincheDatabaseOptions()),
             writeAuthorizer: new RulesWriteAuthorizer(
-                new RuleEngine(new StaticRuleSetRepository(Rules), WincheRuleValueComparer.Instance),
+                new RuleEngine(new StaticRuleSetRepository(Rules)),
                 new StaticClaimsAccessor(new Dictionary<string, object?> { ["uid"] = uid })));
 
     private static SetWrite Set(string path, params (string K, Value V)[] fields) =>

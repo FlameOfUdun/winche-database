@@ -4,7 +4,7 @@ using Winche.Database.Authorization;
 using Winche.Database.Querying.Ast;
 using Winche.Database.Querying.Planning;
 using Winche.Database.Runtime;
-using Winche.Database.Values;
+using Winche.Values;
 
 namespace Winche.Database.Wire;
 

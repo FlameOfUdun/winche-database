@@ -1,6 +1,7 @@
 using Winche.Database.Querying.Ast;
 using Winche.Rules.Expressions;
 using Winche.Rules.Querying;
+using Winche.Values;
 
 namespace Winche.Database.Authorization;
 
@@ -47,7 +48,7 @@ internal static class QueryToConstraints
                 if (TryMapOperator(ff.Op, out var op))
                     // Fields are exposed at the top of the resource map (see DocumentToResource),
                     // so a query on field X maps directly to the rule path resource.X.
-                    output.Add(new QueryConstraint(ff.Field.Segments, op, ValueToRuleValue.Convert(ff.Operand)));
+                    output.Add(new QueryConstraint(ff.Field.Segments, op, ff.Operand));
                 break;
 
             case CompositeFilter { Op: CompositeOp.And } cf:

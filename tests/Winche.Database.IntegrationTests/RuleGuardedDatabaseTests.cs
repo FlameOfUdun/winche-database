@@ -8,7 +8,7 @@ using Winche.Database.Runtime;
 using Winche.Database.Runtime.ChangeFeed;
 using Winche.Database.Runtime.Listening;
 using Winche.Database.Runtime.Writes;
-using Winche.Database.Values;
+using Winche.Values;
 using Winche.Rules;
 using Winche.Rules.Expressions;
 
@@ -39,13 +39,13 @@ public class RuleGuardedDatabaseTests(PostgresFixture fx) : QueryTestBase(fx)
     /// </summary>
     private DocumentDatabase AuthorizingCore(RuleSet ruleset, IReadOnlyDictionary<string, object?>? claims) =>
         new(Fx.DataSource, Options.Create(new WincheDatabaseOptions()),
-            writeAuthorizer: new RulesWriteAuthorizer(new RuleEngine(new StaticRuleSetRepository(ruleset), WincheRuleValueComparer.Instance), new StaticClaimsAccessor(claims)));
+            writeAuthorizer: new RulesWriteAuthorizer(new RuleEngine(new StaticRuleSetRepository(ruleset)), new StaticClaimsAccessor(claims)));
 
     private static RuleGuardedDocumentDatabase Guard(
         DocumentDatabase core,
         RuleSet ruleset,
         IReadOnlyDictionary<string, object?>? claims) =>
-        new(core, new RuleEngine(new StaticRuleSetRepository(ruleset), WincheRuleValueComparer.Instance), new StaticClaimsAccessor(claims));
+        new(core, new RuleEngine(new StaticRuleSetRepository(ruleset)), new StaticClaimsAccessor(claims));
 
     private static Dictionary<string, Value> Fields(params (string K, Value V)[] entries) =>
         entries.ToDictionary(e => e.K, e => e.V);

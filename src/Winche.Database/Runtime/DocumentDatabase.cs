@@ -8,7 +8,7 @@ using Winche.Database.Querying.Ast;
 using Winche.Database.Runtime.Listening;
 using Winche.Database.Runtime.Transactions;
 using Winche.Database.Runtime.Writes;
-using Winche.Database.Values;
+using Winche.Values;
 
 namespace Winche.Database.Runtime;
 

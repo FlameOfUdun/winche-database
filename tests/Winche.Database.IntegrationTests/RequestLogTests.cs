@@ -6,7 +6,7 @@ using Winche.Database.Querying.Ast;
 using Winche.Database.Runtime;
 using Winche.Database.Runtime.Logging;
 using Winche.Database.Runtime.Writes;
-using Winche.Database.Values;
+using Winche.Values;
 using Winche.Rules;
 using Winche.Rules.Text;
 
