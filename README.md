@@ -947,7 +947,10 @@ builder.Services.AddOpenTelemetry().WithMetrics(m => m
     .AddOtlpExporter());   // or Prometheus, CloudWatch via the OTel collector, …
 ```
 
-or watch them live with `dotnet-counters monitor --counters Winche.Database`. With nothing listening,
+or watch them live with `dotnet-counters monitor --counters Winche.Database,Winche.Feed`. Durable consumers (hooks,
+published changes) run on Winche.Core's feed (`Winche.Core.Feeds`), as storage's hooks do: their cursors and dead
+letters are in `winche_feed_cursors` / `winche_feed_dead_letters` (feed `database`), moved there from this package's
+own tables on upgrade, and they're measured on the `Winche.Feed` meter. With nothing listening,
 recording costs next to nothing.
 
 | Instrument | Unit | Tags | What |
@@ -957,14 +960,14 @@ recording costs next to nothing.
 | `winche.database.write.documents` | | | writes committed |
 | `winche.database.listeners` | | `kind` (query/document) | live listeners held (up/down) |
 | `winche.database.listener.update.duration` | s | `kind`, `method` (in_memory/requery) | bringing a listener up to date |
-| `winche.database.hook.changes` | | `consumer` | changes delivered to hooks |
-| `winche.database.hook.lag` | s | `consumer` | commit → delivery |
-| `winche.database.hook.failures`, `…hook.dead_letters` | | `consumer` | failed deliveries, changes given up on |
+| `winche.feed.delivered` (meter `Winche.Feed`) | | `feed` (`database`), `consumer` | changes delivered to hooks and other durable consumers |
+| `winche.feed.lag` (meter `Winche.Feed`) | s | `feed`, `consumer` | commit → delivery |
+| `winche.feed.failures`, `…feed.dead_letters` (meter `Winche.Feed`) | | `feed`, `consumer` | failed deliveries, changes given up on |
 | `winche.database.ws.connections`, `…ws.subscriptions` | | | open WebSocket connections / subscriptions (up/down) |
 | `winche.database.ws.requests` | | `type` | WebSocket requests |
 | `winche.database.ws.throttled`, `…ws.limited` | | `limit` (subscriptions/connections) | delayed by the rate limit; refused or closed by a limit |
 
-Useful alarms: `hook.lag` p95 above a few minutes, any `hook.dead_letters`, `write.duration{outcome=aborted}`
+Useful alarms: `winche.feed.lag` p95 above a few minutes, any `winche.feed.dead_letters`, `write.duration{outcome=aborted}`
 rising, `query.duration{indexed=false}` p95 above the slow-query threshold.
 
 ## Document history (11.1.0)

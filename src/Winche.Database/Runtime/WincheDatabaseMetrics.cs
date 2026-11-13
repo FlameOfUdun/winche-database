@@ -38,14 +38,6 @@ public static class WincheDatabaseMetrics
         Meter.CreateUpDownCounter<long>("winche.database.listeners", null, "Live listeners held");
     internal static readonly Histogram<double> ListenerUpdateDuration =
         Meter.CreateHistogram<double>("winche.database.listener.update.duration", "s", "Bringing a listener group up to date");
-    internal static readonly Counter<long> HookChanges =
-        Meter.CreateCounter<long>("winche.database.hook.changes", null, "Changes delivered to durable consumers");
-    internal static readonly Histogram<double> HookLag =
-        Meter.CreateHistogram<double>("winche.database.hook.lag", "s", "Commit to delivery of a batch's newest change");
-    internal static readonly Counter<long> HookFailures =
-        Meter.CreateCounter<long>("winche.database.hook.failures", null, "Failed deliveries to durable consumers");
-    internal static readonly Counter<long> HookDeadLetters =
-        Meter.CreateCounter<long>("winche.database.hook.dead_letters", null, "Changes durable consumers gave up on");
     internal static readonly UpDownCounter<long> WsConnections =
         Meter.CreateUpDownCounter<long>("winche.database.ws.connections", null, "Open WebSocket connections");
     internal static readonly UpDownCounter<long> WsSubscriptions =

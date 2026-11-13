@@ -102,7 +102,7 @@ public class ChangeFeedOrderingTests(PostgresFixture fx) : QueryTestBase(fx)
         }
 
         // The schema as it was before this change.
-        await Exec($"ALTER TABLE {WincheDatabaseTables.Changes} DROP COLUMN txid; ALTER TABLE {WincheDatabaseTables.FeedCursors} DROP COLUMN txid;");
+        await Exec($"ALTER TABLE {WincheDatabaseTables.Changes} DROP COLUMN txid;");
         try
         {
             for (var i = 0; i < 3; i++)
@@ -110,7 +110,8 @@ public class ChangeFeedOrderingTests(PostgresFixture fx) : QueryTestBase(fx)
             await using (var cmd = Fx.DataSource.CreateCommand($"SELECT MIN(seq) FROM {WincheDatabaseTables.Changes}"))
             {
                 var first = (long)(await cmd.ExecuteScalarAsync())!;
-                await Exec($"INSERT INTO {WincheDatabaseTables.FeedCursors} (consumer, seq) VALUES ('hook', {first})"); // delivered old0
+                // A cursor saved then, with no transaction id: delivered old0.
+                await Exec($"INSERT INTO {WincheFeedTables.Cursors} (feed, consumer, seq) VALUES ('database', 'hook', {first})");
             }
         }
         finally

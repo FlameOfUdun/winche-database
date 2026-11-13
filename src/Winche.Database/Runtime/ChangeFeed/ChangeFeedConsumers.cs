@@ -50,92 +50,15 @@ public sealed class ChangeFeedConsumers(
 
     /// <summary>The durable consumers' names.</summary>
     public IReadOnlyList<string> Names => consumers.DurableNames;
+    /// <summary>How each durable consumer is doing (lag behind the oldest undelivered change, failure, dead letters).</summary>
+    public async Task<IReadOnlyList<DurableConsumerStatus>> GetStatusAsync(CancellationToken ct = default) =>
+        [.. (await _reader.Feed.GetStatusAsync(consumers.DurableNames, ct)).Select(s => new DurableConsumerStatus(
+            s.Name, s.Position, s.OldestPendingAt, s.Lag, s.FailingSince, s.FailingAttempts, s.LastError, s.DeadLetters))];
 
-    /// <summary>The status of every durable consumer.</summary>
-    public async Task<IReadOnlyList<DurableConsumerStatus>> GetStatusAsync(CancellationToken ct = default)
-    {
-        await using var conn = await source.OpenConnectionAsync(ct);
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"""
-            SELECT n.name, c.seq, COALESCE(c.txid, '0')::text,
-                   (SELECT x.commit_time FROM {WincheDatabaseTables.Changes} AS x
-                    WHERE c.consumer IS NOT NULL
-                      AND (x.txid, x.seq) > (COALESCE(c.txid, '0'), c.seq)
-                      AND x.txid < pg_snapshot_xmin(pg_current_snapshot())
-                    ORDER BY x.txid, x.seq LIMIT 1),
-                   c.failing_since, COALESCE(c.failing_attempts, 0), c.failing_error,
-                   (SELECT count(*) FROM {WincheDatabaseTables.DeadLetters} AS d WHERE d.consumer = n.name),
-                   now()
-            FROM unnest($1::text[]) WITH ORDINALITY AS n(name, i)
-            LEFT JOIN {WincheDatabaseTables.FeedCursors} AS c ON c.consumer = n.name
-            ORDER BY n.i
-            """;
-        cmd.Parameters.AddWithValue(consumers.DurableNames.ToArray());
-        var statuses = new List<DurableConsumerStatus>();
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
-        {
-            var oldest = reader.IsDBNull(3) ? (DateTimeOffset?)null : reader.GetFieldValue<DateTimeOffset>(3);
-            var now = reader.GetFieldValue<DateTimeOffset>(8);
-            statuses.Add(new DurableConsumerStatus(
-                reader.GetString(0),
-                reader.IsDBNull(1) ? null : new FeedPosition(ulong.Parse(reader.GetString(2), System.Globalization.CultureInfo.InvariantCulture), reader.GetInt64(1)),
-                oldest,
-                oldest is { } o && now > o ? now - o : TimeSpan.Zero,
-                reader.IsDBNull(4) ? null : reader.GetFieldValue<DateTimeOffset>(4),
-                reader.GetInt32(5),
-                reader.IsDBNull(6) ? null : reader.GetString(6),
-                reader.GetInt64(7)));
-        }
-        return statuses;
-    }
-
-    /// <summary>Dead letters, oldest change first; all consumers when <paramref name="consumer"/> is null.</summary>
-    public Task<IReadOnlyList<DeadLetter>> GetDeadLettersAsync(string? consumer = null, int limit = 100, CancellationToken ct = default) =>
-        ReadDeadLettersAsync(consumer, after: null, limit, ct);
-
-    private async Task<IReadOnlyList<DeadLetter>> ReadDeadLettersAsync(string? consumer, FeedPosition? after, int limit, CancellationToken ct)
-    {
-        await using var conn = await source.OpenConnectionAsync(ct);
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"""
-            SELECT id, consumer, seq, txid::text, type, document_path, collection_path, version, commit_time,
-                   error, attempts, first_failed_at, dead_lettered_at
-            FROM {WincheDatabaseTables.DeadLetters}
-            WHERE ($1::text IS NULL OR consumer = $1)
-              AND ($2::text IS NULL OR (txid, seq) > ($2::text::xid8, $3))
-            ORDER BY txid, seq, id
-            LIMIT $4
-            """;
-        cmd.Parameters.Add(new NpgsqlParameter { Value = (object?)consumer ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text });
-        cmd.Parameters.Add(new NpgsqlParameter { Value = after is { } a ? ChangeFeedReader.Text(a.TxId) : DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text });
-        cmd.Parameters.AddWithValue(after?.Seq ?? 0L);
-        cmd.Parameters.AddWithValue(limit);
-        var letters = new List<DeadLetter>();
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
-        {
-            var change = new ChangeRecord(
-                reader.GetInt64(2),
-                ChangeTypes.FromWire(reader.GetString(4)),
-                reader.GetString(5),
-                reader.GetString(6),
-                reader.GetInt64(7),
-                reader.GetFieldValue<DateTimeOffset>(8))
-            {
-                TxId = ulong.Parse(reader.GetString(3), System.Globalization.CultureInfo.InvariantCulture),
-            };
-            letters.Add(new DeadLetter(
-                reader.GetInt64(0),
-                reader.GetString(1),
-                change,
-                reader.IsDBNull(9) ? null : reader.GetString(9),
-                reader.GetInt32(10),
-                reader.GetFieldValue<DateTimeOffset>(11),
-                reader.GetFieldValue<DateTimeOffset>(12)));
-        }
-        return letters;
-    }
+    /// <summary>Changes durable consumers gave up on (of <paramref name="consumer"/>, if given), oldest first.</summary>
+    public async Task<IReadOnlyList<DeadLetter>> GetDeadLettersAsync(string? consumer = null, int limit = 100, CancellationToken ct = default) =>
+        [.. (await _reader.Feed.GetDeadLettersAsync(consumer, null, limit, ct)).Select(l => new DeadLetter(
+            l.Id, l.Consumer, _reader.Feed.RecordOf(l), l.Error, l.Attempts, l.FirstFailedAt, l.DeadLetteredAt))];
 
     /// <summary>
     /// Delivers <paramref name="consumer"/>'s dead letters again, oldest first, with each document's current
@@ -146,54 +69,12 @@ public sealed class ChangeFeedConsumers(
     {
         var target = consumers.Durable.FirstOrDefault(c => c.DurableName == consumer)
             ?? throw new ArgumentException($"No durable consumer is named '{consumer}'.", nameof(consumer));
-
-        int replayed = 0, failed = 0;
-        FeedPosition? after = null;
-        while (true)
-        {
-            var page = await ReadDeadLettersAsync(consumer, after, 100, ct);
-            if (page.Count == 0) break;
-
-            foreach (var letter in page)
-            {
-                ct.ThrowIfCancellationRequested();
-                try
-                {
-                    var records = new[] { letter.Change };
-                    var batch = new ChangeBatch(records, await _reader.FetchDocumentsAsync(records, ct));
-                    if (target.WantsSnapshots) batch = batch with { Snapshots = await _reader.FetchSnapshotsAsync(records, ct) };
-                    await target.OnBatchAsync(batch, ct);
-                    await ExecuteAsync($"DELETE FROM {WincheDatabaseTables.DeadLetters} WHERE id = $1", ct, letter.Id);
-                    replayed++;
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    var cause = ex is ChangeDeliveryException { InnerException: { } inner } ? inner : ex;
-                    await ExecuteAsync(
-                        $"UPDATE {WincheDatabaseTables.DeadLetters} SET attempts = attempts + 1, error = $2 WHERE id = $1",
-                        ct, letter.Id, cause.ToString());
-                    failed++;
-                }
-            }
-            after = page[^1].Change.Position;
-        }
-        return new DeadLetterReplayResult(replayed, failed);
+        var runner = new DurableConsumerRunner(source, target, new(), Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
+        var result = await _reader.Feed.ReplayDeadLettersAsync(consumer, (record, t) => runner.DeliverAsync([record], t), ct);
+        return new DeadLetterReplayResult(result.Replayed, result.Failed);
     }
 
     /// <summary>Drops a dead letter without delivering it. False when there is none with that id.</summary>
     public async Task<bool> DiscardDeadLetterAsync(long id, CancellationToken ct = default) =>
-        await ExecuteAsync($"DELETE FROM {WincheDatabaseTables.DeadLetters} WHERE id = $1", ct, id) > 0;
-
-    private async Task<int> ExecuteAsync(string sql, CancellationToken ct, params object[] args)
-    {
-        await using var conn = await source.OpenConnectionAsync(ct);
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = sql;
-        foreach (var arg in args) cmd.Parameters.AddWithValue(arg);
-        return await cmd.ExecuteNonQueryAsync(ct);
-    }
+        await _reader.Feed.DeleteDeadLettersAsync(id, ct: ct) > 0;
 }

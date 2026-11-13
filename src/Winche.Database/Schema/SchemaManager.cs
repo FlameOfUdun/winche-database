@@ -59,6 +59,14 @@ public sealed class SchemaManager(
             cmd.CommandText = SchemaSql.ChangesDdl();
             await cmd.ExecuteNonQueryAsync(ct);
         }
+
+        // Durable consumers keep their cursors and dead letters in Winche.Core's feed tables.
+        await Winche.Core.Feeds.WincheFeedTables.EnsureAsync(source, ct);
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = SchemaSql.MoveFeedStateToCore();
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
     }
 
     private static async Task EnsurePathIndexAsync(NpgsqlConnection conn, CancellationToken ct)

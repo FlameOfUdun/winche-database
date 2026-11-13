@@ -118,7 +118,10 @@ public static class SchemaSql
             IF to_regclass('winche_changes') IS NOT NULL THEN
                 ALTER TABLE winche_changes RENAME TO winche_documents_changes;
             END IF;
-            IF to_regclass('winche_feed_cursors') IS NOT NULL THEN
+            -- The legacy table of that name, not Winche.Core's (which has a feed column).
+            IF to_regclass('winche_feed_cursors') IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema()
+                               AND table_name = 'winche_feed_cursors' AND column_name = 'feed') THEN
                 ALTER TABLE winche_feed_cursors RENAME TO winche_documents_feed_cursors;
             END IF;
 
@@ -168,13 +171,6 @@ public static class SchemaSql
         CREATE INDEX IF NOT EXISTS idx_{{WincheDatabaseTables.Changes}}_commit_time
             ON {{WincheDatabaseTables.Changes}} (commit_time);
 
-        CREATE TABLE IF NOT EXISTS {{WincheDatabaseTables.FeedCursors}} (
-            consumer   TEXT PRIMARY KEY,
-            seq        BIGINT NOT NULL,
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-            txid       xid8
-        );
-
         -- Upgrade from a feed without txid (one statement, so one transaction). Existing rows and cursors get
         -- txid 0: those rows keep their seq order and sort before every later row. Stamping them with this
         -- transaction's id instead would let a write that was already running land behind the cursors.
@@ -185,11 +181,6 @@ public static class SchemaSql
                            WHERE table_schema = current_schema() AND table_name = '{{WincheDatabaseTables.Changes}}' AND column_name = 'txid') THEN
                 ALTER TABLE {{WincheDatabaseTables.Changes}} ADD COLUMN txid xid8 NOT NULL DEFAULT '0';
                 ALTER TABLE {{WincheDatabaseTables.Changes}} ALTER COLUMN txid SET DEFAULT pg_current_xact_id();
-            END IF;
-            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                           WHERE table_schema = current_schema() AND table_name = '{{WincheDatabaseTables.FeedCursors}}' AND column_name = 'txid') THEN
-                ALTER TABLE {{WincheDatabaseTables.FeedCursors}} ADD COLUMN txid xid8;
-                UPDATE {{WincheDatabaseTables.FeedCursors}} SET txid = '0';
             END IF;
         END
         $m$;
@@ -209,38 +200,11 @@ public static class SchemaSql
         CREATE INDEX IF NOT EXISTS idx_{{WincheDatabaseTables.Changes}}_path_seq
             ON {{WincheDatabaseTables.Changes}} (document_path COLLATE "C", seq);
 
-        -- A durable consumer's failing change (the one right after its cursor): when it started failing and
-        -- how often, so the give-up deadline survives restarts and moves between nodes. Cleared on success.
-        ALTER TABLE {{WincheDatabaseTables.FeedCursors}}
-            ADD COLUMN IF NOT EXISTS failing_txid     xid8,
-            ADD COLUMN IF NOT EXISTS failing_seq      BIGINT,
-            ADD COLUMN IF NOT EXISTS failing_since    TIMESTAMPTZ,
-            ADD COLUMN IF NOT EXISTS failing_attempts INT NOT NULL DEFAULT 0,
-            ADD COLUMN IF NOT EXISTS failing_error    TEXT;
-
         -- How far pruning has reached: the newest transaction any deleted feed row came from. A resume token
         -- at or after it can be checked against the feed; an older one may have lost rows.
         CREATE TABLE IF NOT EXISTS {{WincheDatabaseTables.FeedPruned}} (
             id   INT PRIMARY KEY CHECK (id = 1),
             txid xid8 NOT NULL
-        );
-
-        -- Changes a durable consumer gave up on, kept for inspection and replay.
-        CREATE TABLE IF NOT EXISTS {{WincheDatabaseTables.DeadLetters}} (
-            id               BIGSERIAL PRIMARY KEY,
-            consumer         TEXT NOT NULL,
-            seq              BIGINT NOT NULL,
-            txid             xid8 NOT NULL,
-            type             TEXT NOT NULL,
-            document_path    TEXT NOT NULL,
-            collection_path  TEXT NOT NULL,
-            version          BIGINT NOT NULL,
-            commit_time      TIMESTAMPTZ NOT NULL,
-            error            TEXT,
-            attempts         INT NOT NULL,
-            first_failed_at  TIMESTAMPTZ NOT NULL,
-            dead_lettered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-            UNIQUE (consumer, txid, seq)
         );
 
         CREATE OR REPLACE FUNCTION winche_notify_change() RETURNS TRIGGER AS $t$
@@ -396,5 +360,35 @@ public static class SchemaSql
             THEN ARRAY(SELECT winche_key(e) FROM jsonb_array_elements(v->'arrayValue'->'values') AS t(e))
         END
         $f$ LANGUAGE sql IMMUTABLE STRICT;
+        """;
+
+    /// <summary>
+    /// Durable consumers' cursors and dead letters live in Winche.Core's feed tables (feed <c>database</c>) since 11.1.0:
+    /// this moves those of an older database there and drops the old tables. Run after the core tables exist.
+    /// </summary>
+    internal static string MoveFeedStateToCore() => $$"""
+        DO $m$
+        BEGIN
+            IF to_regclass('winche_documents_feed_cursors') IS NOT NULL THEN
+                INSERT INTO {{Winche.Core.Feeds.WincheFeedTables.Cursors}}
+                    (feed, consumer, seq, txid, updated_at, failing_txid, failing_seq, failing_since, failing_attempts, failing_error)
+                SELECT '{{Runtime.ChangeFeed.DatabaseFeed.Name}}', consumer, seq, txid, updated_at, failing_txid, failing_seq, failing_since, failing_attempts, failing_error
+                FROM winche_documents_feed_cursors
+                ON CONFLICT DO NOTHING;
+                DROP TABLE winche_documents_feed_cursors;
+            END IF;
+            IF to_regclass('winche_documents_dead_letters') IS NOT NULL THEN
+                INSERT INTO {{Winche.Core.Feeds.WincheFeedTables.DeadLetters}}
+                    (feed, consumer, txid, seq, record, error, attempts, first_failed_at, dead_lettered_at)
+                SELECT '{{Runtime.ChangeFeed.DatabaseFeed.Name}}', consumer, txid, seq,
+                       jsonb_build_object('seq', seq, 'txid', txid::text, 'type', type, 'path', document_path,
+                                          'collection', collection_path, 'version', version, 'commitTime', commit_time),
+                       error, attempts, first_failed_at, dead_lettered_at
+                FROM winche_documents_dead_letters
+                ON CONFLICT DO NOTHING;
+                DROP TABLE winche_documents_dead_letters;
+            END IF;
+        END
+        $m$;
         """;
 }
