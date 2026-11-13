@@ -1098,6 +1098,24 @@ The **send queue** is bounded at 64 frames (configurable). If it fills up, the c
 
 ---
 
+### 7.7 Expanding references
+
+`doc.get`, `doc.getAll`, `query`, `listen` and `doc.listen` take `"expand": ["patient", "patient.doctor", "team"]`
+(REST: `GET …/{path}?expand=patient,patient.doctor`; `:batchGet` and `:runQuery` take `"expand"` in the body).
+
+- **Paths:** each segment names a field; maps are walked into, lists apply the rest to each item, and a
+  `referenceValue` applies the rest to the document it points to. `patient.doctor` follows `patient`, then `doctor` in
+  that document. At most 10 paths, 4 references deep, 100 documents per response (past that, references stay pointers).
+- **Response:** the documents themselves are unchanged (fields stay `referenceValue`s); the referenced documents come
+  beside them under `"included": { "<path>": <document>, … }`. Each is sent once, however often it's referenced
+  (cycles included).
+- **Rules:** each referenced document is read as the caller (its `get` rule). One they may not read, or that doesn't
+  exist, is simply not in `included`: the client keeps the pointer, and can't tell which.
+- **Listening:** `listen.snapshot` carries the full `included`. Each `listen.delta` carries `included` (referenced
+  documents new or changed since the last frame) and `excluded` (paths no longer included: deleted, unreadable, or no
+  longer referenced). When only a referenced document changed, the delta has `"changes": []`. The server listens to
+  every referenced document, so a change to one reaches the subscriber within the usual listener latency.
+
 ## 8. Operational Notes
 
 ### 8.1 Hooks: feed-driven, at-least-once, idempotent

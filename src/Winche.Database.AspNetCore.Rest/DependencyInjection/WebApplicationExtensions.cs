@@ -11,6 +11,7 @@ using Winche.Database.Querying;
 using Winche.Database.Querying.Ast;
 using Winche.Database.Querying.Ast.Serialization;
 using Winche.Database.Runtime;
+using Winche.Database.Runtime.Expansion;
 using Winche.Database.Runtime.Writes;
 using Winche.Values;
 
@@ -64,11 +65,17 @@ public static class WebApplicationExtensions
             return Results.Json(doc, statusCode: 200, contentType: "application/json");
         });
 
-        group.MapGet("/{path}", async (string path, IDocumentDatabase db, CancellationToken ct = default) =>
+        // ?expand=patient,patient.doctor: the referenced documents come back under "included" (by path).
+        group.MapGet("/{path}", async (string path, string? expand, IDocumentDatabase db, CancellationToken ct = default) =>
         {
             var decoded = DecodeBase64(path);
             var document = await db.GetAsync(decoded, ct);
-            return document is null ? Results.NotFound() : Results.Json(document, statusCode: 200, contentType: "application/json");
+            if (document is null) return Results.NotFound();
+            var request = ExpandRequest.Parse(expand);
+            if (request is null) return Results.Json(document, statusCode: 200, contentType: "application/json");
+            var body = JsonSerializer.SerializeToNode(document)!.AsObject();
+            body["included"] = await IncludedAsync(db, [document], request, ct);
+            return Results.Json(body, statusCode: 200, contentType: "application/json");
         });
 
         group.MapDelete("/{path}", async (string path, IDocumentDatabase db, CancellationToken ct = default) =>
@@ -168,7 +175,8 @@ public static class WebApplicationExtensions
                     list.Add(await db.GetAsync(transaction, docPath, ct));  // recorded reads
                 docs = list;
             }
-            return Results.Json(new { documents = docs }, statusCode: 200, contentType: "application/json");
+            if (Expand(node) is not { } expandDocs) return Results.Json(new { documents = docs }, statusCode: 200, contentType: "application/json");
+            return Results.Json(new { documents = docs, included = await IncludedAsync(db, docs, expandDocs, ct) }, statusCode: 200, contentType: "application/json");
         });
 
         Verb("runQuery", async (HttpRequest request, IDocumentDatabase db, CancellationToken ct) =>
@@ -183,7 +191,10 @@ public static class WebApplicationExtensions
             var result = transaction is null
                 ? await db.QueryAsync(query, ct)
                 : await db.QueryAsync(transaction, query, ct);
-            return Results.Json(result, statusCode: 200, contentType: "application/json");
+            if (Expand(node) is not { } expandQuery) return Results.Json(result, statusCode: 200, contentType: "application/json");
+            var body = JsonSerializer.SerializeToNode(result)!.AsObject();
+            body["included"] = await IncludedAsync(db, result.Documents, expandQuery, ct);
+            return Results.Json(body, statusCode: 200, contentType: "application/json");
         });
 
         Verb("count", async (HttpRequest request, IDocumentDatabase db, CancellationToken ct) =>
@@ -235,6 +246,23 @@ public static class WebApplicationExtensions
         });
 
         return new CompositeEndpointConventionBuilder([group, .. verbs]);
+    }
+
+    /// <summary>A body's <c>expand</c>: the reference paths to follow.</summary>
+    private static ExpandRequest? Expand(JsonObject body) => body["expand"] switch
+    {
+        null => null,
+        JsonArray a => ExpandRequest.Of(a.Select(n => n?.GetValue<string>() ?? "")),
+        _ => throw new RuntimeException(RuntimeStatus.InvalidArgument, "'expand' is a list of field paths."),
+    };
+
+    /// <summary>The readable referenced documents, by path.</summary>
+    private static async Task<JsonObject> IncludedAsync(IDocumentDatabase db, IEnumerable<Document?> docs, ExpandRequest request, CancellationToken ct)
+    {
+        var expansion = await ReferenceExpander.ExpandAsync(db, docs, request, ct);
+        var included = new JsonObject();
+        foreach (var (path, doc) in expansion.Included) included[path] = JsonSerializer.SerializeToNode(doc);
+        return included;
     }
 }
 

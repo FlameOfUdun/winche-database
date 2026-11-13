@@ -39,6 +39,9 @@ public sealed record ListenSnapshotMessage : ServerMessage
     [JsonPropertyName("documents")] public required IReadOnlyList<Document> Documents { get; init; }
     [JsonPropertyName("readTime")] public required DateTimeOffset ReadTime { get; init; }
     [JsonPropertyName("resumeToken")] public required long ResumeToken { get; init; }
+    /// <summary>With <c>expand</c>: every referenced document the caller may read, by path (replaces what the client had).</summary>
+    [JsonPropertyName("included"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyDictionary<string, Document>? Included { get; init; }
 }
 
 public sealed record ListenCurrentMessage : ServerMessage
@@ -62,4 +65,10 @@ public sealed record ListenDeltaMessage : ServerMessage
     [JsonPropertyName("count")] public required int Count { get; init; }
     [JsonPropertyName("readTime")] public required DateTimeOffset ReadTime { get; init; }
     [JsonPropertyName("resumeToken")] public required long ResumeToken { get; init; }
+    /// <summary>With <c>expand</c>: referenced documents new or changed since the last frame, by path.</summary>
+    [JsonPropertyName("included"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyDictionary<string, Document>? Included { get; init; }
+    /// <summary>With <c>expand</c>: referenced documents no longer included (deleted, unreadable, or no longer referenced).</summary>
+    [JsonPropertyName("excluded"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? Excluded { get; init; }
 }

@@ -845,6 +845,24 @@ An explicit `Limit` on the query **caps** all aggregations (consistent with `Cou
 
 > **Notes:** an explicit query `limit` caps all aggregations; collection-group queries are not yet supported.
 
+## Expanding references
+
+A `referenceValue` field points at another document. Ask for it to be followed, and its document comes back with the
+results, under `included` (keyed by path), while the field itself stays a pointer:
+
+```csharp
+var request = ExpandRequest.Of(["patient", "patient.doctor", "team"]);
+var expansion = await ReferenceExpander.ExpandAsync(db, [visit], request);   // read as the caller (rules apply)
+var doctor = expansion.Included.GetValueOrDefault(doctorPath);               // null: missing or not readable
+```
+
+Over the wire: `"expand": [...]` on `doc.get`, `doc.getAll`, `query`, `listen`, `doc.listen` (WebSocket), `?expand=` on
+`GET`, `"expand"` on `:batchGet` / `:runQuery` (REST). Paths walk maps, lists (each item) and references
+(`patient.doctor` is the `doctor` of the `patient`'s document); 10 paths, 4 deep, 100 documents per response at most.
+Live subscriptions follow every referenced document too: a change to one is sent as a `listen.delta` with `included` /
+`excluded` (and `changes: []` when the results themselves didn't change). `LiveExpansion` does the same for server code.
+See PROTOCOL §7.7.
+
 ## Transactions
 
 ```csharp

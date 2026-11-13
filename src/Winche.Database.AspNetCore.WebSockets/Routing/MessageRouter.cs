@@ -9,6 +9,8 @@ using Winche.Database.Runtime.Listening;
 using Winche.Database.Runtime.Writes;
 using Winche.Values;
 using Winche.Database.Wire; // ErrorMapper
+using Winche.Database.Documents;
+using Winche.Database.Runtime.Expansion;
 
 namespace Winche.Database.AspNetCore.WebSockets.Routing;
 
@@ -41,9 +43,9 @@ public sealed class MessageRouter
             return message switch
             {
                 PingMessage => Ok(id!, []),
-                DocGetMessage get => Ok(id!, new JsonObject { ["document"] = ToNode(await scope.Db.GetAsync(get.Path, ct)) }),
-                DocGetAllMessage getAll => Ok(id!, new JsonObject { ["documents"] = new JsonArray([.. (await scope.Db.GetAllAsync(getAll.Paths, ct)).Select(ToNode)]) }),
-                QueryMessage query => Ok(id!, ToNode(await scope.Db.QueryAsync(query.Query, ct))!.AsObject()),
+                DocGetMessage get => await HandleGet(scope, id!, get, ct),
+                DocGetAllMessage getAll => await HandleGetAll(scope, id!, getAll, ct),
+                QueryMessage query => await HandleQuery(scope, id!, query, ct),
                 CountMessage count => Ok(id!, new JsonObject { ["count"] = await scope.Db.CountAsync(count.Query, ct) }),
                 AggregateMessage agg => Ok(id!, new JsonObject { ["result"] = AggregateResultBody(await scope.Db.AggregateAsync(agg.Query, agg.Aggregations, ct)) }),
                 AddMessage add => Ok(id!, new JsonObject { ["document"] = ToNode(await scope.Db.AddAsync(add.Collection, add.Fields, ct)) }),
@@ -53,8 +55,9 @@ public sealed class MessageRouter
                 TxQueryMessage txQuery => Ok(id!, ToNode(await scope.Db.QueryAsync(RequireTx(scope, txQuery.TransactionId), txQuery.Query, ct))!.AsObject()),
                 TxCommitMessage txCommit => await HandleTxCommit(scope, id!, txCommit, ct),
                 TxRollbackMessage txRollback => await HandleTxRollback(scope, id!, txRollback, ct),
-                ListenMessage listen => HandleListen(scope, conn, id!, listen.Query, listen.ResumeToken, listen.Protocol),
-                DocListenMessage docListen => await HandleDocListen(scope, conn, id!, docListen.Path, docListen.ResumeToken, docListen.Protocol, ct),
+                ListenMessage listen => HandleListen(scope, conn, id!, listen.Query, listen.ResumeToken, listen.Protocol, ExpandRequest.Of(listen.Expand)),
+                DocListenMessage docListen => await HandleDocListen(scope, conn, id!, docListen.Path, docListen.ResumeToken, docListen.Protocol,
+                    ExpandRequest.Of(docListen.Expand), ct),
                 UnlistenMessage unlisten => await HandleUnlisten(scope, id!, unlisten),
                 _ => new ErrorMessage { Id = id, Error = new WincheError(WincheErrorCode.InvalidArgument, $"Unknown message: {message.GetType().Name}") },
             };
@@ -64,6 +67,45 @@ public sealed class MessageRouter
             var error = ErrorMapper.Map(ex, _logger, $"WebSocket {MessageType(message)}", scope.UserId);
             return new ErrorMessage { Id = id, Error = error };
         }
+    }
+
+    private static async Task<ServerMessage> HandleGet(ConnectionScope scope, string id, DocGetMessage get, CancellationToken ct)
+    {
+        var expand = ExpandRequest.Of(get.Expand);
+        var doc = await scope.Db.GetAsync(get.Path, ct);
+        var body = new JsonObject { ["document"] = ToNode(doc) };
+        return Ok(id, await WithIncluded(scope, body, [doc], expand, ct));
+    }
+
+    private static async Task<ServerMessage> HandleGetAll(ConnectionScope scope, string id, DocGetAllMessage getAll, CancellationToken ct)
+    {
+        var expand = ExpandRequest.Of(getAll.Expand);
+        var docs = await scope.Db.GetAllAsync(getAll.Paths, ct);
+        var body = new JsonObject { ["documents"] = new JsonArray([.. docs.Select(ToNode)]) };
+        return Ok(id, await WithIncluded(scope, body, docs, expand, ct));
+    }
+
+    private static async Task<ServerMessage> HandleQuery(ConnectionScope scope, string id, QueryMessage query, CancellationToken ct)
+    {
+        var expand = ExpandRequest.Of(query.Expand);
+        var result = await scope.Db.QueryAsync(query.Query, ct);
+        return Ok(id, await WithIncluded(scope, ToNode(result)!.AsObject(), result.Documents, expand, ct));
+    }
+
+    /// <summary>Adds <c>included</c> (the readable referenced documents, by path) when references were asked for.</summary>
+    private static async Task<JsonObject> WithIncluded(ConnectionScope scope, JsonObject body, IEnumerable<Document?> docs, ExpandRequest? expand, CancellationToken ct)
+    {
+        if (expand is null) return body;
+        var expansion = await ReferenceExpander.ExpandAsync(scope.Db, docs, expand, ct);
+        body["included"] = Included(expansion.Included);
+        return body;
+    }
+
+    internal static JsonObject Included(IReadOnlyDictionary<string, Document> docs)
+    {
+        var o = new JsonObject();
+        foreach (var (path, doc) in docs) o[path] = ToNode(doc);
+        return o;
     }
 
     private static async Task<ServerMessage> HandleTxBegin(ConnectionScope scope, string id, CancellationToken ct)
@@ -121,19 +163,21 @@ public sealed class MessageRouter
         return name.EndsWith("Message", StringComparison.Ordinal) ? name[..^"Message".Length] : name;
     }
 
-    private ServerMessage HandleListen(ConnectionScope scope, WsConnection conn, string id, Query query, long? resumeToken, long? clientProtocol)
+    private ServerMessage HandleListen(ConnectionScope scope, WsConnection conn, string id, Query query, long? resumeToken, long? clientProtocol,
+        ExpandRequest? expand)
     {
         if (scope.AtSubscriptionLimit) return TooManySubscriptions(scope, id);
         var listener = scope.Db.Listen(query, resumeToken is { } seq ? new ListenOptions(ResumeFrom: seq) : null);
         var subscriptionId = Guid.NewGuid().ToString("N");
         var cts = CancellationTokenSource.CreateLinkedTokenSource(conn.Closed);
         var supportsDeleted = clientProtocol >= SubscriptionPump.DeletedKindMinProtocol;
-        var pump = SubscriptionPump.RunQueryAsync(subscriptionId, listener, scope, conn, supportsDeleted, _logger, cts.Token);
+        var pump = SubscriptionPump.RunQueryAsync(subscriptionId, listener, scope, conn, supportsDeleted, _logger, cts.Token,
+            expand is null ? null : new LiveExpansion(scope.Db, expand));
         return Register(scope, subscriptionId, listener, pump, cts, id);
     }
 
     private async Task<ServerMessage> HandleDocListen(
-        ConnectionScope scope, WsConnection conn, string id, string path, long? resumeToken, long? clientProtocol, CancellationToken ct)
+        ConnectionScope scope, WsConnection conn, string id, string path, long? resumeToken, long? clientProtocol, ExpandRequest? expand, CancellationToken ct)
     {
         if (scope.AtSubscriptionLimit) return TooManySubscriptions(scope, id);
         var options = resumeToken is { } seq ? new ListenOptions(ResumeFrom: seq) : null;
@@ -141,7 +185,8 @@ public sealed class MessageRouter
         var subscriptionId = Guid.NewGuid().ToString("N");
         var cts = CancellationTokenSource.CreateLinkedTokenSource(conn.Closed);
         var supportsDeleted = clientProtocol >= SubscriptionPump.DeletedKindMinProtocol;
-        var pump = SubscriptionPump.RunDocumentAsync(subscriptionId, listener, scope, conn, supportsDeleted, _logger, cts.Token);
+        var pump = SubscriptionPump.RunDocumentAsync(subscriptionId, listener, scope, conn, supportsDeleted, _logger, cts.Token,
+            expand is null ? null : new LiveExpansion(scope.Db, expand));
         return Register(scope, subscriptionId, listener, pump, cts, id);
     }
 

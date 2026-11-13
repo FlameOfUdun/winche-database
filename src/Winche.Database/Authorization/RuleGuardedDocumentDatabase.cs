@@ -71,6 +71,19 @@ public sealed class RuleGuardedDocumentDatabase(
         return docs;
     }
 
+    /// <summary>One batch read; documents the rules don't let the caller get come back as null.</summary>
+    public async Task<IReadOnlyList<Document?>> GetReadableAsync(IReadOnlyList<string> paths, CancellationToken ct = default)
+    {
+        var docs = (await inner.GetAllAsync(paths, ct)).ToArray();
+        for (var i = 0; i < paths.Count; i++)
+        {
+            if (docs[i] is null) continue;
+            try { await AuthorizeGetAsync(paths[i], docs[i], ct); }
+            catch (AccessDeniedException) { docs[i] = null; }
+        }
+        return docs;
+    }
+
     public Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default) => Logged("database.query", Target(query), async () =>
     {
         AuthorizeListQuery(query);

@@ -37,16 +37,22 @@ public sealed record PingMessage : ClientMessage;
 public sealed record DocGetMessage : ClientMessage
 {
     [JsonPropertyName("path")] public required string Path { get; init; }
+    /// <summary>References to follow (see ExpandRequest): their documents come back under <c>included</c>.</summary>
+    [JsonPropertyName("expand")] public IReadOnlyList<string>? Expand { get; init; }
 }
 
 public sealed record DocGetAllMessage : ClientMessage
 {
     [JsonPropertyName("paths")] public required IReadOnlyList<string> Paths { get; init; }
+    /// <summary>References to follow (see ExpandRequest): their documents come back under <c>included</c>.</summary>
+    [JsonPropertyName("expand")] public IReadOnlyList<string>? Expand { get; init; }
 }
 
 public sealed record QueryMessage : ClientMessage
 {
     [JsonPropertyName("query")] public required Query Query { get; init; }
+    /// <summary>References to follow (see ExpandRequest): their documents come back under <c>included</c>.</summary>
+    [JsonPropertyName("expand")] public IReadOnlyList<string>? Expand { get; init; }
 }
 
 public sealed record CountMessage : ClientMessage
@@ -121,6 +127,8 @@ public sealed record ListenMessage : ClientMessage
     [JsonPropertyName("query")] public required Query Query { get; init; }
     [JsonPropertyName("resumeToken")] public long? ResumeToken { get; init; }
     [JsonPropertyName("protocol")] public long? Protocol { get; init; }
+    /// <summary>References to follow (see ExpandRequest): their documents come back under <c>included</c>.</summary>
+    [JsonPropertyName("expand")] public IReadOnlyList<string>? Expand { get; init; }
 }
 
 public sealed record DocListenMessage : ClientMessage
@@ -128,6 +136,8 @@ public sealed record DocListenMessage : ClientMessage
     [JsonPropertyName("path")] public required string Path { get; init; }
     [JsonPropertyName("resumeToken")] public long? ResumeToken { get; init; }
     [JsonPropertyName("protocol")] public long? Protocol { get; init; }
+    /// <summary>References to follow (see ExpandRequest): their documents come back under <c>included</c>.</summary>
+    [JsonPropertyName("expand")] public IReadOnlyList<string>? Expand { get; init; }
 }
 
 public sealed record UnlistenMessage : ClientMessage
