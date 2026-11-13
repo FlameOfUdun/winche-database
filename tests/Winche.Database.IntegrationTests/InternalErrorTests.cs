@@ -127,17 +127,12 @@ public class InternalErrorTests(PostgresFixture fx) : QueryTestBase(fx)
             throw new InvalidOperationException("database bug");
     }
 
-    private sealed class Claims : DocumentClaimsAccessor
-    {
-        public override IReadOnlyDictionary<string, object?>? MapClaims(HttpContext httpContext) => null;
-    }
-
     [Fact]
     public async Task WebSocket_logs_an_unexpected_error_and_returns_its_id()
     {
         var log = new CapturingLogger();
         var router = new MessageRouter(new Logger<MessageRouter>(new LoggerFactory([log])));
-        await using var scope = new ConnectionScope("c1", DispatchProxy.Create<IDocumentDatabase, BrokenDatabase>(), new Claims());
+        await using var scope = new ConnectionScope("c1", DispatchProxy.Create<IDocumentDatabase, BrokenDatabase>());
         scope.SetClaims(new Dictionary<string, object?> { ["uid"] = "u7" });
         using var socket = WebSocket.CreateFromStream(new MemoryStream(), new WebSocketCreationOptions { IsServer = true });
         await using var conn = new WsConnection(socket, new WsOptions());

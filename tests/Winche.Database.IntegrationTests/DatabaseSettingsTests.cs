@@ -26,7 +26,7 @@ public class DatabaseSettingsTests(PostgresFixture fx) : IAsyncLifetime
         await fx.ResetAsync();
         await using var conn = await fx.DataSource.OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "DROP TABLE IF EXISTS winche_settings; DROP TABLE IF EXISTS winche_secrets;";
+        cmd.CommandText = "DROP TABLE IF EXISTS winche_schema; DROP TABLE IF EXISTS winche_settings; DROP TABLE IF EXISTS winche_secrets;";
         await cmd.ExecuteNonQueryAsync();
     }
 

@@ -4,7 +4,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using Winche.Database.Constants;
-using Winche.Database.Runtime.Coordination;
+using Winche.Core;
 using Winche.Database.Schema;
 
 namespace Winche.Database.Settings;

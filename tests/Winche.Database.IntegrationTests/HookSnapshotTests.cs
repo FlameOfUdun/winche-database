@@ -150,4 +150,49 @@ public class HookSnapshotTests(PostgresFixture fx) : QueryTestBase(fx)
         await using (var r = await cmd.ExecuteReaderAsync()) while (await r.ReadAsync()) rows.Add((r.GetString(0), r.GetBoolean(1)));
         Assert.Equal([("di/x", true), ("other/y", false)], rows);
     }
+
+    private sealed class SinkRecorder : IWincheChangeSink
+    {
+        public List<WincheChange> Changes { get; } = [];
+        public Task OnChangesAsync(IReadOnlyList<WincheChange> changes, CancellationToken ct)
+        {
+            lock (Changes) Changes.AddRange(changes);
+            return Task.CompletedTask;
+        }
+    }
+
+    [Fact]
+    public async Task Published_changes_reach_every_sink_as_plain_json()
+    {
+        var sink = new SinkRecorder();
+        var (cts, run) = await StartAsync(new HookRegistration("pub/{id}", new ChangePublisher([sink], TimeProvider.System), WithSnapshots: true));
+        try
+        {
+            var applier = new WriteApplier(Fx.DataSource, snapshotPaths: ["pub/{id}"]);
+            await applier.ApplyAsync([new SetWrite { Path = "pub/a", Fields = N(1) }]);
+            await applier.ApplyAsync([new SetWrite { Path = "pub/a", Fields = N(2) }]);
+            await Eventually(() => { lock (sink.Changes) return sink.Changes.Count == 2; });
+            var updated = sink.Changes[1];
+            Assert.Equal(("database", "updated", "pub/a"), (updated.Source, updated.Type, updated.Path));
+            Assert.Equal(2, (long)updated.Data!["fields"]!["n"]!);
+            Assert.Equal(1, (long)updated.Before!["fields"]!["n"]!);
+            Assert.Equal(("a", "pub"), (updated.Variables["id"], updated.Variables["collection"]));
+        }
+        finally
+        {
+            await cts.CancelAsync();
+            try { await run; } catch (OperationCanceledException) { }
+        }
+    }
+
+    [Fact]
+    public void PublishChanges_registers_the_source_and_the_database_offers_its_action()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddWincheDatabase(o => { o.ConnectionString = Fx.ConnectionString; o.UseHooks(h => h.PublishChanges()); });
+        using var provider = services.BuildServiceProvider();
+        Assert.Contains(provider.GetServices<WincheChangeSource>(), s => s.Name == "database");
+        Assert.Contains(provider.GetServices<IWincheAction>(), a => a.Name == "database.deleteDocuments");
+    }
 }

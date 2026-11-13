@@ -9,7 +9,7 @@ namespace Winche.Database.AspNetCore.WebSockets.Connections;
 /// Claims are set once at upgrade from <c>HttpContext.User</c> and never change; the connection
 /// must be re-established (client reconnects with a fresh token) to change identity.
 ///
-/// ApplyClaims() pins the connection's claims onto the DocumentClaimsAccessor's AsyncLocal —
+/// ApplyClaims() pins the connection's claims onto the WincheCaller —
 /// call it before every IDocumentDatabase touch (request handlers and pump iterations).
 ///
 /// Claims-accessor design: DocumentClaimsAccessor.SetClaims stores claims in
@@ -21,8 +21,7 @@ namespace Winche.Database.AspNetCore.WebSockets.Connections;
 /// </summary>
 public sealed class ConnectionScope(
     string connectionId,
-    IDocumentDatabase db,
-    DocumentClaimsAccessor claimsAccessor) : IAsyncDisposable
+    IDocumentDatabase db) : IAsyncDisposable
 {
     public sealed record Subscription(IAsyncDisposable Listener, Task Pump, CancellationTokenSource Cts);
 
@@ -46,14 +45,14 @@ public sealed class ConnectionScope(
     public void SetClaims(IReadOnlyDictionary<string, object?> claims) => _claims = claims;
 
     /// <summary>The connection's user id (<c>uid</c>, else <c>sub</c>), for logs.</summary>
-    public string? UserId => Wire.ErrorMapper.UserOf(_claims);
+    public string? UserId => WincheCaller.UidOf(_claims);
 
     /// <summary>
-    /// Pushes the connection's current claims into the DocumentClaimsAccessor's AsyncLocal for
+    /// Pushes the connection's current claims into the WincheCaller for
     /// this async context. Must be called before any IDocumentDatabase operation — in the message
     /// loop and at the top of each SubscriptionPump iteration.
     /// </summary>
-    public void ApplyClaims() => claimsAccessor.SetClaims(_claims);
+    public void ApplyClaims() => WincheCaller.Set(_claims);
 
     public async ValueTask DisposeAsync()
     {

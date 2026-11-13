@@ -31,10 +31,10 @@ public sealed class DurableConsumerRunner(
         var lockName = $"durable-consumer:{_name}";
         while (!ct.IsCancellationRequested)
         {
-            Coordination.AdvisoryLease? lease = null;
+            Winche.Core.AdvisoryLease? lease = null;
             try
             {
-                lease = await Coordination.AdvisoryLease.TryAcquireAsync(source, lockName, config.LeaseHeartbeat, ct);
+                lease = await Winche.Core.AdvisoryLease.TryAcquireAsync(source, lockName, config.LeaseHeartbeat, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {

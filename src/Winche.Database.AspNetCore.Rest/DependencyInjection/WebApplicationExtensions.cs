@@ -29,11 +29,9 @@ public static class WebApplicationExtensions
     /// </summary>
     internal static string DecodeBase64(string base64)
     {
-        var s = base64.Replace('-', '+').Replace('_', '/');
-        s = s.PadRight(s.Length + (4 - s.Length % 4) % 4, '=');
         try
         {
-            return Encoding.UTF8.GetString(Convert.FromBase64String(s));
+            return WincheBase64Url.Decode(base64);
         }
         catch (FormatException)
         {

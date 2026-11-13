@@ -76,7 +76,7 @@ public static class WebApplicationExtensions
         var options = context.RequestServices.GetRequiredService<IOptions<WsOptions>>().Value;
         var router = context.RequestServices.GetRequiredService<MessageRouter>();
         var db = context.RequestServices.GetRequiredService<IDocumentDatabase>();
-        var claimsAccessor = context.RequestServices.GetRequiredService<DocumentClaimsAccessor>();
+        var ownClaims = context.RequestServices.GetService<DocumentClaimsAccessor>();
         var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("WincheWs");
 
         using var socket = await context.WebSockets.AcceptWebSocketAsync();
@@ -93,7 +93,7 @@ public static class WebApplicationExtensions
                 (code, reason) => conn.RevokeAsync(sendLoop, (WebSocketCloseStatus)code, reason, TimeSpan.FromSeconds(5)),
                 options.MaxConnectionsPerUser);
 
-        var scope = new ConnectionScope(Guid.NewGuid().ToString("N"), db, claimsAccessor)
+        var scope = new ConnectionScope(Guid.NewGuid().ToString("N"), db)
         {
             MaxSubscriptions = options.MaxSubscriptionsPerConnection,
         };
@@ -101,7 +101,7 @@ public static class WebApplicationExtensions
         try
         {
             // ── authenticate from the already-validated HttpContext.User ─────────
-            var claims = claimsAccessor.MapClaims(context);
+            var claims = await context.WincheCallerOf(ownClaims is null ? null : ownClaims.MapClaims);
             scope.SetClaims(claims ?? new Dictionary<string, object?>());
 
             // ── server-initiated welcome (no client hello frame) ─────────────────

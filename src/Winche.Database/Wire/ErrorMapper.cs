@@ -21,18 +21,11 @@ public static class ErrorMapper
     {
         ArgumentNullException.ThrowIfNull(logger);
         var error = Map(ex);
-        if (error.Kind != WincheErrorCode.Internal) return error;
-        var errorId = Guid.NewGuid().ToString("N")[..12];
-        logger.LogError(ex, "Internal error {ErrorId} in {Operation} for {User}", errorId, operation, user ?? "(signed out)");
-        return error with { Message = $"Internal error ({errorId}).", Details = new JsonObject { ["errorId"] = errorId } };
+        return error.Kind != WincheErrorCode.Internal ? error : WincheError.Unexpected(ex, logger, operation, user);
     }
 
     /// <summary>The caller's user id from claims (<c>uid</c>, else <c>sub</c>), for logs.</summary>
-    public static string? UserOf(IReadOnlyDictionary<string, object?>? claims) =>
-        claims is null ? null
-        : claims.TryGetValue("uid", out var uid) && uid is not null ? uid.ToString()
-        : claims.TryGetValue("sub", out var sub) && sub is not null ? sub.ToString()
-        : null;
+    public static string? UserOf(IReadOnlyDictionary<string, object?>? claims) => WincheCaller.UidOf(claims);
 
     /// <summary>The reason a query was refused: <c>invalid-argument</c> with this reason.</summary>
     public const string InvalidQuery = "invalid-query";

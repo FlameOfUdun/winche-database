@@ -2,7 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Npgsql;
 using Winche.Database.Constants;
-using Winche.Database.Runtime.Coordination;
+using Winche.Core;
 using Winche.Database.Schema;
 
 namespace Winche.Database.DependencyInjection;

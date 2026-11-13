@@ -1,5 +1,6 @@
 // src/Winche.Database/Querying/Sql/OperatorRegistry.cs
 using Winche.Database.Documents;
+using Winche.Core;
 using Winche.Database.Querying.Ast;
 using Winche.Database.Values;
 
@@ -278,7 +279,7 @@ internal static class OperatorRegistry
     private static string EmitLike(FieldPath field, Value operand, ParameterBag bag, SchemaResolver resolver, string prefix, string suffix)
     {
         var f = RequireTagged(resolver.Resolve(field, bag)).Sql;
-        var pattern = prefix + LikePatternEscaper.Escape(((StringValue)operand).Value) + suffix;
+        var pattern = prefix + WincheSql.EscapeLike(((StringValue)operand).Value) + suffix;
         return $"(winche_rank({f}) = 50 AND winche_text({f}) ILIKE {bag.Add(pattern)} ESCAPE '\\')";
     }
 

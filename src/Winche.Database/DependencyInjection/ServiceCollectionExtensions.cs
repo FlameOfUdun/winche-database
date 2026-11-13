@@ -24,7 +24,8 @@ public static class ServiceCollectionExtensions
         // Register the claims default BEFORE calling configure, so a user MapClaims() call inside
         // configure registers AFTER it and wins (.NET DI's GetRequiredService<T>() returns the
         // last-registered singleton). The keyed rules engine is built from options.Rulesets below.
-        services.AddSingleton<IRuleClaimsAccessor>(NullRuleClaimsAccessor.Instance);  // default null claims
+        services.AddSingleton<IRuleClaimsAccessor>(WincheCallerClaimsAccessor.Instance);  // the request's caller (WincheCaller)
+        DatabaseChangesExtensions.AddDatabaseActions(services);   // database.deleteDocuments, for hooks
 
         var options = new WincheDatabaseOptions(services);
         configure(options);
