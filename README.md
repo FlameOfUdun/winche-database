@@ -372,6 +372,38 @@ such a hook covers store both versions in the change feed (kept for `ChangeFeed.
 `OnChangeAsync` calls `OnDocumentSetAsync` / `OnDocumentUpdatedAsync` / `OnDocumentDeletedAsync`, so existing
 hooks keep working either way.
 
+## Before hooks
+
+A `DocumentBeforeHook` runs **before** a write is saved, inside its transaction, after the access rules allowed it, for
+callers' writes and the app's own server-side ones alike. It can refuse the write or change the document being saved:
+
+```csharp
+public sealed class Records : DocumentBeforeHook
+{
+    public override Task OnBeforeWriteAsync(DocumentWrite write, CancellationToken ct)
+    {
+        if (write.Before?.Fields.GetValueOrDefault("signedOff") is BooleanValue { Value: true })
+            write.Deny("This record is signed off.");          // or throw new WincheDeniedException(...)
+        if (write.Operation != WriteOperation.Delete)
+            write.Set("updatedBy", write.Uid ?? "server").Remove("draftNote");
+        return Task.CompletedTask;
+    }
+}
+
+o.UseHooks(h => h.Before<Records>("patients/{pid}/records/{rid}"));
+```
+
+- **What it sees:** `Operation` (create, update, delete), `Before` (as stored), `Fields` (what will be saved, with earlier
+  hooks' changes), `Caller` / `Uid` (the request's claims), `Get(fieldPath)`, and `GetAsync(path)` for other documents
+  in the same transaction.
+- **Refusing:** the caller gets `permissionDenied` with your message (`reason: "denied"`) and nothing in the batch is
+  saved. Deletes are covered too, and a cascading delete asks about every document it removes: one refusal, nothing goes.
+- **Changing:** `Set` / `Remove` by dotted path; the result is checked against the write limits. A delete can only be
+  refused. The rules saw the caller's own proposal; the hook's changes are trusted server code.
+- **Once per document:** a batch writing a document several times shows it once, with its final state.
+- **Keep it quick:** every matching write waits for it. Emails, other services and anything else that can wait belong
+  in a `DocumentStoreHook`, which runs after the commit.
+
 ## TTL Policies (Auto-Expiry)
 
 TTL policies automatically delete documents once a registered timestamp field is in the past. Register policies via `UseTtl` inside `AddWincheDatabase`:

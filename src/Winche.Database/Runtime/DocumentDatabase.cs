@@ -56,6 +56,9 @@ public sealed class DocumentDatabase : IDocumentDatabase
         _scopes = scopes;
     }
 
+    /// <summary>The app's before hooks, for every write through this database.</summary>
+    internal Abstraction.BeforeWriteHooks? BeforeHooks { set => _applier.BeforeHooks = value; }
+
     /// <summary>Exposed for the Plan-3 expiry sweeper (internal — transaction-management detail).</summary>
     internal ITransactionLedger Ledger => _ledger;
 

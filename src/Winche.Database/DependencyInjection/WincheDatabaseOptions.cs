@@ -405,6 +405,24 @@ public sealed class HookBuilder(IServiceCollection services, List<string>? snaps
         return this;
     }
 
+    /// <summary>
+    /// Registers a before hook <typeparamref name="THook"/> (built by DI) for documents at <paramref name="path"/>: it runs
+    /// in every matching write's transaction and may refuse or change it (see <see cref="DocumentBeforeHook"/>).
+    /// </summary>
+    public HookBuilder Before<THook>(string path) where THook : DocumentBeforeHook
+    {
+        services.TryAddSingleton<THook>();
+        services.AddSingleton(sp => new BeforeHookRegistration(path, sp.GetRequiredService<THook>()));
+        return this;
+    }
+
+    /// <summary>Registers a before hook instance for documents at <paramref name="path"/>.</summary>
+    public HookBuilder Before(string path, DocumentBeforeHook hook)
+    {
+        services.AddSingleton(new BeforeHookRegistration(path, hook));
+        return this;
+    }
+
     /// <summary>Registers a pre-constructed <paramref name="hook"/> instance bound to <paramref name="path"/>.</summary>
     public HookBuilder Add(string path, DocumentStoreHook hook, bool withSnapshots = false)
     {

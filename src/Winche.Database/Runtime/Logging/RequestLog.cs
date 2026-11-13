@@ -41,6 +41,11 @@ internal sealed class RequestLog(ILogger logger, Func<RequestLogOptions?> curren
             Done(operation, ex.Path, "denied", watch);
             throw;
         }
+        catch (WincheDeniedException)
+        {
+            Done(operation, path, "denied", watch);
+            throw;
+        }
         catch (RuntimeException ex)
         {
             Done(operation, path, Outcome(ex.Status), watch);
@@ -63,6 +68,11 @@ internal sealed class RequestLog(ILogger logger, Func<RequestLogOptions?> curren
         catch (AccessDeniedException ex)
         {
             Done(operation, ex.Path, "denied", watch);
+            throw;
+        }
+        catch (WincheDeniedException)
+        {
+            Done(operation, path, "denied", watch);
             throw;
         }
     }

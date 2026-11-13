@@ -46,6 +46,7 @@ public static class ErrorMapper
         PlanValidationException pv => new WincheError(WincheErrorCode.InvalidArgument, pv.Message, InvalidQuery,
             new JsonObject { ["code"] = pv.Code }),
         WireFormatException wf => new WincheError(WincheErrorCode.InvalidArgument, wf.Message),
+        WincheDeniedException denied => denied.Error,   // the app's own code (a before hook) refused it
         // Native Winche.Database rules-engine denial
         Authorization.AccessDeniedException => new WincheError(WincheErrorCode.PermissionDenied, "Access denied."),
         UnauthorizedAccessException ua => new WincheError(WincheErrorCode.Unauthenticated, ua.Message),

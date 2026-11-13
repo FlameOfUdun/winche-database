@@ -83,7 +83,9 @@ public static class ServiceCollectionExtensions
             writeAuthorizer: null,
             docListeners: sp.GetRequiredService<DocumentListenerRegistry>(),
             claims: sp.GetRequiredService<IRuleClaimsAccessor>()
-        ));
+        ) { BeforeHooks = sp.GetRequiredService<Abstraction.BeforeWriteHooks>() });
+        services.AddSingleton(sp => new Abstraction.BeforeWriteHooks(sp.GetServices<Abstraction.BeforeHookRegistration>(),
+            () => sp.GetRequiredService<IRuleClaimsAccessor>().GetClaims()));
         services.AddSingleton<Runtime.History.DocumentHistory>();
 
         services.AddSingleton<ISchemaManager, SchemaManager>();
@@ -127,7 +129,7 @@ public static class ServiceCollectionExtensions
                     sp.GetRequiredService<IWriteAuthorizer>(),
                     docListeners: sp.GetRequiredService<DocumentListenerRegistry>(),
                     claims: sp.GetRequiredService<IRuleClaimsAccessor>()
-                ),
+                ) { BeforeHooks = sp.GetRequiredService<Abstraction.BeforeWriteHooks>() },
                 sp.GetRequiredKeyedService<RuleEngine>(WincheDatabaseKeys.RuleEngine),
                 sp.GetRequiredService<IRuleClaimsAccessor>(),
                 options.RequestLog is not null || options.SettingsEnabled
