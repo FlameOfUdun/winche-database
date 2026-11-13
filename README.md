@@ -863,10 +863,10 @@ Live subscriptions follow every referenced document too: a change to one is sent
 `excluded` (and `changes: []` when the results themselves didn't change). `LiveExpansion` does the same for server code.
 See PROTOCOL §7.7.
 
-**Files, users and your own kinds.** `expand: ["file:scan", "user:author", "user:patient.author"]`: the string a kinded
+**Files and users.** `expand: ["file:scan", "user:author", "user:patient.author"]`: the string a kinded
 path ends at is resolved by that kind's `IWincheReferenceResolver` (Winche.Core): Winche.Storage registers `file`
 (the file's record, as the caller may `get` it), Winche Auth `user` (a public profile). Results come back under
-`resolved` (`kind:value` → JSON) and follow changes live. Register your own resolver in DI to add a kind.
+`resolved` (`kind:value` → JSON) and follow changes live.
 
 ## Transactions
 

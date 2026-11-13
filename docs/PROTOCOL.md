@@ -1111,9 +1111,9 @@ The **send queue** is bounded at 64 frames (configurable). If it fills up, the c
   (cycles included).
 - **Rules:** each referenced document is read as the caller (its `get` rule). One they may not read, or that doesn't
   exist, is simply not in `included`: the client keeps the pointer, and can't tell which.
-- **Files, users and other kinds:** a path may start with a kind, `file:scan`, `user:author`,
+- **Files and users:** a path may start with a kind, `file:scan`, `user:author`,
   `user:patient.author`: the value it ends at (a string: a file's path, a uid) is resolved by that kind's resolver
-  (Winche.Storage registers `file`, Winche Auth `user`; apps may add their own) and comes back under
+  (Winche.Storage registers `file`, Winche Auth `user`) and comes back under
   `"resolved": { "<kind>:<value>": {…} }`; the field keeps its value. `file:` gives the file's record (as storage
   returns it, never a download link), if the storage rules let the caller `get` it; `user:` gives the public profile
   (`uid`, `displayName`, `photoUrl`, and the claims the app lists as public) to signed-in callers, the whole account to
