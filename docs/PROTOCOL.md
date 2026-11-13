@@ -567,11 +567,11 @@ Document paths in URL segments are **Base64-encoded** (standard, UTF-8 bytes) to
 
 | Method | Route | Request body | Response | Description |
 | - | - | - | - | - |
-| `GET` | `/documents/{base64Path}` | — | `Document` or 404 | Get a document |
-| `PUT` | `/documents/{base64Path}` | `{"fields": {…}}` | `Document` | Create or replace (set without merge). Performs a read after write to return the current document. |
-| `PATCH` | `/documents/{base64Path}` | `{"fields": {…}}` | `Document` or 404 | Patch fields (update). Field keys are dotted paths. |
-| `DELETE` | `/documents/{base64Path}` | — | 204 or 404 | Delete (cascade). Returns 404 if missing (performs read first). |
-| `GET` | `/documents/ping` | — | 200 | Health check |
+| `GET` | `/documents/v1/{base64Path}` | — | `Document` or 404 | Get a document |
+| `PUT` | `/documents/v1/{base64Path}` | `{"fields": {…}}` | `Document` | Create or replace (set without merge). Performs a read after write to return the current document. |
+| `PATCH` | `/documents/v1/{base64Path}` | `{"fields": {…}}` | `Document` or 404 | Patch fields (update). Field keys are dotted paths. |
+| `DELETE` | `/documents/v1/{base64Path}` | — | 204 or 404 | Delete (cascade). Returns 404 if missing (performs read first). |
+| `GET` | `/documents/v1/ping` | — | 200 | Health check |
 
 ### 6.2 Colon-verb endpoints
 
@@ -579,21 +579,21 @@ These endpoints use literal-colon URL segments and are mapped **outside** the `/
 
 | Endpoint | Request body | Response | Description |
 | - | - | - | - |
-| `POST /documents:add` | `{"collection": "<collectionPath>", "fields": {…}}` | `{"document": <Document>}` | Create a document with a generated 20-char base62 id. Evaluated as a **create** by the rules engine. |
-| `POST /documents:commit` | `{"writes": [...], "transaction"?: "id"}` | `{"writeResults": [...]}` | Atomic write batch. With `transaction`: commits the transaction. |
-| `POST /documents:beginTransaction` | `{}` | `{"transaction": "id"}` | Begin an optimistic transaction. |
-| `POST /documents:rollback` | `{"transaction": "id"}` | `{}` | Roll back (idempotent; unknown id is a no-op). |
-| `POST /documents:batchGet` | `{"documents": ["path1","path2",...], "transaction"?: "id"}` | `{"documents": [Document\|null, ...]}` | Bulk read preserving input order; missing docs are `null`. |
-| `POST /documents:runQuery` | `{"query": <Query>, "transaction"?: "id"}` | `{"documents": [...], "hasMore": false}` | Execute a query. Default `limit` = 100 when omitted. |
-| `POST /documents:count` | `{"query": <Query>}` | `{"count": N}` | Count documents matching the query. An explicit `limit` caps the count; omitted = full match (the 100 default does **not** apply). Authorized as a `list` operation — the query must provably satisfy a read rule or the request is rejected with `PERMISSION_DENIED`. |
-| `POST /documents:aggregate` | `{"query": <Query>, "aggregations": [...]}` | `{"result": {<alias>: <tagged value>, …}}` | Run one or more aggregations (count / sum / average) over a query. An explicit `limit` caps all aggregations. Authorized as a `list` operation. |
+| `POST /documents/v1:add` | `{"collection": "<collectionPath>", "fields": {…}}` | `{"document": <Document>}` | Create a document with a generated 20-char base62 id. Evaluated as a **create** by the rules engine. |
+| `POST /documents/v1:commit` | `{"writes": [...], "transaction"?: "id"}` | `{"writeResults": [...]}` | Atomic write batch. With `transaction`: commits the transaction. |
+| `POST /documents/v1:beginTransaction` | `{}` | `{"transaction": "id"}` | Begin an optimistic transaction. |
+| `POST /documents/v1:rollback` | `{"transaction": "id"}` | `{}` | Roll back (idempotent; unknown id is a no-op). |
+| `POST /documents/v1:batchGet` | `{"documents": ["path1","path2",...], "transaction"?: "id"}` | `{"documents": [Document\|null, ...]}` | Bulk read preserving input order; missing docs are `null`. |
+| `POST /documents/v1:runQuery` | `{"query": <Query>, "transaction"?: "id"}` | `{"documents": [...], "hasMore": false}` | Execute a query. Default `limit` = 100 when omitted. |
+| `POST /documents/v1:count` | `{"query": <Query>}` | `{"count": N}` | Count documents matching the query. An explicit `limit` caps the count; omitted = full match (the 100 default does **not** apply). Authorized as a `list` operation — the query must provably satisfy a read rule or the request is rejected with `PERMISSION_DENIED`. |
+| `POST /documents/v1:aggregate` | `{"query": <Query>, "aggregations": [...]}` | `{"result": {<alias>: <tagged value>, …}}` | Run one or more aggregations (count / sum / average) over a query. An explicit `limit` caps all aggregations. Authorized as a `list` operation. |
 
 ### 6.3 Request/response examples
 
 **:add**
 
 ```json
-POST /documents:add
+POST /documents/v1:add
 {
   "collection": "users",
   "fields": {
@@ -626,7 +626,7 @@ Errors: missing or non-string `collection`, or missing `fields` → `INVALID_ARG
 **:commit (batch)**
 
 ```json
-POST /documents:commit
+POST /documents/v1:commit
 {
   "writes": [
     {"set": {"path": "users/u1", "fields": {"name": {"stringValue": "Alice"}}}},
@@ -648,19 +648,19 @@ POST /documents:commit
 **:beginTransaction + :batchGet + :commit**
 
 ```json
-POST /documents:beginTransaction
+POST /documents/v1:beginTransaction
 {}
 
 200 OK
 {"transaction": "6a3f2e..."}
 
-POST /documents:batchGet
+POST /documents/v1:batchGet
 {"documents": ["users/u1"], "transaction": "6a3f2e..."}
 
 200 OK
 {"documents": [{"path": "users/u1", "fields": {...}, ...}]}
 
-POST /documents:commit
+POST /documents/v1:commit
 {"writes": [{"set": {"path": "users/u1", "fields": {"score": {"integerValue": "99"}}}}],
  "transaction": "6a3f2e..."}
 
@@ -671,7 +671,7 @@ POST /documents:commit
 **:runQuery**
 
 ```json
-POST /documents:runQuery
+POST /documents/v1:runQuery
 {
   "query": {
     "collection": "users",
@@ -688,7 +688,7 @@ POST /documents:runQuery
 **:count**
 
 ```json
-POST /documents:count
+POST /documents/v1:count
 {
   "query": {
     "collection": "users",
@@ -705,7 +705,7 @@ POST /documents:count
 Request body: `query` (required) and `aggregations` (required, 1–5 items). Each aggregation has a `kind` (`"count"`, `"sum"`, or `"average"`), an `alias` (non-empty, unique within the request), and for `sum`/`average` a `field` (dotted field path; may not be `__name__`). `count` takes no `field`.
 
 ```json
-POST /documents:aggregate
+POST /documents/v1:aggregate
 {
   "query": {
     "collection": "orders",
@@ -752,7 +752,7 @@ Errors: bad `kind`, missing `alias`, duplicate alias, empty alias, missing `aggr
 
 ### 7.1 Connection and authentication
 
-Connect via standard WebSocket to `/{prefix}/ws` (default `/documents/ws`).
+Connect via standard WebSocket to `/{prefix}/ws` (default `/documents/v1/ws`).
 
 **Authentication is at the HTTP upgrade.** Because browsers cannot set `Authorization` headers on WebSocket upgrades, the library ships `UseWincheWsQueryToken()` middleware. Place it **before** `UseAuthentication()`: it promotes a `?access_token=<token>` query parameter to an `Authorization: Bearer …` header so the registered authentication handler can validate it at the upgrade. Gate the endpoint with `.RequireAuthorization()` to reject unauthenticated upgrades before the socket is accepted.
 

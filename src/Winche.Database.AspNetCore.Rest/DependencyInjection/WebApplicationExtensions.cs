@@ -49,7 +49,7 @@ public static class WebApplicationExtensions
     /// lands on every endpoint including the verbs. The built-in claims/exception filters are always
     /// applied internally and run outermost regardless.
     /// </summary>
-    public static IEndpointConventionBuilder MapWincheDatabaseRestApi(this WebApplication app, string prefix = "documents")
+    public static IEndpointConventionBuilder MapWincheDatabaseRestApi(this WebApplication app, string prefix = "documents/v1")
     {
         var p = prefix.TrimStart('/');
         var group = app.MapGroup($"/{p}");

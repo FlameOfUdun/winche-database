@@ -77,19 +77,19 @@ public class InternalErrorTests(PostgresFixture fx) : QueryTestBase(fx)
             var id = Enumerable.Range(0xA0, 0x3000).Select(c => $"x{(char)c}y").First(i =>
                 Convert.ToBase64String(Encoding.UTF8.GetBytes($"rest-b64/{i}")).Contains(unsafeChar));
             var path = $"rest-b64/{id}";
-            var put = await client.PutAsync($"/documents/{B64Url(path)}",
+            var put = await client.PutAsync($"/documents/v1/{B64Url(path)}",
                 new StringContent("""{"fields":{"n":{"integerValue":"1"}}}""", Encoding.UTF8, "application/json"));
             Assert.Equal(HttpStatusCode.OK, put.StatusCode);
-            var got = JsonNode.Parse(await client.GetStringAsync($"/documents/{B64Url(path)}"))!;
+            var got = JsonNode.Parse(await client.GetStringAsync($"/documents/v1/{B64Url(path)}"))!;
             Assert.Equal("1", got["fields"]!["n"]!["integerValue"]!.GetValue<string>());
         }
 
         // Standard base64 (padded) still works where it fits in a URL.
         var plain = Convert.ToBase64String(Encoding.UTF8.GetBytes("rest-b64/plain"));
-        Assert.Equal(HttpStatusCode.OK, (await client.PutAsync($"/documents/{plain}",
+        Assert.Equal(HttpStatusCode.OK, (await client.PutAsync($"/documents/v1/{plain}",
             new StringContent("""{"fields":{}}""", Encoding.UTF8, "application/json"))).StatusCode);
 
-        var bad = await client.GetAsync("/documents/not*base64!");
+        var bad = await client.GetAsync("/documents/v1/not*base64!");
         Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
         var body = JsonNode.Parse(await bad.Content.ReadAsStringAsync())!;
         Assert.Equal("INVALID_ARGUMENT", body["status"]!.GetValue<string>());
@@ -106,7 +106,7 @@ public class InternalErrorTests(PostgresFixture fx) : QueryTestBase(fx)
             c.MapClaims(_ => throw new InvalidOperationException("claims mapper bug"));
         });
 
-        var resp = await host.Client.GetAsync($"/documents/{B64Url("a/b")}");
+        var resp = await host.Client.GetAsync($"/documents/v1/{B64Url("a/b")}");
         Assert.Equal(HttpStatusCode.InternalServerError, resp.StatusCode);
         var body = JsonNode.Parse(await resp.Content.ReadAsStringAsync())!;
         var id = body["details"]!["errorId"]!.GetValue<string>();
@@ -114,7 +114,7 @@ public class InternalErrorTests(PostgresFixture fx) : QueryTestBase(fx)
 
         (LogLevel Level, string Message, Exception? Exception) entry;
         lock (log.Entries) entry = Assert.Single(log.Entries, e => e.Message.StartsWith("Internal error", StringComparison.Ordinal));
-        Assert.Equal($"Internal error {id} in GET /documents/{B64Url("a/b")} for (signed out)", entry.Message);
+        Assert.Equal($"Internal error {id} in GET /documents/v1/{B64Url("a/b")} for (signed out)", entry.Message);
         Assert.Equal("claims mapper bug", entry.Exception!.Message);
     }
 

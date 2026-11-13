@@ -35,7 +35,7 @@ public static class WebApplicationExtensions
     /// <see cref="WsConnectionRegistry.CloseUserConnectionsAsync"/>.
     /// </para>
     /// </summary>
-    public static IEndpointConventionBuilder MapWincheDatabaseWsApi(this WebApplication app, string prefix = "documents") =>
+    public static IEndpointConventionBuilder MapWincheDatabaseWsApi(this WebApplication app, string prefix = "documents/v1") =>
         app.Map($"/{prefix}/ws", HandleAsync);
 
     /// <summary>

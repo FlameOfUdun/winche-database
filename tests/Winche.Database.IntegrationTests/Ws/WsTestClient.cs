@@ -23,7 +23,7 @@ public sealed class WsTestClient : IAsyncDisposable
         _receiveLoop = Task.Run(ReceiveLoopAsync);
     }
 
-    public static async Task<WsTestClient> ConnectAsync(TestServer server, string path = "/documents/ws")
+    public static async Task<WsTestClient> ConnectAsync(TestServer server, string path = "/documents/v1/ws")
     {
         var client = server.CreateWebSocketClient();
         var socket = await client.ConnectAsync(new Uri(server.BaseAddress, path), CancellationToken.None);
@@ -38,8 +38,8 @@ public sealed class WsTestClient : IAsyncDisposable
     public static async Task<WsTestClient> ConnectAndWelcomeAsync(TestServer server, string? token = null)
     {
         var path = token is not null
-            ? $"/documents/ws?access_token={Uri.EscapeDataString(token)}"
-            : "/documents/ws";
+            ? $"/documents/v1/ws?access_token={Uri.EscapeDataString(token)}"
+            : "/documents/v1/ws";
         var ws = await ConnectAsync(server, path);
         await ws.WaitForAsync(f => (string?)f["type"] == "welcome");
         return ws;

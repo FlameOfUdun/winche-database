@@ -46,7 +46,7 @@ public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
             }
             """;
 
-        var (status, body) = await PostAsync(client, "/documents:commit", json);
+        var (status, body) = await PostAsync(client, "/documents/v1:commit", json);
 
         Assert.Equal(HttpStatusCode.OK, status);
         var writeResults = body["writeResults"]!.AsArray();
@@ -56,7 +56,7 @@ public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
         Assert.NotNull(writeResults[1]!["updateTime"]);
 
         // GET the document and verify final state
-        var getResp = await client.GetAsync($"/documents/{b64}");
+        var getResp = await client.GetAsync($"/documents/v1/{b64}");
         Assert.Equal(HttpStatusCode.OK, getResp.StatusCode);
         var doc = (JsonObject?)JsonNode.Parse(await getResp.Content.ReadAsStringAsync()) ?? new JsonObject();
         Assert.NotNull(doc["fields"]!["n"]!["integerValue"]);
@@ -69,7 +69,7 @@ public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
         await using var host = await Host();
         var client = host.Client;
 
-        var (status, body) = await PostAsync(client, "/documents:commit",
+        var (status, body) = await PostAsync(client, "/documents/v1:commit",
             """{"writes": [{"update": {"path": "rest2/missing", "fields": {"x": {"integerValue": "1"}}}}]}""");
 
         Assert.Equal(HttpStatusCode.NotFound, status);
@@ -85,41 +85,41 @@ public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
         const string path = "rest3/tx";
 
         // seed
-        await PostAsync(client, "/documents:commit",
+        await PostAsync(client, "/documents/v1:commit",
             """{"writes": [{"set": {"path": "rest3/tx", "fields": {"n": {"integerValue": "0"}}}}]}""");
 
         // --- happy path ---
-        var (beginStatus, beginBody) = await PostAsync(client, "/documents:beginTransaction", "{}");
+        var (beginStatus, beginBody) = await PostAsync(client, "/documents/v1:beginTransaction", "{}");
         Assert.Equal(HttpStatusCode.OK, beginStatus);
         var txId = (string?)beginBody["transaction"];
         Assert.NotNull(txId);
 
         var batchJson = $@"{{""documents"": [""{path}""], ""transaction"": ""{txId}""}}";
-        var (batchStatus, _) = await PostAsync(client, "/documents:batchGet", batchJson);
+        var (batchStatus, _) = await PostAsync(client, "/documents/v1:batchGet", batchJson);
         Assert.Equal(HttpStatusCode.OK, batchStatus);
 
         var commitJson = $@"{{""writes"": [{{""set"": {{""path"": ""{path}"", ""fields"": {{""n"": {{""integerValue"": ""1""}}}}}}}}], ""transaction"": ""{txId}""}}";
-        var (commitStatus, commitBody) = await PostAsync(client, "/documents:commit", commitJson);
+        var (commitStatus, commitBody) = await PostAsync(client, "/documents/v1:commit", commitJson);
         Assert.Equal(HttpStatusCode.OK, commitStatus);
         Assert.NotNull(commitBody["writeResults"]);
 
         // --- conflict path ---
-        var (beginStatus2, beginBody2) = await PostAsync(client, "/documents:beginTransaction", "{}");
+        var (beginStatus2, beginBody2) = await PostAsync(client, "/documents/v1:beginTransaction", "{}");
         var txId2 = (string?)beginBody2["transaction"];
         Assert.NotNull(txId2);
 
         // record read set
         var batchJson2 = $@"{{""documents"": [""{path}""], ""transaction"": ""{txId2}""}}";
-        await PostAsync(client, "/documents:batchGet", batchJson2);
+        await PostAsync(client, "/documents/v1:batchGet", batchJson2);
 
         // interloper plain :commit
-        await PostAsync(client, "/documents:commit",
+        await PostAsync(client, "/documents/v1:commit",
             """{"writes": [{"set": {"path": "rest3/tx", "fields": {"n": {"integerValue": "99"}}}}]}""");
 
         // tx :commit → ABORTED → 409
         var commitJson2 = $@"{{""writes"": [{{""set"": {{""path"": ""{path}"", ""fields"": {{""n"": {{""integerValue"": ""2""}}}}}}}}], ""transaction"": ""{txId2}""}}";
 
-        var (abortedStatus, abortedBody) = await PostAsync(client, "/documents:commit", commitJson2);
+        var (abortedStatus, abortedBody) = await PostAsync(client, "/documents/v1:commit", commitJson2);
         Assert.Equal(HttpStatusCode.Conflict, abortedStatus);
         Assert.Equal("ABORTED", (string?)abortedBody["status"]);
     }
@@ -131,7 +131,7 @@ public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
         await using var host = await Host();
         var client = host.Client;
 
-        var (status, body) = await PostAsync(client, "/documents:rollback",
+        var (status, body) = await PostAsync(client, "/documents/v1:rollback",
             """{"transaction": "00000000000000000000000000000000"}""");
 
         Assert.Equal(HttpStatusCode.OK, status);
@@ -146,10 +146,10 @@ public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
         var client = host.Client;
 
         // seed
-        await PostAsync(client, "/documents:commit",
+        await PostAsync(client, "/documents/v1:commit",
             """{"writes": [{"set": {"path": "rest5/exists", "fields": {"v": {"integerValue": "42"}}}}]}""");
 
-        var (status, body) = await PostAsync(client, "/documents:batchGet",
+        var (status, body) = await PostAsync(client, "/documents/v1:batchGet",
             """{"documents": ["rest5/exists", "rest5/missing", "rest5/exists"]}""");
 
         Assert.Equal(HttpStatusCode.OK, status);
@@ -169,7 +169,7 @@ public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
         var client = host.Client;
 
         // seed collection rest6
-        await PostAsync(client, "/documents:commit",
+        await PostAsync(client, "/documents/v1:commit",
             """
             {"writes": [
               {"set": {"path": "rest6/a", "fields": {"n": {"integerValue": "1"}}}},
@@ -179,7 +179,7 @@ public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
             """);
 
         // :runQuery — filter n >= 5 → b, c
-        var (queryStatus, queryBody) = await PostAsync(client, "/documents:runQuery",
+        var (queryStatus, queryBody) = await PostAsync(client, "/documents/v1:runQuery",
             """{"query": {"collection": "rest6", "where": {"field": "n", "op": "gte", "value": {"integerValue": "5"}}}}""");
 
         Assert.Equal(HttpStatusCode.OK, queryStatus);
@@ -187,7 +187,7 @@ public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
         Assert.Equal(2, queryDocs.Count);
     }
 
-    // Case 7: Old routes gone — POST /documents/query is no longer a registered POST endpoint.
+    // Case 7: Old routes gone — POST /documents/v1/query is no longer a registered POST endpoint.
     // ASP.NET returns 405 (MethodNotAllowed) because the /{path} GET route still matches the
     // path segment; either 404 or 405 proves there is no POST /query handler.
     [Fact]
@@ -196,9 +196,9 @@ public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
         await using var host = await Host();
         var client = host.Client;
 
-        var resp = await client.PostAsync("/documents/query",
+        var resp = await client.PostAsync("/documents/v1/query",
             new StringContent("{}", Encoding.UTF8, "application/json"));
-        // 404 or 405 both confirm the POST /documents/query endpoint was removed
+        // 404 or 405 both confirm the POST /documents/v1/query endpoint was removed
         Assert.True(
             resp.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed,
             $"Expected 404 or 405 but got {(int)resp.StatusCode}");
@@ -211,7 +211,7 @@ public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
         await using var host = await Host();
         var client = host.Client;
 
-        var (status, body) = await PostAsync(client, "/documents:commit",
+        var (status, body) = await PostAsync(client, "/documents/v1:commit",
             """{"writes": [{}]}""");
 
         Assert.Equal(HttpStatusCode.BadRequest, status);
@@ -225,7 +225,7 @@ public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
         await using var host = await Host();
         var client = host.Client;
 
-        var (status, body) = await PostAsync(client, "/documents:rollback", "{not json");
+        var (status, body) = await PostAsync(client, "/documents/v1:rollback", "{not json");
 
         Assert.Equal(HttpStatusCode.BadRequest, status);
         Assert.Equal("INVALID_ARGUMENT", (string?)body["status"]);
@@ -238,7 +238,7 @@ public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
         await using var host = await Host();
         var client = host.Client;
 
-        var (status, body) = await PostAsync(client, "/documents:rollback", "{}");
+        var (status, body) = await PostAsync(client, "/documents/v1:rollback", "{}");
 
         Assert.Equal(HttpStatusCode.BadRequest, status);
         Assert.Equal("INVALID_ARGUMENT", (string?)body["status"]);
@@ -251,7 +251,7 @@ public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
         await using var host = await Host();
         var client = host.Client;
 
-        var (status, body) = await PostAsync(client, "/documents:runQuery",
+        var (status, body) = await PostAsync(client, "/documents/v1:runQuery",
             """{"query":{"collection":"c","where":{"field":"f","op":"bogus","value":{"nullValue":null}}}}""");
 
         Assert.Equal(HttpStatusCode.BadRequest, status);

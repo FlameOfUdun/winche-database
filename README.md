@@ -93,8 +93,8 @@ await app.InitializeWincheDatabaseAsync();   // Creates winche_* tables/function
 app.UseWincheWsQueryToken();                 // surfaces ?access_token= to your auth scheme (before UseAuthentication)
 app.UseAuthentication();
 app.UseWebSockets();                         // required before mapping the WS endpoint
-app.MapWincheDatabaseWsApi().RequireAuthorization();   // WebSocket endpoint: /documents/ws
-app.MapWincheDatabaseRestApi();                        // REST routes under /documents (configurable)
+app.MapWincheDatabaseWsApi().RequireAuthorization();   // WebSocket endpoint: /documents/v1/ws
+app.MapWincheDatabaseRestApi();                        // REST routes under /documents/v1 (configurable)
 ```
 
 Both `Map*` methods return an `IEndpointConventionBuilder` covering **all** of their endpoints — for REST that includes the CRUD routes *and* every colon-verb (`:commit`, `:runQuery`, …); for WS the upgrade route. Apply cross-cutting policy on it once and it lands everywhere:
@@ -106,7 +106,7 @@ app.MapWincheDatabaseWsApi().RequireRateLimiting("ws"); // throttle socket upgra
 
 The built-in claims/exception filters are always applied internally and run outermost, so caller conventions compose on top of them.
 
-> **WebSocket authentication is at the HTTP upgrade.** Browsers cannot set `Authorization` headers on WebSocket upgrades, so the library provides `app.UseWincheWsQueryToken()` — middleware that promotes a `?access_token=<jwt>` query parameter to an `Authorization: Bearer …` header so your existing auth scheme (JWT bearer, etc.) can validate it at the upgrade. Place it **before** `app.UseAuthentication()`. The library does **not** validate the token; that is the responsibility of your registered authentication handler. Once the upgrade succeeds, `HttpContext.User` is populated for the lifetime of the connection and the server sends a `welcome` frame immediately — there is no in-band `hello` handshake or `auth.refresh` message. Gate with `.RequireAuthorization()` to reject unauthenticated upgrades before the socket is accepted. Connect at `/documents/ws?access_token=<jwt>`.
+> **WebSocket authentication is at the HTTP upgrade.** Browsers cannot set `Authorization` headers on WebSocket upgrades, so the library provides `app.UseWincheWsQueryToken()` — middleware that promotes a `?access_token=<jwt>` query parameter to an `Authorization: Bearer …` header so your existing auth scheme (JWT bearer, etc.) can validate it at the upgrade. Place it **before** `app.UseAuthentication()`. The library does **not** validate the token; that is the responsibility of your registered authentication handler. Once the upgrade succeeds, `HttpContext.User` is populated for the lifetime of the connection and the server sends a `welcome` frame immediately — there is no in-band `hello` handshake or `auth.refresh` message. Gate with `.RequireAuthorization()` to reject unauthenticated upgrades before the socket is accepted. Connect at `/documents/v1/ws?access_token=<jwt>`.
 >
 > **Revoking open connections.** A connection keeps the identity it was opened with. When a user is deleted or disabled, call `WsConnectionRegistry.CloseUserConnectionsAsync(userId)` (inject `WsConnectionRegistry`): every connection that user has open, on every node, is closed with code `4401` (the node that receives the call notifies the others over Postgres `NOTIFY`). A client that is still entitled reconnects with a fresh token. The user is identified by the `sub` claim by default (`WsOptions.UserIdClaimType`).
 >
@@ -863,30 +863,30 @@ These limits are configurable — unlike many document databases that hard-code 
 
 ## REST API
 
-Mapped under `/documents` by default (configurable via `MapWincheDatabaseRestApi(prefix: "...")`). Document paths in URL parameters are **base64url**-encoded UTF-8 (`-` and `_`, padding optional), which is always safe in a URL; standard base64 is still accepted, but its `/` and `+` can break the URL, so use base64url. A path that isn't either is a 400 `INVALID_ARGUMENT`.
+Mapped under `/documents/v1` by default (configurable via `MapWincheDatabaseRestApi(prefix: "...")`). Document paths in URL parameters are **base64url**-encoded UTF-8 (`-` and `_`, padding optional), which is always safe in a URL; standard base64 is still accepted, but its `/` and `+` can break the URL, so use base64url. A path that isn't either is a 400 `INVALID_ARGUMENT`.
 
 **Convenience endpoints:**
 
 | Method | Route | Description |
 | --- | --- | --- |
-| `GET` | `/documents/{base64Path}` | Get a document |
-| `PUT` | `/documents/{base64Path}` | Create or replace a document (returns document after write) |
-| `PATCH` | `/documents/{base64Path}` | Patch fields via dotted field paths |
-| `DELETE` | `/documents/{base64Path}` | Delete a document (reads first; 404 if missing) |
-| `GET` | `/documents/ping` | Health check |
+| `GET` | `/documents/v1/{base64Path}` | Get a document |
+| `PUT` | `/documents/v1/{base64Path}` | Create or replace a document (returns document after write) |
+| `PATCH` | `/documents/v1/{base64Path}` | Patch fields via dotted field paths |
+| `DELETE` | `/documents/v1/{base64Path}` | Delete a document (reads first; 404 if missing) |
+| `GET` | `/documents/v1/ping` | Health check |
 
 **Colon-verb endpoints:**
 
 | Method | Route | Description |
 | --- | --- | --- |
-| `POST` | `/documents:add` | Create a document with a generated id (returns `{"document": <document>}`) |
-| `POST` | `/documents:commit` | Atomic write batch (or commit a transaction) |
-| `POST` | `/documents:beginTransaction` | Begin an optimistic transaction |
-| `POST` | `/documents:rollback` | Roll back a transaction (idempotent; unknown id is a no-op) |
-| `POST` | `/documents:batchGet` | Bulk read preserving input order; missing docs are `null` |
-| `POST` | `/documents:runQuery` | Execute a query |
-| `POST` | `/documents:count` | Count documents matching a query (returns `{ "count": N }`) |
-| `POST` | `/documents:aggregate` | Run aggregations over a query (count / sum / average) |
+| `POST` | `/documents/v1:add` | Create a document with a generated id (returns `{"document": <document>}`) |
+| `POST` | `/documents/v1:commit` | Atomic write batch (or commit a transaction) |
+| `POST` | `/documents/v1:beginTransaction` | Begin an optimistic transaction |
+| `POST` | `/documents/v1:rollback` | Roll back a transaction (idempotent; unknown id is a no-op) |
+| `POST` | `/documents/v1:batchGet` | Bulk read preserving input order; missing docs are `null` |
+| `POST` | `/documents/v1:runQuery` | Execute a query |
+| `POST` | `/documents/v1:count` | Count documents matching a query (returns `{ "count": N }`) |
+| `POST` | `/documents/v1:aggregate` | Run aggregations over a query (count / sum / average) |
 
 Access rules are enforced on all routes. The claims accessor runs as an endpoint filter before every request.
 
@@ -899,7 +899,7 @@ See [PROTOCOL](docs/PROTOCOL.md#6-rest-api) for full request/response examples.
 
 ## WebSocket API
 
-Connect at `/documents/ws?access_token=<jwt>`. The connection authenticates at the HTTP upgrade (see [WebSocket authentication](#3-initialize-schema-and-map-routes) above). On a successful upgrade the server sends `welcome` immediately — there is no `hello` handshake. All subsequent operations are exchanged as typed JSON messages over a single WebSocket.
+Connect at `/documents/v1/ws?access_token=<jwt>`. The connection authenticates at the HTTP upgrade (see [WebSocket authentication](#3-initialize-schema-and-map-routes) above). On a successful upgrade the server sends `welcome` immediately — there is no `hello` handshake. All subsequent operations are exchanged as typed JSON messages over a single WebSocket.
 
 | Message type | Direction | Description |
 | --- | --- | --- |
