@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Npgsql;
-using Winche.Config;
+using Winche.Core;
 using Winche.Database.Abstraction;
 using Winche.Database.Constants;
 using Winche.Database.DependencyInjection;

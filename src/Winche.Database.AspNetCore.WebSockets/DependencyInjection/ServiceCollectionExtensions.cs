@@ -18,7 +18,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(Options.Create(options));
         if (options.SettingsEnabled)
         {
-            var area = Winche.Config.ServiceCollectionExtensions.AddWincheSettingsArea(services, LiveConnectionSettings.Area, "Live connections",
+            var area = Winche.Core.ServiceCollectionExtensions.AddWincheSettingsArea(services, LiveConnectionSettings.Area, "Live connections",
                 LiveConnectionSettings.From(options), s => s.Problems());
             area.Changed += s => s.ApplyTo(options);
         }

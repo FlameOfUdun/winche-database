@@ -39,14 +39,14 @@ public static class ServiceCollectionExtensions
         services.AddNpgsqlDataSource(connectionString, serviceKey: WincheDatabaseKeys.DataSource);
 
         // The indexes and expiry policies in force: the code's, or the console's with UseSettings().
-        Winche.Config.SettingsArea<Settings.DatabaseSettings>? area = null;
+        Winche.Core.SettingsArea<Settings.DatabaseSettings>? area = null;
         if (options.SettingsEnabled)
         {
             var codeIndexes = services.Where(d => d.ServiceType == typeof(Documents.IndexDefinition) && d.ImplementationInstance is not null)
                 .Select(d => (Documents.IndexDefinition)d.ImplementationInstance!).ToList();
             var codeTtl = services.Where(d => d.ServiceType == typeof(Runtime.Ttl.TtlPolicy) && d.ImplementationInstance is not null)
                 .Select(d => (Runtime.Ttl.TtlPolicy)d.ImplementationInstance!).ToList();
-            area = Winche.Config.ServiceCollectionExtensions.AddWincheSettingsArea(services, Settings.DatabaseSettings.Area, "Database",
+            area = Winche.Core.ServiceCollectionExtensions.AddWincheSettingsArea(services, Settings.DatabaseSettings.Area, "Database",
                 Settings.DatabaseSettings.From(options, codeIndexes, codeTtl), s => s.Problems());
             area.Changed += s => s.ApplyTo(options);
             services.AddHostedService<Settings.IndexSyncService>();

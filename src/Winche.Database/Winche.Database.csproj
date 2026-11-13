@@ -28,7 +28,7 @@
     <PackageReference Include="Npgsql" Version="10.0.2" />
     <PackageReference Include="Npgsql.DependencyInjection" Version="10.0.2" />
     <PackageReference Include="Winche.Rules" Version="4.0.0" />
-    <PackageReference Include="Winche.Config" Version="1.0.0" />
+    <PackageReference Include="Winche.Core" Version="1.0.0" />
   </ItemGroup>
 
 </Project>
