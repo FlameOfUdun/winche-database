@@ -95,6 +95,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(sp => new ChangeFeedConsumerSet(
             sp.GetServices<IChangeFeedConsumer>(), sp.GetServices<HookRegistration>()));
         services.AddSingleton<ChangeFeedConsumers>();
+        services.AddSingleton<Winche.Core.Feeds.IWincheFeedConsumers>(sp => sp.GetRequiredService<ChangeFeedConsumers>());   // for the console
 
         services.AddHostedService<ChangeFeedHostedService>();
         services.AddHostedService<RetentionPruner>();

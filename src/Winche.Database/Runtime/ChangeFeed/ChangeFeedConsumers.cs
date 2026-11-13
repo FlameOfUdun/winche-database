@@ -44,7 +44,7 @@ public sealed record DeadLetterReplayResult(int Replayed, int Failed);
 /// </summary>
 public sealed class ChangeFeedConsumers(
     [FromKeyedServices(WincheDatabaseKeys.DataSource)] NpgsqlDataSource source,
-    ChangeFeedConsumerSet consumers)
+    ChangeFeedConsumerSet consumers) : IWincheFeedConsumers
 {
     private readonly ChangeFeedReader _reader = new(source);
 
@@ -77,4 +77,22 @@ public sealed class ChangeFeedConsumers(
     /// <summary>Drops a dead letter without delivering it. False when there is none with that id.</summary>
     public async Task<bool> DiscardDeadLetterAsync(long id, CancellationToken ct = default) =>
         await _reader.Feed.DeleteDeadLettersAsync(id, ct: ct) > 0;
+
+    // ── as one of the console's feeds ──────────────────────────────────────────────
+
+    string IWincheFeedConsumers.Feed => DatabaseFeed.Name;
+
+    Task<IReadOnlyList<FeedConsumerStatus>> IWincheFeedConsumers.ConsumersAsync(CancellationToken ct) =>
+        _reader.Feed.GetStatusAsync(consumers.DurableNames, ct);
+
+    Task<IReadOnlyList<FeedDeadLetter>> IWincheFeedConsumers.DeadLettersAsync(string? consumer, int limit, CancellationToken ct) =>
+        _reader.Feed.GetDeadLettersAsync(consumer, null, limit, ct);
+
+    async Task<FeedReplayResult> IWincheFeedConsumers.RetryAsync(string consumer, CancellationToken ct)
+    {
+        var result = await ReplayDeadLettersAsync(consumer, ct);
+        return new FeedReplayResult(result.Replayed, result.Failed);
+    }
+
+    Task<bool> IWincheFeedConsumers.DiscardAsync(long id, CancellationToken ct) => DiscardDeadLetterAsync(id, ct);
 }
