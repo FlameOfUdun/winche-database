@@ -47,12 +47,12 @@ public class InternalErrorTests(PostgresFixture fx) : QueryTestBase(fx)
     {
         var log = new CapturingLogger();
         var denied = ErrorMapper.Map(new Authorization.AccessDeniedException("a/b", "get"), log, "GET /x", "u1");
-        Assert.Equal("PERMISSION_DENIED", denied.Status);
+        Assert.Equal("permission-denied", denied.Code);
         Assert.Empty(log.Entries);
 
         var boom = new InvalidOperationException("secret detail");
         var error = ErrorMapper.Map(boom, log, "GET /x", "u1");
-        Assert.Equal("INTERNAL", error.Status);
+        Assert.Equal("internal", error.Code);
         var id = error.Details!["errorId"]!.GetValue<string>();
         Assert.Equal(12, id.Length);
         Assert.Equal($"Internal error ({id}).", error.Message);
@@ -92,8 +92,8 @@ public class InternalErrorTests(PostgresFixture fx) : QueryTestBase(fx)
         var bad = await client.GetAsync("/documents/v1/not*base64!");
         Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
         var body = JsonNode.Parse(await bad.Content.ReadAsStringAsync())!;
-        Assert.Equal("INVALID_ARGUMENT", body["status"]!.GetValue<string>());
-        Assert.Contains("isn't base64url", body["message"]!.GetValue<string>());
+        Assert.Equal("invalid-argument", body["error"]!["code"]!.GetValue<string>());
+        Assert.Contains("isn't base64url", body["error"]!["message"]!.GetValue<string>());
     }
 
     [Fact]
@@ -109,8 +109,8 @@ public class InternalErrorTests(PostgresFixture fx) : QueryTestBase(fx)
         var resp = await host.Client.GetAsync($"/documents/v1/{B64Url("a/b")}");
         Assert.Equal(HttpStatusCode.InternalServerError, resp.StatusCode);
         var body = JsonNode.Parse(await resp.Content.ReadAsStringAsync())!;
-        var id = body["details"]!["errorId"]!.GetValue<string>();
-        Assert.Equal($"Internal error ({id}).", body["message"]!.GetValue<string>());
+        var id = body["error"]!["details"]!["errorId"]!.GetValue<string>();
+        Assert.Equal($"Internal error ({id}).", body["error"]!["message"]!.GetValue<string>());
 
         (LogLevel Level, string Message, Exception? Exception) entry;
         lock (log.Entries) entry = Assert.Single(log.Entries, e => e.Message.StartsWith("Internal error", StringComparison.Ordinal));
@@ -146,8 +146,8 @@ public class InternalErrorTests(PostgresFixture fx) : QueryTestBase(fx)
             new DocGetMessage { Id = "m1", Path = "a/b" }, default);
 
         var error = Assert.IsType<ErrorMessage>(reply);
-        Assert.Equal("INTERNAL", error.Status);
-        var id = error.Details!["errorId"]!.GetValue<string>();
+        Assert.Equal("internal", error.Error.Code);
+        var id = error.Error.Details!["errorId"]!.GetValue<string>();
         var entry = Assert.Single(log.Entries);
         Assert.Equal($"Internal error {id} in WebSocket DocGet for u7", entry.Message);
         Assert.Equal("database bug", entry.Exception!.Message);

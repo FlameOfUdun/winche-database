@@ -62,7 +62,7 @@ public class WsLifecycleTests(PostgresFixture fx) : QueryTestBase(fx)
         await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
         await ws.SendAsync(new JsonObject { ["id"] = "q1" });                     // no "type"
         var err = await ws.WaitForAsync(f => (string?)f["type"] == "error");
-        Assert.Equal("INVALID_ARGUMENT", (string?)err["status"]);
+        Assert.Equal("invalid-argument", (string?)err["error"]!["code"]);
         var pong = await ws.RequestAsync(new JsonObject { ["type"] = "ping" });   // still alive
         Assert.Equal("response", (string?)pong["type"]);
     }
@@ -99,7 +99,7 @@ public class WsLifecycleTests(PostgresFixture fx) : QueryTestBase(fx)
         await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
         await ws.SendRawAsync("{not json");
         var err = await ws.WaitForAsync(f => (string?)f["type"] == "error");
-        Assert.Equal("INVALID_ARGUMENT", (string?)err["status"]);
+        Assert.Equal("invalid-argument", (string?)err["error"]!["code"]);
         var pong = await ws.RequestAsync(new JsonObject { ["type"] = "ping" });
         Assert.Equal("response", (string?)pong["type"]);
     }

@@ -43,6 +43,6 @@ public class WsAddTests(PostgresFixture fx) : QueryTestBase(fx)
             ["fields"] = new JsonObject { ["name"] = new JsonObject { ["stringValue"] = "ada" } },
         });
 
-        Assert.Equal("PERMISSION_DENIED", (string?)resp["status"]);
+        Assert.Equal("permission-denied", (string?)resp["error"]!["code"]);
     }
 }

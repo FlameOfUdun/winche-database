@@ -55,7 +55,7 @@ public class WsAggregateTests(PostgresFixture fx) : QueryTestBase(fx)
             ["aggregations"] = new JsonArray(new JsonObject { ["kind"] = "count", ["alias"] = "cnt" }),
         });
 
-        Assert.Equal("PERMISSION_DENIED", (string?)resp["status"]);
+        Assert.Equal("permission-denied", (string?)resp["error"]!["code"]);
     }
 
     [Fact]
@@ -71,6 +71,6 @@ public class WsAggregateTests(PostgresFixture fx) : QueryTestBase(fx)
             ["aggregations"] = new JsonArray(new JsonObject { ["kind"] = "BOGUS", ["alias"] = "x" }),
         });
 
-        Assert.Equal("INVALID_ARGUMENT", (string?)resp["status"]);
+        Assert.Equal("invalid-argument", (string?)resp["error"]!["code"]);
     }
 }

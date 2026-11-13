@@ -16,27 +16,15 @@ internal class ExceptionHandler(ILogger<ExceptionHandler> logger) : IEndpointFil
         }
         catch (BadHttpRequestException ex)                      // body binding/JSON failures
         {
-            return Results.Json(new { status = "INVALID_ARGUMENT", message = ex.Message },
-                statusCode: 400, contentType: "application/json");
+            var bad = new WincheError(WincheErrorCode.InvalidArgument, ex.Message);
+            return Results.Json(bad.ToBody(), statusCode: bad.HttpStatus, contentType: "application/json");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             var http0 = context.HttpContext;
             var user = ErrorMapper.UserOf(http0.RequestServices.GetService<DocumentClaimsAccessor>()?.GetClaims());
             var error = ErrorMapper.Map(ex, logger, $"{http0.Request.Method} {http0.Request.Path}", user);
-            var http = error.Status switch
-            {
-                "NOT_FOUND" => 404,
-                "ALREADY_EXISTS" or "ABORTED" => 409,
-                "FAILED_PRECONDITION" => 412,
-                "PERMISSION_DENIED" => 403,
-                "UNAUTHENTICATED" => 401,
-                "DEADLINE_EXCEEDED" => 504,
-                "INTERNAL" => 500,
-                _ => 400,                                       // INVALID_ARGUMENT / INVALID_QUERY
-            };
-            return Results.Json(new { status = error.Status, message = error.Message, details = error.Details },
-                statusCode: http, contentType: "application/json");
+            return Results.Json(error.ToBody(), statusCode: error.HttpStatus, contentType: "application/json");
         }
     }
 }

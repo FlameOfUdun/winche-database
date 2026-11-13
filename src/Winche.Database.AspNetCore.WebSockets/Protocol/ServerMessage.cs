@@ -28,9 +28,8 @@ public sealed record ErrorMessage : ServerMessage
 {
     [JsonPropertyName("type")] public string Type { get; } = "error";
     [JsonPropertyName("id")] public string? Id { get; init; }
-    [JsonPropertyName("status")] public required string Status { get; init; }
-    [JsonPropertyName("message")] public required string Message { get; init; }
-    [JsonPropertyName("details")] public JsonObject? Details { get; init; }
+    /// <summary>The shared error shape, as REST sends it under <c>error</c>.</summary>
+    [JsonPropertyName("error")] public required WincheError Error { get; init; }
 }
 
 public sealed record ListenSnapshotMessage : ServerMessage

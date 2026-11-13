@@ -51,7 +51,7 @@ public class WsTransactionTests(PostgresFixture fx) : QueryTestBase(fx)
             ["type"] = "tx.commit", ["transactionId"] = txId2,
             ["writes"] = Set("wstx/a", 3)["writes"]!.DeepClone(),
         });
-        Assert.Equal(("error", "ABORTED"), ((string?)aborted["type"], (string?)aborted["status"]));
+        Assert.Equal(("error", "aborted"), ((string?)aborted["type"], (string?)aborted["error"]!["code"]));
     }
 
     [Fact]
@@ -66,7 +66,7 @@ public class WsTransactionTests(PostgresFixture fx) : QueryTestBase(fx)
 
         var foreign = await ws2.RequestAsync(new JsonObject
             { ["type"] = "tx.get", ["transactionId"] = txId, ["path"] = "wstx/a" });
-        Assert.Equal("ABORTED", (string?)foreign["status"]);
+        Assert.Equal("aborted", (string?)foreign["error"]!["code"]);
     }
 
     // ── C2: foreign tx.rollback must not touch another connection's transaction ──
@@ -115,6 +115,6 @@ public class WsTransactionTests(PostgresFixture fx) : QueryTestBase(fx)
         // by beginning + committing fresh — and asserting the old id is gone via tx.get on ws2:
         var gone = await ws2.RequestAsync(new JsonObject
             { ["type"] = "tx.get", ["transactionId"] = txId, ["path"] = "wstx/a" });
-        Assert.Equal("ABORTED", (string?)gone["status"]);
+        Assert.Equal("aborted", (string?)gone["error"]!["code"]);
     }
 }

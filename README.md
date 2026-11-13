@@ -118,12 +118,12 @@ The built-in claims/exception filters are always applied internally and run oute
 - **Document storage** — Store documents as typed field maps; each document carries `path`, `id`, `collection`, `createTime`, `updateTime`, and `version` metadata
 - **Querying** — 15 filter operators (including Winche extensions: `arrayContainsAll`, `contains`, `startsWith`, `endsWith`, `regex`, field-compare); `and`/`or`/`not` composites; `orderBy` with `__name__` tiebreaker; cursor-based pagination (`startAt`/`startAfter`/`endAt`/`endBefore`); field projection via `select`; `offset` (skip first N results) and `limitToLast` (last N results in ascending order)
 - **Live queries with delta listeners** — changes are applied to a live result in memory (filters, order, cursors, limits, select; re-queried for offsets, when held spares run out, and every 5 minutes), listeners updated in parallel; Subscribe to a query and receive an initial full snapshot, then indexed `added`/`modified`/`removed`/`deleted` deltas with a `count` checksum; `listen.snapshot` REPLACES client state, `listen.delta` MUTATES it. `removed` means the document left this query's window/filter (it still exists); `deleted` means it no longer exists at all (clients tombstone it). The `deleted` kind is sent only to clients that advertise `"protocol": >= 2` on the subscribe frame; older clients keep getting `removed`. Resuming with a still-current token sends a lightweight `listen.current` marker (live and up to date — no re-download) instead of a fresh snapshot; a stale/expired token resets via a full snapshot
-- **Optimistic transactions** — Optimistic read-version ledger; `ABORTED` on conflict with safe retry; `RunTransactionAsync` with automatic retry; reads-before-writes enforced; idle (60 s) and absolute (5 min) timeouts
+- **Optimistic transactions** — Optimistic read-version ledger; `aborted` on conflict with safe retry; `RunTransactionAsync` with automatic retry; reads-before-writes enforced; idle (60 s) and absolute (5 min) timeouts
 - **Batch writes** — Atomic commit of up to 500 `set`/`update`/`delete` operations with field transforms, preconditions, and a single commit timestamp; use `new WriteBatch(db)` for a fluent builder; `set` supports explicit merge masks via `MergeFields` (subset-merge alternative to `merge: true`)
 - **Field transforms** — `serverTimestamp`, `increment` (saturating int, promotes to double on mixed), `maximum`, `minimum`, `arrayUnion`, `arrayRemove`; use the `FieldValue` factory for a fluent C# API (`FieldValue.ServerTimestamp`, `Increment`, `Maximum`, `Minimum`, `ArrayUnion`, `ArrayRemove`, `Delete`)
 - **Durable hooks** — Feed-driven, true at-least-once end-to-end; a cursor per hook type, so a failing hook holds back only itself; only the failing change is retried (capped backoff), and dead-lettered after `DeadLetterAfter` (replayable); hooks fire for writes from any node; cursor persisted across restarts; status + health check; idempotency required
 - **Secondary indexes** — composite expression indexes declared by **collection ID** (the last path segment), covering every collection with that id under any parent; `IndexDefinition.Where` for filtered/partial indexes (agreement tested against engine) (see below)
-- **Access control** — in-memory rules engine (Winche.Rules); OR semantics with default-deny; for `list`/query operations the query must provably satisfy a read rule or it is rejected with PERMISSION_DENIED (rules are not post-filters)
+- **Access control** — in-memory rules engine (Winche.Rules); OR semantics with default-deny; for `list`/query operations the query must provably satisfy a read rule or it is rejected with permission-denied (rules are not post-filters)
 - **TTL (auto-expiry)** — Documents are automatically deleted once a registered timestamp field is in the past; configurable sweep interval (default 5 min) and batch size (default 500); collection-group scoped; TTL deletes emit change-feed events; bypass access rules; cascade to subcollections by default (opt out with `CascadeDelete = false`)
 - **PostgreSQL backend** — All data stored as typed JSONB; queries compiled to native PostgreSQL SQL backed by a family of `winche_*` ordering helper functions (`winche_rank`, `winche_num`, `winche_text`, `winche_key`, …); `IMMUTABLE` functions back expression indexes
 
@@ -271,7 +271,7 @@ ruleset. To evaluate rules directly, resolve `RuleEngine` under the same key.
 query is analyzed before execution: if its constraints provably satisfy a read rule (e.g. it
 constrains `ownerId == request.auth.uid` and there is a matching `allow read` rule), the query is
 permitted. If no read rule is provably satisfied by the query's constraints, the query is
-**rejected** with PERMISSION_DENIED — results are **never** silently post-filtered. This means the
+**rejected** with permission-denied — results are **never** silently post-filtered. This means the
 query itself must carry the constraining filter; the rule engine validates the query's intent, not
 its results.
 
@@ -571,7 +571,7 @@ var write = new SetWrite
 };
 ```
 
-Constraints: `MergeFields` cannot be combined with `merge: true` (→ `INVALID_ARGUMENT`). An empty `MergeFields` array is also `INVALID_ARGUMENT`.
+Constraints: `MergeFields` cannot be combined with `merge: true` (→ `invalid-argument`). An empty `MergeFields` array is also `invalid-argument`.
 
 ### Auto-id documents (`AddAsync`)
 
@@ -801,7 +801,7 @@ long   sum     = ((IntegerValue)result.Values["s"]).Value;
 double average = ((DoubleValue)result.Values["a"]).Value;
 ```
 
-Constraints (→ `INVALID_ARGUMENT`):
+Constraints (→ `invalid-argument`):
 - At least 1 and at most 5 aggregations per call.
 - `Sum` and `Average` require a field; `Count` takes no field.
 - The field may not be `__name__`.
@@ -816,7 +816,7 @@ An explicit `Limit` on the query **caps** all aggregations (consistent with `Cou
 ## Transactions
 
 ```csharp
-// Automatic retry on ABORTED (up to 5 attempts with backoff)
+// Automatic retry on aborted (up to 5 attempts with backoff)
 var result = await db.RunTransactionAsync(async tx =>
 {
     var doc = await tx.GetAsync("accounts/a1");
@@ -832,7 +832,7 @@ var doc    = await db.GetAsync(handle.Id, "accounts/a1");  // recorded read
 await db.CommitTransactionAsync(handle.Id, [new SetWrite { ... }]);
 ```
 
-> **Authorization:** under the rule guard, reads inside a `RunTransactionAsync` body — and the manual `GetAsync(transactionId, …)` / `QueryAsync(transactionId, …)` reads — are authorized as `get`/`list` exactly like non-transactional reads; a denied read throws `PERMISSION_DENIED` and aborts the transaction. Writes are authorized at commit.
+> **Authorization:** under the rule guard, reads inside a `RunTransactionAsync` body — and the manual `GetAsync(transactionId, …)` / `QueryAsync(transactionId, …)` reads — are authorized as `get`/`list` exactly like non-transactional reads; a denied read throws `permission-denied` and aborts the transaction. Writes are authorized at commit.
 
 Transaction configuration (`WincheDatabaseOptions.TransactionConfig`):
 
@@ -845,7 +845,7 @@ Transaction configuration (`WincheDatabaseOptions.TransactionConfig`):
 
 Write-validation limits (`WincheDatabaseOptions.WriteLimits`):
 
-`WriteLimits` is a record on `WincheDatabaseOptions` that configures limits applied to the **resulting document** of every `set` or `update` (not `delete`). Violations throw `INVALID_ARGUMENT` (HTTP 400 over REST) and abort the **entire** batch — nothing is committed.
+`WriteLimits` is a record on `WincheDatabaseOptions` that configures limits applied to the **resulting document** of every `set` or `update` (not `delete`). Violations throw `invalid-argument` (HTTP 400 over REST) and abort the **entire** batch — nothing is committed.
 
 | Field | Default | Description |
 | --- | --- | --- |
@@ -859,11 +859,11 @@ These limits are configurable — unlike many document databases that hard-code 
 > the default), so begin, reads and commit may each land on a different node — REST clients behind a load
 > balancer need no sticky routing. Each transactional read costs one small write; expiry uses the database clock.
 > `TransactionStore.Memory` keeps the old per-node, in-memory ledger (no extra writes; every request of a
-> transaction must reach the same node, or it is `ABORTED`).
+> transaction must reach the same node, or it is `aborted`).
 
 ## REST API
 
-Mapped under `/documents/v1` by default (configurable via `MapWincheDatabaseRestApi(prefix: "...")`). Document paths in URL parameters are **base64url**-encoded UTF-8 (`-` and `_`, padding optional), which is always safe in a URL; standard base64 is still accepted, but its `/` and `+` can break the URL, so use base64url. A path that isn't either is a 400 `INVALID_ARGUMENT`.
+Mapped under `/documents/v1` by default (configurable via `MapWincheDatabaseRestApi(prefix: "...")`). Document paths in URL parameters are **base64url**-encoded UTF-8 (`-` and `_`, padding optional), which is always safe in a URL; standard base64 is still accepted, but its `/` and `+` can break the URL, so use base64url. A path that isn't either is a 400 `invalid-argument`.
 
 **Convenience endpoints:**
 
@@ -932,7 +932,7 @@ See [PROTOCOL](docs/PROTOCOL.md#7-websocket-protocol) for full message shapes, c
 
 | Option | Default | Past it |
 | --- | --- | --- |
-| `MaxSubscriptionsPerConnection` | 100 | `listen` / `doc.listen` gets `RESOURCE_EXHAUSTED`; the connection stays open |
+| `MaxSubscriptionsPerConnection` | 100 | `listen` / `doc.listen` gets `resource-exhausted`; the connection stays open |
 | `MaxConnectionsPerUser` | 10 | the user's **oldest** connection is closed with code 4429 (the new one stays) |
 | `RequestsPerSecond` / `RequestBurst` | 50 / 100 | the connection's next request is read later — slowed, never refused, so an offline write queue never has a write rejected |
 
@@ -1104,7 +1104,7 @@ few APIs. No data migration is required. Breaking changes:
   document on.
 - **Reads inside `RunTransactionAsync`** — and the manual `GetAsync(transactionId, …)` /
   `QueryAsync(transactionId, …)` reads — **are now authorized** as `get`/`list` under the rule guard,
-  like non-transactional reads. A denied read throws `PERMISSION_DENIED` and aborts the transaction.
+  like non-transactional reads. A denied read throws `permission-denied` and aborts the transaction.
 - **`ListenerRegistry` is renamed to `QueryListenerRegistry`**; a new `DocumentListenerRegistry`
   backs single-document listeners. Relevant only if you reference these types directly.
 - **Some low-level types/members are now `internal`:** `DocumentOperations` and

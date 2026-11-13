@@ -55,7 +55,7 @@ public class RestAggregateTests(PostgresFixture fx) : QueryTestBase(fx)
             """{"query":{"collection":"c"},"aggregations":[{"kind":"count","alias":"cnt"}]}""");
 
         Assert.Equal(HttpStatusCode.Forbidden, status);
-        Assert.Equal("PERMISSION_DENIED", (string?)body["status"]);
+        Assert.Equal("permission-denied", (string?)body["error"]!["code"]);
     }
 
     [Fact]
@@ -91,6 +91,6 @@ public class RestAggregateTests(PostgresFixture fx) : QueryTestBase(fx)
             """{"query":{"collection":"c"},"aggregations":[{"kind":"median","alias":"x"}]}""");
 
         Assert.Equal(HttpStatusCode.BadRequest, status);
-        Assert.Equal("INVALID_ARGUMENT", (string?)body["status"]);
+        Assert.Equal("invalid-argument", (string?)body["error"]!["code"]);
     }
 }

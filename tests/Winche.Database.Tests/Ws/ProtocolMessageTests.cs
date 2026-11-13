@@ -50,8 +50,8 @@ public class ProtocolMessageTests
         Assert.Equal("response", (string)response["type"]!);
         Assert.Equal(1, (int)response["result"]!["x"]!);
 
-        var error = Out(new ErrorMessage { Id = "1", Status = "NOT_FOUND", Message = "m" });
-        Assert.Equal(("error", "NOT_FOUND"), ((string)error["type"]!, (string)error["status"]!));
+        var error = Out(new ErrorMessage { Id = "1", Error = new WincheError(WincheErrorCode.NotFound, "m") });
+        Assert.Equal(("error", "not-found"), ((string)error["type"]!, (string)error["error"]!["code"]!));
 
         var doc = new Document
         {

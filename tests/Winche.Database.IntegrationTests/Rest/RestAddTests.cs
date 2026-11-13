@@ -45,7 +45,7 @@ public class RestAddTests(PostgresFixture fx) : QueryTestBase(fx)
             """{"collection": 42, "fields": {"name": {"stringValue": "ada"}}}""");
 
         Assert.Equal(HttpStatusCode.BadRequest, status);
-        Assert.Equal("INVALID_ARGUMENT", (string?)body["status"]);
+        Assert.Equal("invalid-argument", (string?)body["error"]!["code"]);
     }
 
     [Fact]
@@ -56,6 +56,6 @@ public class RestAddTests(PostgresFixture fx) : QueryTestBase(fx)
             """{"collection": "people", "fields": {"name": {"stringValue": "ada"}}}""");
 
         Assert.Equal(HttpStatusCode.Forbidden, status);
-        Assert.Equal("PERMISSION_DENIED", (string?)body["status"]);
+        Assert.Equal("permission-denied", (string?)body["error"]!["code"]);
     }
 }

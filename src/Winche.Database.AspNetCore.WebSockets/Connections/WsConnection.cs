@@ -123,7 +123,7 @@ public sealed class WsConnection(WebSocket socket, WsOptions options) : IAsyncDi
             }
             catch (JsonException)
             {
-                TrySend(new ErrorMessage { Status = "INVALID_ARGUMENT", Message = "Malformed JSON frame." });
+                TrySend(new ErrorMessage { Error = new WincheError(WincheErrorCode.InvalidArgument, "Malformed JSON frame.") });
                 // loop: read the next frame instead of recursing
             }
         }

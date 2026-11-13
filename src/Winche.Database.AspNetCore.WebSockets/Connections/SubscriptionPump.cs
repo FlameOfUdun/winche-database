@@ -207,9 +207,7 @@ public static class SubscriptionPump
             foreach (var kvp in mapperDetails) details[kvp.Key] = kvp.Value?.DeepClone();
         conn.TrySend(new ErrorMessage
         {
-            Status = error.Status,
-            Message = $"Subscription '{subscriptionId}' failed: {error.Message}",
-            Details = details,
+            Error = error with { Message = $"Subscription '{subscriptionId}' failed: {error.Message}", Details = details },
         });
     }
 

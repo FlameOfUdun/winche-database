@@ -59,7 +59,7 @@ public class WsOperationTests(PostgresFixture fx) : QueryTestBase(fx)
                 },
             }),
         });
-        Assert.Equal("PERMISSION_DENIED", (string?)bobWrite["status"]);
+        Assert.Equal("permission-denied", (string?)bobWrite["error"]!["code"]);
     }
 
     private static JsonObject SetWrite(string path, string field, long value) => new()
@@ -129,7 +129,7 @@ public class WsOperationTests(PostgresFixture fx) : QueryTestBase(fx)
                 },
             }),
         });
-        Assert.Equal(("error", "NOT_FOUND"), ((string?)update["type"], (string?)update["status"]));
+        Assert.Equal(("error", "not-found"), ((string?)update["type"], (string?)update["error"]!["code"]));
 
         var badQuery = await ws.RequestAsync(new JsonObject
         {
@@ -141,11 +141,11 @@ public class WsOperationTests(PostgresFixture fx) : QueryTestBase(fx)
                     { ["field"] = "f", ["op"] = "bogus", ["value"] = new JsonObject { ["nullValue"] = null } },
             },
         });
-        Assert.Equal("INVALID_QUERY", (string?)badQuery["status"]);   // QueryParseException inside JsonException → INVALID_QUERY
+        Assert.Equal("invalid-query", (string?)badQuery["error"]!["reason"]);   // QueryParseException inside JsonException → INVALID_QUERY
 
         var badWrite = await ws.RequestAsync(new JsonObject
             { ["type"] = "write", ["writes"] = new JsonArray(new JsonObject()) });
-        Assert.Equal("INVALID_ARGUMENT", (string?)badWrite["status"]);
+        Assert.Equal("invalid-argument", (string?)badWrite["error"]!["code"]);
     }
 
     [Fact]

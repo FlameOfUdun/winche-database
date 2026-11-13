@@ -33,7 +33,7 @@ public sealed class MessageRouter
     {
         var id = message.Id;
         if (id is null)
-            return new ErrorMessage { Status = "INVALID_ARGUMENT", Message = "'id' is required." };
+            return new ErrorMessage { Error = new WincheError(WincheErrorCode.InvalidArgument, "'id' is required.") };
 
         try
         {
@@ -56,13 +56,13 @@ public sealed class MessageRouter
                 ListenMessage listen => HandleListen(scope, conn, id!, listen.Query, listen.ResumeToken, listen.Protocol),
                 DocListenMessage docListen => await HandleDocListen(scope, conn, id!, docListen.Path, docListen.ResumeToken, docListen.Protocol, ct),
                 UnlistenMessage unlisten => await HandleUnlisten(scope, id!, unlisten),
-                _ => new ErrorMessage { Id = id, Status = "INVALID_ARGUMENT", Message = $"Unknown message: {message.GetType().Name}" },
+                _ => new ErrorMessage { Id = id, Error = new WincheError(WincheErrorCode.InvalidArgument, $"Unknown message: {message.GetType().Name}") },
             };
         }
         catch (Exception ex)
         {
             var error = ErrorMapper.Map(ex, _logger, $"WebSocket {MessageType(message)}", scope.UserId);
-            return new ErrorMessage { Id = id, Status = error.Status, Message = error.Message, Details = error.Details };
+            return new ErrorMessage { Id = id, Error = error };
         }
     }
 
@@ -110,8 +110,8 @@ public sealed class MessageRouter
     private static ErrorMessage TooManySubscriptionsError(ConnectionScope scope, string id) => new()
     {
         Id = id,
-        Status = "RESOURCE_EXHAUSTED",
-        Message = $"This connection already has {scope.MaxSubscriptions} live subscriptions (the limit); unlisten some first.",
+        Error = new WincheError(WincheErrorCode.ResourceExhausted,
+            $"This connection already has {scope.MaxSubscriptions} live subscriptions (the limit); unlisten some first."),
     };
 
     /// <summary>A message's wire type for logs ("query", "write", …).</summary>

@@ -62,7 +62,7 @@ public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
         Assert.NotNull(doc["fields"]!["n"]!["integerValue"]);
     }
 
-    // Case 2: :commit with update on missing doc → 404, status == "NOT_FOUND"
+    // Case 2: :commit with update on missing doc → 404, status == "not-found"
     [Fact]
     public async Task Commit_UpdateMissing_404_NOT_FOUND()
     {
@@ -73,7 +73,7 @@ public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
             """{"writes": [{"update": {"path": "rest2/missing", "fields": {"x": {"integerValue": "1"}}}}]}""");
 
         Assert.Equal(HttpStatusCode.NotFound, status);
-        Assert.Equal("NOT_FOUND", (string?)body["status"]);
+        Assert.Equal("not-found", (string?)body["error"]!["code"]);
     }
 
     // Case 3: Tx read-commit happy path AND conflict 409
@@ -121,7 +121,7 @@ public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
 
         var (abortedStatus, abortedBody) = await PostAsync(client, "/documents/v1:commit", commitJson2);
         Assert.Equal(HttpStatusCode.Conflict, abortedStatus);
-        Assert.Equal("ABORTED", (string?)abortedBody["status"]);
+        Assert.Equal("aborted", (string?)abortedBody["error"]!["code"]);
     }
 
     // Case 4: :rollback with unknown id → 200 {}
@@ -204,7 +204,7 @@ public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
             $"Expected 404 or 405 but got {(int)resp.StatusCode}");
     }
 
-    // Case 8: :commit with invalid write object → 400, status == "INVALID_ARGUMENT"
+    // Case 8: :commit with invalid write object → 400, status == "invalid-argument"
     [Fact]
     public async Task InvalidWrite_400_INVALID_ARGUMENT()
     {
@@ -215,7 +215,7 @@ public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
             """{"writes": [{}]}""");
 
         Assert.Equal(HttpStatusCode.BadRequest, status);
-        Assert.Equal("INVALID_ARGUMENT", (string?)body["status"]);
+        Assert.Equal("invalid-argument", (string?)body["error"]!["code"]);
     }
 
     // C2 regression (a): :rollback with malformed JSON → 400 INVALID_ARGUMENT
@@ -228,7 +228,7 @@ public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
         var (status, body) = await PostAsync(client, "/documents/v1:rollback", "{not json");
 
         Assert.Equal(HttpStatusCode.BadRequest, status);
-        Assert.Equal("INVALID_ARGUMENT", (string?)body["status"]);
+        Assert.Equal("invalid-argument", (string?)body["error"]!["code"]);
     }
 
     // C2 regression (b): :rollback with valid JSON but missing 'transaction' field → 400 INVALID_ARGUMENT
@@ -241,7 +241,7 @@ public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
         var (status, body) = await PostAsync(client, "/documents/v1:rollback", "{}");
 
         Assert.Equal(HttpStatusCode.BadRequest, status);
-        Assert.Equal("INVALID_ARGUMENT", (string?)body["status"]);
+        Assert.Equal("invalid-argument", (string?)body["error"]!["code"]);
     }
 
     // C3 regression (a): :runQuery with invalid 'op' → 400 INVALID_QUERY with details.jsonPath non-null
@@ -255,7 +255,7 @@ public class RestV3Tests(PostgresFixture fx) : QueryTestBase(fx)
             """{"query":{"collection":"c","where":{"field":"f","op":"bogus","value":{"nullValue":null}}}}""");
 
         Assert.Equal(HttpStatusCode.BadRequest, status);
-        Assert.Equal("INVALID_QUERY", (string?)body["status"]);
-        Assert.NotNull(body["details"]?["jsonPath"]);
+        Assert.Equal("invalid-query", (string?)body["error"]!["reason"]);
+        Assert.NotNull(body["error"]!["details"]?["jsonPath"]);
     }
 }

@@ -140,7 +140,7 @@ public class MetricsTests(PostgresFixture fx) : QueryTestBase(fx)
             await ws.RequestAsync(new JsonObject { ["type"] = "ping" });
             await ws.RequestAsync(new JsonObject { ["type"] = "listen", ["query"] = new JsonObject { ["collection"] = "mws" } });
             var refused = await ws.RequestAsync(new JsonObject { ["type"] = "listen", ["query"] = new JsonObject { ["collection"] = "mws2" } });
-            Assert.Equal("RESOURCE_EXHAUSTED", (string?)refused["status"]);
+            Assert.Equal("resource-exhausted", (string?)refused["error"]!["code"]);
             await ws.RequestAsync(new JsonObject { ["type"] = "made.up" });
         }
         await Eventually(() => m.Of("winche.database.ws.connections").Sum(x => x.Value) == 0 && m.Of("winche.database.ws.connections").Count >= 2);

@@ -134,13 +134,7 @@ public static class WebApplicationExtensions
                         string? msgId = doc.RootElement.TryGetProperty("id", out var idProp)
                                         && idProp.ValueKind == JsonValueKind.String ? idProp.GetString() : null;
                         var mapped = ErrorMapper.Map(ex);
-                        conn.TrySend(new ErrorMessage
-                        {
-                            Id = msgId,
-                            Status = mapped.Status,
-                            Message = mapped.Message,
-                            Details = mapped.Details,
-                        });
+                        conn.TrySend(new ErrorMessage { Id = msgId, Error = mapped });
                         continue;
                     }
                 }
