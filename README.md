@@ -15,7 +15,7 @@ Supports real-time live queries with indexed delta listeners, optimistic ACID tr
 | Package | Description |
 | --- | --- |
 | `Winche.Database` | Core document store: typed values, CRUD, queries, transactions, live listeners, hooks, filtered indexes, and rule-based access control (Winche.Rules) |
-| `Winche.Database.AspNetCore` | Shared ASP.NET Core abstractions: `DocumentClaimsAccessor` and the `MapClaims` registration extension |
+| `Winche.Database.AspNetCore` | Shared ASP.NET Core abstractions: `DocumentClaimsAccessor` and `MapClaims`, a database-specific override of the caller the host sets once for every Winche package (`AddWincheCaller` + `UseWincheCaller`, Winche.Core.AspNetCore) |
 | `Winche.Database.AspNetCore.Rest` | ASP.NET Core minimal API REST endpoints |
 | `Winche.Database.AspNetCore.WebSockets` | ASP.NET Core WebSocket transport, real-time delta listeners, and connection management |
 
