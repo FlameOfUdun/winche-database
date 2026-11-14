@@ -34,7 +34,7 @@ All field values use a **tagged-value** encoding. Each value is a JSON object wi
 | `TimestampValue` | `timestampValue` | RFC 3339 string, UTC (`Z`), microsecond precision (`yyyy-MM-ddTHH:mm:ss.ffffffZ`) | Stored truncated to µs (sub-µs ticks dropped) |
 | `StringValue` | `stringValue` | JSON string | Unicode; code-point order for sorting |
 | `BytesValue` | `bytesValue` | standard base64 string | |
-| `ReferenceValue` | `docRefValue` | document path string (e.g. `"users/u1"`) | A document. `referenceValue` (before 1.0) is still read, as this |
+| `ReferenceValue` | `docRefValue` | document path string (e.g. `"users/u1"`) | A document |
 | `FileRefValue` | `fileRefValue` | file path string (e.g. `"scans/a.png"`) | A file in Winche Storage |
 | `UserRefValue` | `userRefValue` | uid string (e.g. `"u1"`) | A Winche Auth user |
 | `GeoPointValue` | `geoPointValue` | `{"latitude": <number>, "longitude": <number>}` | |
@@ -478,7 +478,7 @@ The engine automatically appends `__name__` (the document path) as a tiebreaker 
 
 `values` must be tagged values corresponding positionally to `orderBy` fields (including the implicit `__name__` tiebreaker if it is needed). Cursor arity may be any **prefix** of the sort keys (1 to N values); the remaining sort keys are unconstrained.
 
-**C# convenience — `Cursor.FromDocument`.** `Cursor.FromDocument(Document doc, IReadOnlyList<Ordering>? orderBy, bool before)` derives cursor values from a document snapshot: for each `orderBy` field it reads that field's value from `doc`, then appends the implicit `__name__` tiebreaker as `{"referenceValue": "<doc.Path>"}`. A null or empty `orderBy` produces a `__name__`-only cursor. Throws `ArgumentException` if a required field is absent from the document. The resulting `Cursor` is identical on the wire to one constructed by hand — `Cursor.FromDocument` is a client-side convenience only.
+**C# convenience — `Cursor.FromDocument`.** `Cursor.FromDocument(Document doc, IReadOnlyList<Ordering>? orderBy, bool before)` derives cursor values from a document snapshot: for each `orderBy` field it reads that field's value from `doc`, then appends the implicit `__name__` tiebreaker as `{"docRefValue": "<doc.Path>"}`. A null or empty `orderBy` produces a `__name__`-only cursor. Throws `ArgumentException` if a required field is absent from the document. The resulting `Cursor` is identical on the wire to one constructed by hand — `Cursor.FromDocument` is a client-side convenience only.
 
 | `Query` property | `before` | Equivalent |
 | - | - | - |

@@ -230,7 +230,7 @@ public static class SchemaSql
             WHEN v ? 'timestampValue' THEN 40
             WHEN v ? 'stringValue' THEN 50
             WHEN v ? 'bytesValue' THEN 60
-            WHEN v ? 'docRefValue' OR v ? 'referenceValue' THEN 70   -- referenceValue: stored before 1.0
+            WHEN v ? 'docRefValue' THEN 70
             WHEN v ? 'fileRefValue' THEN 72
             WHEN v ? 'userRefValue' THEN 74
             WHEN v ? 'geoPointValue' THEN 80
@@ -274,7 +274,6 @@ public static class SchemaSql
         SELECT CASE
             WHEN v ? 'stringValue' THEN v->>'stringValue'
             WHEN v ? 'docRefValue' THEN v->>'docRefValue'
-            WHEN v ? 'referenceValue' THEN v->>'referenceValue'
             WHEN v ? 'fileRefValue' THEN v->>'fileRefValue'
             WHEN v ? 'userRefValue' THEN v->>'userRefValue'
         END

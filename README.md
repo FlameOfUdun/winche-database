@@ -863,7 +863,7 @@ Over the wire: `"expand": [...]` on `doc.get`, `doc.getAll`, `query`, `listen`, 
 (`patient.doctor` is the `doctor` of the `patient`'s document); 10 paths, 4 deep, 100 at most. Each referenced
 document, file and user is read as the caller: one they may not see is left out. Live subscriptions follow every
 referenced document, file and user: a change is sent as a `listen.delta` (`changes: []` when only they changed).
-`LiveExpansion` does the same for server code. `referenceValue` (before 1.0) is still read as a document reference.
+`LiveExpansion` does the same for server code.
 See PROTOCOL §7.7.
 
 ## Transactions

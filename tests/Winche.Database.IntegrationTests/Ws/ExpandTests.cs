@@ -230,31 +230,25 @@ public class ExpandTests(PostgresFixture fx) : QueryTestBase(fx)
     }
 
     [Fact]
-    public async Task File_and_user_references_are_queried_and_ordered_by_type_and_old_references_still_match()
+    public async Task File_and_user_references_are_queried_and_ordered_by_type()
     {
         var c = U("refq");
         await Core().WriteAsync([
             new SetWrite { Path = $"{c}/a", Fields = F(("who", new UserRefValue("u1"))) },
-            new SetWrite { Path = $"{c}/b", Fields = F(("who", new StringValue("u1"))) },
+            new SetWrite { Path = $"{c}/b", Fields = F(("who", new ReferenceValue("people/p1"))) },
+            new SetWrite { Path = $"{c}/e", Fields = F(("who", new StringValue("u1"))) },
             new SetWrite { Path = $"{c}/c", Fields = F(("who", new FileRefValue("u1"))) },
             new SetWrite { Path = $"{c}/d", Fields = F(("who", new UserRefValue("u2"))) },
         ]);
-        // A document stored before 1.0 carries the old tag.
-        await using (var cmd = Fx.DataSource.CreateCommand("UPDATE winche_documents SET data = $1::jsonb WHERE document_path = $2"))
-        {
-            cmd.Parameters.AddWithValue("""{"who":{"referenceValue":"people/p1"}}""");
-            cmd.Parameters.AddWithValue($"{c}/b");
-            await cmd.ExecuteNonQueryAsync();
-        }
 
         async Task<string[]> Ids(Value v) => [.. (await Core().QueryAsync(new Querying.Ast.Query(c,
             new Querying.Ast.FieldFilter(Documents.FieldPath.Parse("who"), Querying.Ast.FilterOperator.Eq, v)))).Documents.Select(d => d.Id)];
         Assert.Equal(["a"], await Ids(new UserRefValue("u1")));          // not the file reference, not the string
         Assert.Equal(["c"], await Ids(new FileRefValue("u1")));
-        Assert.Equal(["b"], await Ids(new ReferenceValue("people/p1"))); // the old tag still matches a document reference
-        Assert.Equal("people/p1", ((ReferenceValue)(await Core().GetAsync($"{c}/b"))!.Fields["who"]).Path);
+        Assert.Equal(["b"], await Ids(new ReferenceValue("people/p1")));
+        Assert.Equal(["e"], await Ids(new StringValue("u1")));
 
         var ordered = await Core().QueryAsync(new Querying.Ast.Query(c, null, [new Querying.Ast.Ordering(Documents.FieldPath.Parse("who"), Querying.Ast.SortDirection.Asc)]));
-        Assert.Equal(["b", "c", "a", "d"], ordered.Documents.Select(d => d.Id));   // document refs, then files, then users
+        Assert.Equal(["e", "b", "c", "a", "d"], ordered.Documents.Select(d => d.Id));   // strings, document refs, files, users
     }
 }
