@@ -59,6 +59,13 @@ public sealed class WincheDatabaseOptions
     public TtlConfig Ttl { get; set; } = new();
 
     /// <summary>
+    /// The most referenced documents, files and users one <c>expand</c> response includes (default 100, at most
+    /// 10,000); past it, references come back without data. Each level of references is one batched read by path, so
+    /// a higher limit costs larger reads, not more of them; live subscriptions listen to each linked document.
+    /// </summary>
+    public int ExpandLimit { get; set; } = Runtime.Expansion.ExpandRequest.DefaultLimit;
+
+    /// <summary>
     /// Registers one or more <see cref="IndexDefinition"/> instances. Multiple calls accumulate —
     /// each definition is registered as a singleton so that <c>GetServices&lt;IndexDefinition&gt;()</c>
     /// returns them all at startup.

@@ -759,8 +759,11 @@ An invalid or missing token results in an **HTTP 401** response — the WebSocke
 On a successful upgrade the server **immediately** sends:
 
 ```json
-{"type": "welcome", "connectionId": "a1b2c3..."}
+{"type": "welcome", "connectionId": "a1b2c3...", "expandLimit": 100}
 ```
+
+`expandLimit` is the server's limit on referenced documents, files and users per expand response (§7.7); clients
+follow it when they expand from their cache offline.
 
 The connection's identity is fixed for its lifetime. On token expiry the client reconnects.
 
@@ -1111,7 +1114,8 @@ The **send queue** is bounded at 64 frames (configurable). If it fills up, the c
 
 - **Paths:** each segment names a field; maps are walked into, lists apply the rest to each item, and a `docRefValue`
   applies the rest to the document it points to. `patient.doctor` follows `patient`, then `doctor` in that document.
-  At most 10 paths, 4 references deep, 100 documents (and files and users) per response; past that, references stay
+  At most 10 paths, 4 references deep, and the server's `ExpandLimit` documents, files and users per response
+  (default 100, at most 10,000; announced in `welcome`); past that, references stay
   as they are.
 - **Documents:** come beside the results under `"included": { "<path>": <document>, … }`, each once however often
   it's referenced (cycles included). The fields themselves are unchanged.

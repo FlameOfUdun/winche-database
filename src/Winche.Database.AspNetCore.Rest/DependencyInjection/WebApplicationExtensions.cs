@@ -67,12 +67,13 @@ public static class WebApplicationExtensions
         });
 
         // ?expand=patient,patient.doctor: the referenced documents come back under "included" (by path).
-        group.MapGet("/{path}", async (string path, string? expand, IDocumentDatabase db, ReferenceResolvers resolvers, CancellationToken ct = default) =>
+        group.MapGet("/{path}", async (string path, string? expand, IDocumentDatabase db, ReferenceResolvers resolvers,
+            Microsoft.Extensions.Options.IOptions<Winche.Database.DependencyInjection.WincheDatabaseOptions> options, CancellationToken ct = default) =>
         {
             var decoded = DecodeBase64(path);
             var document = await db.GetAsync(decoded, ct);
             if (document is null) return Results.NotFound();
-            var request = ExpandRequest.Parse(expand);
+            var request = ExpandRequest.Parse(expand, options.Value.ExpandLimit);
             if (request is null) return Results.Json(document, statusCode: 200, contentType: "application/json");
             var body = JsonSerializer.SerializeToNode(document)!.AsObject();
             await AddIncludedAsync(body, db, resolvers, [document], request, ct);
@@ -176,7 +177,7 @@ public static class WebApplicationExtensions
                     list.Add(await db.GetAsync(transaction, docPath, ct));  // recorded reads
                 docs = list;
             }
-            if (Expand(node) is not { } expandDocs) return Results.Json(new { documents = docs }, statusCode: 200, contentType: "application/json");
+            if (Expand(node, request.HttpContext) is not { } expandDocs) return Results.Json(new { documents = docs }, statusCode: 200, contentType: "application/json");
             var batch = new JsonObject { ["documents"] = JsonSerializer.SerializeToNode(docs) };
             await AddIncludedAsync(batch, db, request.HttpContext.RequestServices.GetRequiredService<ReferenceResolvers>(), docs, expandDocs, ct);
             return Results.Json(batch, statusCode: 200, contentType: "application/json");
@@ -194,7 +195,7 @@ public static class WebApplicationExtensions
             var result = transaction is null
                 ? await db.QueryAsync(query, ct)
                 : await db.QueryAsync(transaction, query, ct);
-            if (Expand(node) is not { } expandQuery) return Results.Json(result, statusCode: 200, contentType: "application/json");
+            if (Expand(node, request.HttpContext) is not { } expandQuery) return Results.Json(result, statusCode: 200, contentType: "application/json");
             var body = JsonSerializer.SerializeToNode(result)!.AsObject();
             await AddIncludedAsync(body, db, request.HttpContext.RequestServices.GetRequiredService<ReferenceResolvers>(), result.Documents, expandQuery, ct);
             return Results.Json(body, statusCode: 200, contentType: "application/json");
@@ -252,10 +253,11 @@ public static class WebApplicationExtensions
     }
 
     /// <summary>A body's <c>expand</c>: the reference paths to follow.</summary>
-    private static ExpandRequest? Expand(JsonObject body) => body["expand"] switch
+    private static ExpandRequest? Expand(JsonObject body, HttpContext http) => body["expand"] switch
     {
         null => null,
-        JsonArray a => ExpandRequest.Of(a.Select(n => n?.GetValue<string>() ?? "")),
+        JsonArray a => ExpandRequest.Of(a.Select(n => n?.GetValue<string>() ?? ""),
+            http.RequestServices.GetService<Microsoft.Extensions.Options.IOptions<Winche.Database.DependencyInjection.WincheDatabaseOptions>>()?.Value.ExpandLimit ?? ExpandRequest.DefaultLimit),
         _ => throw new RuntimeException(RuntimeStatus.InvalidArgument, "'expand' is a list of field paths."),
     };
 

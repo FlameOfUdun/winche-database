@@ -40,12 +40,13 @@ public sealed class MessageRouter
         try
         {
             scope.ApplyClaims();
+            var limit = ExpandLimit(httpContext);
             return message switch
             {
                 PingMessage => Ok(id!, []),
-                DocGetMessage get => await HandleGet(scope, Resolvers(httpContext), id!, get, ct),
-                DocGetAllMessage getAll => await HandleGetAll(scope, Resolvers(httpContext), id!, getAll, ct),
-                QueryMessage query => await HandleQuery(scope, Resolvers(httpContext), id!, query, ct),
+                DocGetMessage get => await HandleGet(scope, Resolvers(httpContext), id!, get, limit, ct),
+                DocGetAllMessage getAll => await HandleGetAll(scope, Resolvers(httpContext), id!, getAll, limit, ct),
+                QueryMessage query => await HandleQuery(scope, Resolvers(httpContext), id!, query, limit, ct),
                 CountMessage count => Ok(id!, new JsonObject { ["count"] = await scope.Db.CountAsync(count.Query, ct) }),
                 AggregateMessage agg => Ok(id!, new JsonObject { ["result"] = AggregateResultBody(await scope.Db.AggregateAsync(agg.Query, agg.Aggregations, ct)) }),
                 AddMessage add => Ok(id!, new JsonObject { ["document"] = ToNode(await scope.Db.AddAsync(add.Collection, add.Fields, ct)) }),
@@ -55,10 +56,10 @@ public sealed class MessageRouter
                 TxQueryMessage txQuery => Ok(id!, ToNode(await scope.Db.QueryAsync(RequireTx(scope, txQuery.TransactionId), txQuery.Query, ct))!.AsObject()),
                 TxCommitMessage txCommit => await HandleTxCommit(scope, id!, txCommit, ct),
                 TxRollbackMessage txRollback => await HandleTxRollback(scope, id!, txRollback, ct),
-                ListenMessage listen => HandleListen(scope, conn, id!, listen.Query, listen.ResumeToken, listen.Protocol, ExpandRequest.Of(listen.Expand),
+                ListenMessage listen => HandleListen(scope, conn, id!, listen.Query, listen.ResumeToken, listen.Protocol, ExpandRequest.Of(listen.Expand, limit),
                     Resolvers(httpContext)),
                 DocListenMessage docListen => await HandleDocListen(scope, conn, id!, docListen.Path, docListen.ResumeToken, docListen.Protocol,
-                    ExpandRequest.Of(docListen.Expand), Resolvers(httpContext), ct),
+                    ExpandRequest.Of(docListen.Expand, limit), Resolvers(httpContext), ct),
                 UnlistenMessage unlisten => await HandleUnlisten(scope, id!, unlisten),
                 _ => new ErrorMessage { Id = id, Error = new WincheError(WincheErrorCode.InvalidArgument, $"Unknown message: {message.GetType().Name}") },
             };
@@ -70,28 +71,33 @@ public sealed class MessageRouter
         }
     }
 
+    /// <summary>The server's <c>ExpandLimit</c> (read per message, so a settings change applies at once).</summary>
+    private static int ExpandLimit(Microsoft.AspNetCore.Http.HttpContext http) =>
+        (http.RequestServices?.GetService(typeof(Microsoft.Extensions.Options.IOptions<Winche.Database.DependencyInjection.WincheDatabaseOptions>))
+            as Microsoft.Extensions.Options.IOptions<Winche.Database.DependencyInjection.WincheDatabaseOptions>)?.Value.ExpandLimit ?? ExpandRequest.DefaultLimit;
+
     private static ReferenceResolvers? Resolvers(Microsoft.AspNetCore.Http.HttpContext http) =>
         http.RequestServices?.GetService(typeof(ReferenceResolvers)) as ReferenceResolvers;   // none: kinded paths aren't resolved
 
-    private static async Task<ServerMessage> HandleGet(ConnectionScope scope, ReferenceResolvers? resolvers, string id, DocGetMessage get, CancellationToken ct)
+    private static async Task<ServerMessage> HandleGet(ConnectionScope scope, ReferenceResolvers? resolvers, string id, DocGetMessage get, int limit, CancellationToken ct)
     {
-        var expand = ExpandRequest.Of(get.Expand);
+        var expand = ExpandRequest.Of(get.Expand, limit);
         var doc = await scope.Db.GetAsync(get.Path, ct);
         var body = new JsonObject { ["document"] = ToNode(doc) };
         return Ok(id, await WithIncluded(scope, resolvers, body, [doc], expand, ct));
     }
 
-    private static async Task<ServerMessage> HandleGetAll(ConnectionScope scope, ReferenceResolvers? resolvers, string id, DocGetAllMessage getAll, CancellationToken ct)
+    private static async Task<ServerMessage> HandleGetAll(ConnectionScope scope, ReferenceResolvers? resolvers, string id, DocGetAllMessage getAll, int limit, CancellationToken ct)
     {
-        var expand = ExpandRequest.Of(getAll.Expand);
+        var expand = ExpandRequest.Of(getAll.Expand, limit);
         var docs = await scope.Db.GetAllAsync(getAll.Paths, ct);
         var body = new JsonObject { ["documents"] = new JsonArray([.. docs.Select(ToNode)]) };
         return Ok(id, await WithIncluded(scope, resolvers, body, docs, expand, ct));
     }
 
-    private static async Task<ServerMessage> HandleQuery(ConnectionScope scope, ReferenceResolvers? resolvers, string id, QueryMessage query, CancellationToken ct)
+    private static async Task<ServerMessage> HandleQuery(ConnectionScope scope, ReferenceResolvers? resolvers, string id, QueryMessage query, int limit, CancellationToken ct)
     {
-        var expand = ExpandRequest.Of(query.Expand);
+        var expand = ExpandRequest.Of(query.Expand, limit);
         var result = await scope.Db.QueryAsync(query.Query, ct);
         return Ok(id, await WithIncluded(scope, resolvers, ToNode(result)!.AsObject(), result.Documents, expand, ct));
     }

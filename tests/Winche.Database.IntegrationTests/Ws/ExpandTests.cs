@@ -251,4 +251,24 @@ public class ExpandTests(PostgresFixture fx) : QueryTestBase(fx)
         var ordered = await Core().QueryAsync(new Querying.Ast.Query(c, null, [new Querying.Ast.Ordering(Documents.FieldPath.Parse("who"), Querying.Ast.SortDirection.Asc)]));
         Assert.Equal(["e", "b", "c", "a", "d"], ordered.Documents.Select(d => d.Id));   // strings, document refs, files, users
     }
+
+    [Fact]
+    public async Task The_server_expand_limit_caps_what_one_response_includes()
+    {
+        var c = U("lim");
+        var targets = Enumerable.Range(0, 5).Select(i => $"{U("targets")}/t{i}").ToList();
+        await Core().WriteAsync([
+            .. targets.Select(t => new SetWrite { Path = t, Fields = F(("n", new StringValue(t))) }),
+            new SetWrite { Path = $"{c}/root", Fields = F(("all", new ArrayValue([.. targets.Select(t => (Value)Ref(t))]))) },
+        ]);
+        await using var host = await WsTestHost.StartAsync(Fx.ConnectionString, o => { o.UseRules(Rules); o.ExpandLimit = 3; });
+        await using var ws = await WsTestClient.ConnectAsync(host.Server, "/documents/v1/ws?access_token=uid:ann");
+        var welcome = await ws.WaitForAsync(f => (string?)f["type"] == "welcome");
+        Assert.Equal(3, (int?)welcome["expandLimit"]);   // the SDKs follow it offline
+
+        var get = await ws.RequestAsync(new JsonObject { ["type"] = "doc.get", ["path"] = $"{c}/root", ["expand"] = new JsonArray("all") });
+        Assert.Equal(3, get["result"]!["included"]!.AsObject().Count);   // the other two come back without data
+
+        Assert.Contains("1 to 10,000", string.Join(" ", new Settings.DatabaseSettings { ExpandLimit = 0 }.Problems()));
+    }
 }

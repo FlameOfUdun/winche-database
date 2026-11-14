@@ -860,7 +860,8 @@ expansion.Resolved["file:scans/a.png"]; // files and users (Winche.Storage / Win
 
 Over the wire: `"expand": [...]` on `doc.get`, `doc.getAll`, `query`, `listen`, `doc.listen` (WebSocket), `?expand=` on
 `GET`, `"expand"` on `:batchGet` / `:runQuery` (REST). Paths walk maps, lists (each item) and document references
-(`patient.doctor` is the `doctor` of the `patient`'s document); 10 paths, 4 deep, 100 at most. Each referenced
+(`patient.doctor` is the `doctor` of the `patient`'s document); 10 paths, 4 deep, and `o.ExpandLimit` (default 100, up to 10,000; also in the console's database settings)
+documents, files and users per response; past it, links come back without data. Each referenced
 document, file and user is read as the caller: one they may not see is left out. Live subscriptions follow every
 referenced document, file and user: a change is sent as a `listen.delta` (`changes: []` when only they changed).
 `LiveExpansion` does the same for server code.

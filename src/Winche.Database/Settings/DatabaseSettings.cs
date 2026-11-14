@@ -24,6 +24,8 @@ public sealed record DatabaseSettings
     public WriteLimitSettings WriteLimits { get; init; } = new();
     /// <summary>Queries slower than this without an index are reported (and suggested in the console); null = off.</summary>
     public int? SlowQueryMs { get; init; } = 500;
+    /// <summary>The most referenced documents, files and users one expand response includes.</summary>
+    public int ExpandLimit { get; init; } = Runtime.Expansion.ExpandRequest.DefaultLimit;
     public RequestLogSettings RequestLog { get; init; } = new();
 
     public static DatabaseSettings From(WincheDatabaseOptions o, IEnumerable<IndexDefinition> indexes, IEnumerable<TtlPolicy> ttl) => new()
@@ -34,6 +36,7 @@ public sealed record DatabaseSettings
         History = o.History is { } h ? new() { Enabled = true, RetentionDays = (int)h.Retention.TotalDays } : new(),
         WriteLimits = new() { MaxDocumentKb = (int)(o.WriteLimits.MaxDocumentSizeBytes / 1024), MaxDepth = o.WriteLimits.MaxDepth },
         SlowQueryMs = o.SlowQueryThreshold is { } t ? (int)t.TotalMilliseconds : null,
+        ExpandLimit = o.ExpandLimit,
         RequestLog = o.RequestLog is { } r
             ? new() { Enabled = true, SampleRate = r.SuccessSampleRate, SlowMs = (int)r.SlowThreshold.TotalMilliseconds }
             : new(),
@@ -49,6 +52,7 @@ public sealed record DatabaseSettings
         o.History = History.Enabled ? new HistoryConfig { Retention = TimeSpan.FromDays(History.RetentionDays) } : null;
         o.WriteLimits = o.WriteLimits with { MaxDocumentSizeBytes = WriteLimits.MaxDocumentKb * 1024L, MaxDepth = WriteLimits.MaxDepth };
         o.SlowQueryThreshold = SlowQueryMs is { } ms ? TimeSpan.FromMilliseconds(ms) : null;
+        o.ExpandLimit = ExpandLimit;
         o.RequestLog = RequestLog.Enabled
             ? new Runtime.Logging.RequestLogOptions { SuccessSampleRate = RequestLog.SampleRate, SlowThreshold = TimeSpan.FromMilliseconds(RequestLog.SlowMs) }
             : null;
@@ -84,6 +88,7 @@ public sealed record DatabaseSettings
         if (History.Enabled && History.RetentionDays is < 1 or > 3650) problems.Add("Keep history 1 day to 10 years.");
         if (WriteLimits.MaxDocumentKb is < 1 or > 16 * 1024) problems.Add("Documents may be 1 KB to 16 MB.");
         if (WriteLimits.MaxDepth is < 1 or > 100) problems.Add("Documents may nest 1 to 100 levels.");
+        if (ExpandLimit is < 1 or > Runtime.Expansion.ExpandRequest.MaxLimit) problems.Add($"Expand includes 1 to {Runtime.Expansion.ExpandRequest.MaxLimit:N0} references.");
         if (SlowQueryMs is < 1) problems.Add("The slow-query threshold must be at least 1 ms (or off).");
         if (RequestLog.Enabled && RequestLog.SampleRate is < 0 or > 1) problems.Add("Log between 0% and 100% of successful requests.");
         if (RequestLog.Enabled && RequestLog.SlowMs < 1) problems.Add("A slow request takes at least 1 ms.");

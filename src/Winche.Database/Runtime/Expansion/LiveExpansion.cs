@@ -92,7 +92,7 @@ public sealed class LiveExpansion : IAsyncDisposable
         foreach (var path in paths)
         {
             if (_watching.ContainsKey(path)) continue;
-            if (_watching.Count >= ExpandRequest.MaxDocuments) break;
+            if (_watching.Count >= request.Limit) break;
             IDocumentListener? listener = null;
             try { listener = await db.ListenToDocumentAsync(path, null, ct); }
             catch (Exception ex) when (ex is Authorization.AccessDeniedException or WincheDeniedException or RuntimeException) { }   // can't follow it: stays a pointer

@@ -105,7 +105,11 @@ public static class WebApplicationExtensions
             scope.SetClaims(claims ?? new Dictionary<string, object?>());
 
             // ── server-initiated welcome (no client hello frame) ─────────────────
-            conn.TrySend(new WelcomeMessage { ConnectionId = scope.ConnectionId });
+            conn.TrySend(new WelcomeMessage
+            {
+                ConnectionId = scope.ConnectionId,
+                ExpandLimit = context.RequestServices.GetService<IOptions<Winche.Database.DependencyInjection.WincheDatabaseOptions>>()?.Value.ExpandLimit,
+            });
 
             // ── serial message loop ───────────────────────────────────────────────
             while (!context.RequestAborted.IsCancellationRequested)

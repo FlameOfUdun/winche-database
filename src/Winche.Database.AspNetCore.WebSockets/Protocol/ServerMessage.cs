@@ -15,6 +15,8 @@ public sealed record WelcomeMessage : ServerMessage
 {
     [JsonPropertyName("type")] public string Type { get; } = "welcome";
     [JsonPropertyName("connectionId")] public required string ConnectionId { get; init; }
+    /// <summary>The most referenced documents, files and users one expand response includes (the SDKs follow it offline).</summary>
+    [JsonPropertyName("expandLimit")] public int? ExpandLimit { get; init; }
 }
 
 public sealed record ResponseMessage : ServerMessage

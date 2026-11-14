@@ -20,16 +20,25 @@ public sealed record ExpandRequest
     public const int MaxPaths = 10;
     /// <summary>The most references followed one after another (<c>a.b.c.d</c> is four).</summary>
     public const int MaxDepth = 4;
-    /// <summary>The most documents (and resolved values) one response includes; past it, references stay pointers.</summary>
-    public const int MaxDocuments = 100;
+    /// <summary>The default for <see cref="Limit"/> (<c>WincheDatabaseOptions.ExpandLimit</c>).</summary>
+    public const int DefaultLimit = 100;
+    /// <summary>The highest <c>WincheDatabaseOptions.ExpandLimit</c> may be.</summary>
+    public const int MaxLimit = 10_000;
 
     public IReadOnlyList<ExpandPath> Paths { get; }
+
+    /// <summary>
+    /// The most documents (with files and users) one response includes; past it, references come back without data.
+    /// The server sets it from <c>WincheDatabaseOptions.ExpandLimit</c>.
+    /// </summary>
+    public int Limit { get; init; } = DefaultLimit;
 
     private ExpandRequest(IReadOnlyList<ExpandPath> paths) => Paths = paths;
 
     /// <summary>The request for <paramref name="paths"/>, or null when there are none; throws for a malformed one.</summary>
-    public static ExpandRequest? Of(IEnumerable<string>? paths)
+    public static ExpandRequest? Of(IEnumerable<string>? paths, int limit = DefaultLimit)
     {
+        if (limit is < 1 or > MaxLimit) throw new ArgumentOutOfRangeException(nameof(limit), $"The expand limit is 1 to {MaxLimit}.");
         var list = (paths ?? []).Select(p => p?.Trim() ?? "").Where(p => p.Length > 0).Distinct(StringComparer.Ordinal).ToList();
         if (list.Count == 0) return null;
         if (list.Count > MaxPaths)
@@ -42,12 +51,12 @@ public sealed record ExpandRequest
                 throw new RuntimeException(RuntimeStatus.InvalidArgument, $"'{p}' isn't a field path to expand (fields separated by dots).");
             parsed.Add(new ExpandPath(segments));
         }
-        return new ExpandRequest(parsed);
+        return new ExpandRequest(parsed) { Limit = limit };
     }
 
     /// <summary>For query strings: <c>expand=patient,patient.doctor</c>.</summary>
-    public static ExpandRequest? Parse(string? commaSeparated) =>
-        string.IsNullOrWhiteSpace(commaSeparated) ? null : Of(commaSeparated.Split(','));
+    public static ExpandRequest? Parse(string? commaSeparated, int limit = DefaultLimit) =>
+        string.IsNullOrWhiteSpace(commaSeparated) ? null : Of(commaSeparated.Split(','), limit);
 }
 
 /// <summary>The resolvers for file and user references, and who for.</summary>
@@ -96,7 +105,7 @@ public static class ReferenceExpander
             {
                 referenced.Add(path);
                 if (read.Contains(path) || toRead.Contains(path)) continue;
-                if (read.Count + toRead.Count >= ExpandRequest.MaxDocuments) { truncated = true; continue; }
+                if (read.Count + toRead.Count >= request.Limit) { truncated = true; continue; }
                 toRead.Add(path);
             }
             if (toRead.Count > 0)
@@ -118,7 +127,7 @@ public static class ReferenceExpander
         var resolved = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         if (resolution is not null)
         {
-            var room = Math.Max(0, ExpandRequest.MaxDocuments - included.Count);
+            var room = Math.Max(0, request.Limit - included.Count);
             foreach (var (kind, values) in keys)
             {
                 // Storage or Winche Auth not in this app: those references stay unresolved.
