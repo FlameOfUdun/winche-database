@@ -45,6 +45,10 @@ builder.Services
     })
     .AddWincheDatabaseWsApi();
 
+// File and user links in the Flutter demo's Expand tab (Winche.Storage and Winche Auth register the real ones).
+builder.Services.AddSingleton<Winche.IWincheReferenceResolver, SampleFiles>();
+builder.Services.AddSingleton<Winche.IWincheReferenceResolver, SampleUsers>();
+
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
