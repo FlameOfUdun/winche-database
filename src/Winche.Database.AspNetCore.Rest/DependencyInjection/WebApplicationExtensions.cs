@@ -267,7 +267,7 @@ public static class WebApplicationExtensions
         var included = new JsonObject();
         foreach (var (path, doc) in expansion.Included) included[path] = JsonSerializer.SerializeToNode(doc);
         body["included"] = included;
-        if (request.Kinds.Any())
+        if (expansion.Resolved.Count > 0)
         {
             var resolved = new JsonObject();
             foreach (var (key, value) in expansion.Resolved) resolved[key] = value.DeepClone();

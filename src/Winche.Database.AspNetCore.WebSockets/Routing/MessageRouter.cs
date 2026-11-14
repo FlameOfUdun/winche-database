@@ -103,7 +103,7 @@ public sealed class MessageRouter
         if (expand is null) return body;
         var expansion = await ReferenceExpander.ExpandAsync(scope.Db, docs, expand, ct, resolvers?.For(scope.Db));
         body["included"] = Included(expansion.Included);
-        if (expansion.Resolved.Count > 0 || expand.Kinds.Any()) body["resolved"] = Resolved(expansion.Resolved);
+        if (expansion.Resolved.Count > 0) body["resolved"] = Resolved(expansion.Resolved);
         return body;
     }
 

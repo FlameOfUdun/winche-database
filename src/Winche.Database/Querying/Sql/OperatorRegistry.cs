@@ -138,6 +138,8 @@ internal static class OperatorRegistry
             StringValue s => $"(winche_rank({f}) = 50 AND winche_text({f}) COLLATE \"C\" = {bag.Add(s.Value)})",
             BytesValue b => $"(winche_rank({f}) = 60 AND winche_bytes({f}) = {bag.Add(b.Value)})",
             ReferenceValue r => $"(winche_rank({f}) = 70 AND winche_text({f}) COLLATE \"C\" = {bag.Add(r.Path)})",
+            FileRefValue fr => $"(winche_rank({f}) = 72 AND winche_text({f}) COLLATE \"C\" = {bag.Add(fr.Path)})",
+            UserRefValue u => $"(winche_rank({f}) = 74 AND winche_text({f}) COLLATE \"C\" = {bag.Add(u.Uid)})",
             GeoPointValue g =>
                 $"(winche_rank({f}) = 80 AND winche_num({f}) = {ValueSql.DoubleOperand(g.Latitude, bag)} AND winche_num2({f}) = {ValueSql.DoubleOperand(g.Longitude, bag)})",
             ArrayValue or MapValue =>
@@ -171,6 +173,10 @@ internal static class OperatorRegistry
                 $"(winche_rank({f}) = 60 AND winche_bytes({f}) {sqlOp} {bag.Add(b.Value)})",
             ReferenceValue r =>
                 $"(winche_rank({f}) = 70 AND winche_text({f}) COLLATE \"C\" {sqlOp} {bag.Add(r.Path)})",
+            FileRefValue fr =>
+                $"(winche_rank({f}) = 72 AND winche_text({f}) COLLATE \"C\" {sqlOp} {bag.Add(fr.Path)})",
+            UserRefValue u =>
+                $"(winche_rank({f}) = 74 AND winche_text({f}) COLLATE \"C\" {sqlOp} {bag.Add(u.Uid)})",
             GeoPointValue g => EmitGeoInequality(f, op, g, bag),
             ArrayValue or MapValue =>
                 $"(winche_rank({f}) = {RankOf(operand)} AND winche_key({f}) {sqlOp} winche_key({ValueSql.CanonicalJsonb(operand, bag)}))",

@@ -34,7 +34,9 @@ All field values use a **tagged-value** encoding. Each value is a JSON object wi
 | `TimestampValue` | `timestampValue` | RFC 3339 string, UTC (`Z`), microsecond precision (`yyyy-MM-ddTHH:mm:ss.ffffffZ`) | Stored truncated to µs (sub-µs ticks dropped) |
 | `StringValue` | `stringValue` | JSON string | Unicode; code-point order for sorting |
 | `BytesValue` | `bytesValue` | standard base64 string | |
-| `ReferenceValue` | `referenceValue` | document path string (e.g. `"users/u1"`) | |
+| `ReferenceValue` | `docRefValue` | document path string (e.g. `"users/u1"`) | A document. `referenceValue` (before 1.0) is still read, as this |
+| `FileRefValue` | `fileRefValue` | file path string (e.g. `"scans/a.png"`) | A file in Winche Storage |
+| `UserRefValue` | `userRefValue` | uid string (e.g. `"u1"`) | A Winche Auth user |
 | `GeoPointValue` | `geoPointValue` | `{"latitude": <number>, "longitude": <number>}` | |
 | `ArrayValue` | `arrayValue` | `{"values": [<value>, …]}` | `values` key may be absent for an empty array |
 | `MapValue` | `mapValue` | `{"fields": {"<key>": <value>, …}}` | `fields` key may be absent for an empty map |
@@ -52,7 +54,9 @@ All field values use a **tagged-value** encoding. Each value is a JSON object wi
 {"timestampValue": "2026-06-07T12:34:56.000000Z"}
 {"stringValue": "hello"}
 {"bytesValue": "SGVsbG8="}
-{"referenceValue": "users/u1"}
+{"docRefValue": "users/u1"}
+{"fileRefValue": "scans/a.png"}
+{"userRefValue": "u1"}
 {"geoPointValue": {"latitude": 59.913, "longitude": 10.752}}
 {"arrayValue": {"values": [{"integerValue": "1"}, {"integerValue": "2"}]}}
 {"arrayValue": {}}
@@ -73,7 +77,9 @@ The engine uses a total order across all types. The numeric rank values are:
 | Timestamp | 40 | |
 | String | 50 | Unicode code-point order (`COLLATE "C"` in Postgres) |
 | Bytes | 60 | Lexicographic byte order |
-| Reference | 70 | Whole-path Unicode code-point (byte) comparison — **not** per-segment; this differs from per-segment ordering for ids containing chars < `'/'` (U+002F) |
+| Document reference | 70 | Whole-path Unicode code-point (byte) comparison — **not** per-segment; this differs from per-segment ordering for ids containing chars < `'/'` (U+002F) |
+| File reference | 72 | Path, Unicode code-point comparison |
+| User reference | 74 | Uid, Unicode code-point comparison |
 | GeoPoint | 80 | Latitude first, then longitude |
 | Array | 90 | Element-wise; shorter prefix array sorts first |
 | Map | 100 | Keys sorted by code-point order; compared **interleaved** (key₁, value₁, key₂, value₂, …); shorter map wins on a prefix tie. Example: `{"a":{"integerValue":"1"},"b":{"integerValue":"0"}}` < `{"a":{"integerValue":"2"}}` — key `"a"` ties, value `1 < 2` decides |
@@ -1100,31 +1106,27 @@ The **send queue** is bounded at 64 frames (configurable). If it fills up, the c
 
 ### 7.7 Expanding references
 
-`doc.get`, `doc.getAll`, `query`, `listen` and `doc.listen` take `"expand": ["patient", "patient.doctor", "team"]`
+`doc.get`, `doc.getAll`, `query`, `listen` and `doc.listen` take `"expand": ["patient", "patient.doctor", "team", "scan", "author"]`
 (REST: `GET …/{path}?expand=patient,patient.doctor`; `:batchGet` and `:runQuery` take `"expand"` in the body).
 
-- **Paths:** each segment names a field; maps are walked into, lists apply the rest to each item, and a
-  `referenceValue` applies the rest to the document it points to. `patient.doctor` follows `patient`, then `doctor` in
-  that document. At most 10 paths, 4 references deep, 100 documents per response (past that, references stay pointers).
-- **Response:** the documents themselves are unchanged (fields stay `referenceValue`s); the referenced documents come
-  beside them under `"included": { "<path>": <document>, … }`. Each is sent once, however often it's referenced
-  (cycles included).
+- **Paths:** each segment names a field; maps are walked into, lists apply the rest to each item, and a `docRefValue`
+  applies the rest to the document it points to. `patient.doctor` follows `patient`, then `doctor` in that document.
+  At most 10 paths, 4 references deep, 100 documents (and files and users) per response; past that, references stay
+  as they are.
+- **Documents:** come beside the results under `"included": { "<path>": <document>, … }`, each once however often
+  it's referenced (cycles included). The fields themselves are unchanged.
+- **Files and users:** a `fileRefValue` or `userRefValue` a path ends at is resolved by Winche.Storage / Winche Auth
+  and comes under `"resolved": { "file:<path>": {…}, "user:<uid>": {…} }`: the file's record (as storage returns it,
+  never a download link) if the storage rules let the caller `get` it; the user's public profile (`uid`,
+  `displayName`, `photoUrl`, and the claims the app lists as public) to signed-in callers, the whole account to its
+  own user. A plain string is never resolved: store references with their types.
 - **Rules:** each referenced document is read as the caller (its `get` rule). One they may not read, or that doesn't
-  exist, is simply not in `included`: the client keeps the pointer, and can't tell which.
-- **Files and users:** a path may start with a kind, `file:scan`, `user:author`,
-  `user:patient.author`: the value it ends at (a string: a file's path, a uid) is resolved by that kind's resolver
-  (Winche.Storage registers `file`, Winche Auth `user`) and comes back under
-  `"resolved": { "<kind>:<value>": {…} }`; the field keeps its value. `file:` gives the file's record (as storage
-  returns it, never a download link), if the storage rules let the caller `get` it; `user:` gives the public profile
-  (`uid`, `displayName`, `photoUrl`, and the claims the app lists as public) to signed-in callers, the whole account to
-  its own user. An unknown kind is `invalid-argument`. Live, `listen.snapshot` carries the full `resolved`, deltas
-  `resolved` (new or changed) and `unresolved` (keys gone); a change in storage or Winche Auth refreshes them.
-- **Listening:** `listen.snapshot` carries the full `included`. Each `listen.delta` carries `included` (referenced
-  documents new or changed since the last frame) and `excluded` (paths no longer included: deleted, unreadable, or no
-  longer referenced). When only a referenced document changed, the delta has `"changes": []`. The server listens to
-  every referenced document, so a change to one reaches the subscriber within the usual listener latency. A
-  subscription with `expand` ignores `resumeToken` and always starts with a full `listen.snapshot` (never
-  `listen.current`): the referenced documents may have changed while the client was away.
+  exist, is simply not in `included`/`resolved`: the client can't tell which.
+- **Listening:** `listen.snapshot` carries the full `included` and `resolved`. Each `listen.delta` carries `included`
+  and `resolved` (new or changed since the last frame) and `excluded` / `unresolved` (no longer there: deleted,
+  unreadable, or no longer referenced). When only referenced things changed, the delta has `"changes": []`. The
+  server listens to every referenced document and to storage and auth changes. A subscription with `expand` ignores
+  `resumeToken` and always starts with a full `listen.snapshot`.
 
 ## 8. Operational Notes
 

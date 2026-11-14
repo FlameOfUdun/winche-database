@@ -38,7 +38,8 @@ public sealed class LiveExpansion : IAsyncDisposable
         this.db = db;
         this.request = request;
         this.resolvers = resolvers;
-        if (resolvers is not null && request.Kinds.Any()) _resolverWatch = resolvers.Watch(request.Kinds, () => _changed.Writer.TryWrite(true));
+        // Any expanded field may hold file or user references: follow the resolvers' changes.
+        if (resolvers is { All.Count: > 0 }) _resolverWatch = resolvers.Watch(resolvers.All.Select(r => r.Kind), () => _changed.Writer.TryWrite(true));
     }
 
     private readonly Channel<bool> _changed = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });

@@ -4,18 +4,15 @@ using Winche.Values;
 
 namespace Winche.Database.Runtime.Expansion;
 
-/// <summary>
-/// One path to follow: its fields, and, with a <see cref="Kind"/> (<c>file:scan</c>), what the value it ends at stands
-/// for, resolved by that kind's <see cref="IWincheReferenceResolver"/> instead of read as a document reference.
-/// </summary>
-public sealed record ExpandPath(string[] Segments, string? Kind);
+/// <summary>One path to follow, as its fields.</summary>
+public sealed record ExpandPath(string[] Segments);
 
 /// <summary>
 /// Which references to follow: dotted paths (<c>patient</c>, <c>patient.doctor</c>, <c>team</c>, <c>visits.doctor</c>).
 /// Each segment names a field; maps are walked into, lists apply the rest to every item, and a reference applies the rest
 /// to the document it points to. So <c>patient.doctor</c> follows <c>patient</c>, then <c>doctor</c> in that document.
-/// A path may start with a kind, <c>file:scan</c> or <c>user:patient.author</c>: the value it ends at (a file path, a
-/// uid) is resolved by that kind's resolver.
+/// A file or user reference (<c>fileRefValue</c>, <c>userRefValue</c>) at the end of a path is resolved by the
+/// <c>file</c> / <c>user</c> resolver (Winche.Storage, Winche Auth): the file's record, the user's profile.
 /// </summary>
 public sealed record ExpandRequest
 {
@@ -30,9 +27,6 @@ public sealed record ExpandRequest
 
     private ExpandRequest(IReadOnlyList<ExpandPath> paths) => Paths = paths;
 
-    /// <summary>The kinds the paths name (<c>file</c>, <c>user</c>).</summary>
-    public IEnumerable<string> Kinds => Paths.Select(p => p.Kind).OfType<string>().Distinct(StringComparer.Ordinal);
-
     /// <summary>The request for <paramref name="paths"/>, or null when there are none; throws for a malformed one.</summary>
     public static ExpandRequest? Of(IEnumerable<string>? paths)
     {
@@ -43,14 +37,10 @@ public sealed record ExpandRequest
         var parsed = new List<ExpandPath>();
         foreach (var p in list)
         {
-            var colon = p.IndexOf(':');
-            var kind = colon > 0 ? p[..colon] : null;
-            if (kind is not null && !kind.All(char.IsAsciiLetterOrDigit))
-                throw new RuntimeException(RuntimeStatus.InvalidArgument, $"'{kind}' isn't a kind (e.g. file:scan, user:author).");
-            var segments = (colon > 0 ? p[(colon + 1)..] : p).Split('.');
+            var segments = p.Split('.');
             if (segments.Any(s => s.Length == 0 || s.Length > 1500))
                 throw new RuntimeException(RuntimeStatus.InvalidArgument, $"'{p}' isn't a field path to expand (fields separated by dots).");
-            parsed.Add(new ExpandPath(segments, kind));
+            parsed.Add(new ExpandPath(segments));
         }
         return new ExpandRequest(parsed);
     }
@@ -60,12 +50,12 @@ public sealed record ExpandRequest
         string.IsNullOrWhiteSpace(commaSeparated) ? null : Of(commaSeparated.Split(','));
 }
 
-/// <summary>The resolvers to use for kinded paths, and who for.</summary>
+/// <summary>The resolvers for file and user references, and who for.</summary>
 public sealed record ReferenceResolution(IReadOnlyList<IWincheReferenceResolver> Resolvers, ReferenceCaller Caller);
 
 /// <summary>
 /// What expanding found: the readable documents referenced (by path), every path referenced (readable or not), and the
-/// resolved values of kinded paths (by <c>kind:value</c>, e.g. <c>file:scans/a.png</c>).
+/// resolved file and user references (by <c>kind:value</c>, e.g. <c>file:scans/a.png</c>, <c>user:u1</c>).
 /// </summary>
 public sealed record Expansion(IReadOnlyDictionary<string, Document> Included, IReadOnlySet<string> Referenced, bool Truncated)
 {
@@ -78,7 +68,7 @@ public sealed record Expansion(IReadOnlyDictionary<string, Document> Included, I
 /// <summary>
 /// Follows references in documents: one batch read per level, each document read as the caller (a document they may not
 /// get, or that doesn't exist, is left out, so its reference stays a pointer). A document referenced twice, or a cycle,
-/// is read once. Kinded paths end in values the matching resolver turns into what they stand for.
+/// is read once. File and user references at the end of a path are resolved by the matching resolver.
 /// </summary>
 public static class ReferenceExpander
 {
@@ -86,26 +76,23 @@ public static class ReferenceExpander
         ReferenceResolution? resolution = null)
     {
         if (request is null) return Expansion.Empty;
-        if (resolution is not null && request.Kinds.FirstOrDefault(k => resolution.Resolvers.All(r => r.Kind != k)) is { } unknown)
-            throw new RuntimeException(RuntimeStatus.InvalidArgument,
-                $"Nothing resolves '{unknown}:' here{(resolution.Resolvers.Count == 0 ? "" : $" (only {string.Join(", ", resolution.Resolvers.Select(r => r.Kind + ":"))})")}.");
         var included = new Dictionary<string, Document>(StringComparer.Ordinal);
         var referenced = new HashSet<string>(StringComparer.Ordinal);
         var read = new HashSet<string>(StringComparer.Ordinal);
         var keys = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);   // kind → values to resolve
         var truncated = false;
 
-        var level = new List<(string Path, string[] Then, string? Kind)>();
+        var level = new List<(string Path, string[] Then)>();
         foreach (var root in roots)
             if (root is not null)
                 foreach (var path in request.Paths)
-                    Walk(new MapValue(root.Fields), path.Segments, 0, path.Kind, level, keys);
+                    Walk(new MapValue(root.Fields), path.Segments, 0, level, keys);
 
         for (var depth = 1; level.Count > 0; depth++)
         {
             if (depth > ExpandRequest.MaxDepth) { truncated = true; break; }
             var toRead = new List<string>();
-            foreach (var (path, _, _) in level)
+            foreach (var (path, _) in level)
             {
                 referenced.Add(path);
                 if (read.Contains(path) || toRead.Contains(path)) continue;
@@ -121,10 +108,10 @@ public static class ReferenceExpander
                     if (docs[i] is { } doc) included[toRead[i]] = doc;
                 }
             }
-            var next = new List<(string, string[], string?)>();
-            foreach (var (path, then, kind) in level)
+            var next = new List<(string, string[])>();
+            foreach (var (path, then) in level)
                 if (then.Length > 0 && included.TryGetValue(path, out var doc))
-                    Walk(new MapValue(doc.Fields), then, 0, kind, next, keys);
+                    Walk(new MapValue(doc.Fields), then, 0, next, keys);
             level = next;
         }
 
@@ -134,7 +121,8 @@ public static class ReferenceExpander
             var room = Math.Max(0, ExpandRequest.MaxDocuments - included.Count);
             foreach (var (kind, values) in keys)
             {
-                var resolver = resolution.Resolvers.First(r => r.Kind == kind);
+                // Storage or Winche Auth not in this app: those references stay unresolved.
+                if (resolution.Resolvers.FirstOrDefault(r => r.Kind == kind) is not { } resolver) continue;
                 var take = values.Take(room).ToList();
                 if (take.Count < values.Count) truncated = true;
                 room -= take.Count;
@@ -148,32 +136,37 @@ public static class ReferenceExpander
 
     /// <summary>
     /// Collects what following <paramref name="segments"/> (from <paramref name="i"/>) reaches in <paramref name="value"/>:
-    /// maps are walked into by name, lists apply the same step to each item, a reference is found with whatever of the
-    /// path is left (to follow inside the document it points to), and, for a kinded path, a string at its end is a value
-    /// to resolve.
+    /// maps are walked into by name, lists apply the same step to each item, a document reference is found with whatever
+    /// of the path is left (to follow inside the document it points to), and a file or user reference at the path's end
+    /// is a value to resolve.
     /// </summary>
-    private static void Walk(Value value, string[] segments, int i, string? kind, List<(string Path, string[] Then, string? Kind)> found,
-        Dictionary<string, HashSet<string>> keys)
+    private static void Walk(Value value, string[] segments, int i, List<(string Path, string[] Then)> found, Dictionary<string, HashSet<string>> keys)
     {
         switch (value)
         {
-            case StringValue s when kind is not null && i == segments.Length:
-                if (s.Value.Length is > 0 and <= 1500)
-                {
-                    if (!keys.TryGetValue(kind, out var set)) keys[kind] = set = new HashSet<string>(StringComparer.Ordinal);
-                    set.Add(s.Value);
-                }
+            case ReferenceValue r:
+                if (Target(r) is { } p) found.Add((p, segments[i..]));
                 break;
-            case ReferenceValue r when kind is null || i < segments.Length:
-                if (Target(r) is { } p) found.Add((p, segments[i..], kind));
+            case FileRefValue f when i == segments.Length:
+                Key(keys, "file", f.Path);
+                break;
+            case UserRefValue u when i == segments.Length:
+                Key(keys, "user", u.Uid);
                 break;
             case ArrayValue a:
-                foreach (var item in a.Values) Walk(item, segments, i, kind, found, keys);
+                foreach (var item in a.Values) Walk(item, segments, i, found, keys);
                 break;
             case MapValue m when i < segments.Length:
-                if (m.Fields.TryGetValue(segments[i], out var child)) Walk(child, segments, i + 1, kind, found, keys);
+                if (m.Fields.TryGetValue(segments[i], out var child)) Walk(child, segments, i + 1, found, keys);
                 break;
         }
+    }
+
+    private static void Key(Dictionary<string, HashSet<string>> keys, string kind, string value)
+    {
+        if (value.Length is 0 or > 1500) return;
+        if (!keys.TryGetValue(kind, out var set)) keys[kind] = set = new HashSet<string>(StringComparer.Ordinal);
+        set.Add(value);
     }
 
     private static string? Target(ReferenceValue r)

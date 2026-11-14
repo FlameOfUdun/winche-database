@@ -79,7 +79,7 @@ public class ExpandTests(PostgresFixture fx) : QueryTestBase(fx)
         var included = get["result"]!["included"]!.AsObject();
         Assert.Equal("Dr Who", (string?)included[d]!["fields"]!["name"]!["stringValue"]);
         Assert.False(included.ContainsKey(s));
-        Assert.Equal(d, (string?)get["result"]!["document"]!["fields"]!["doctor"]!["referenceValue"]);   // the field itself stays a pointer
+        Assert.Equal(d, (string?)get["result"]!["document"]!["fields"]!["doctor"]!["docRefValue"]);   // the field itself stays a pointer
 
         var collection = p.Split('/')[0];
         var query = await ws.RequestAsync(new JsonObject { ["type"] = "query", ["query"] = new JsonObject { ["collection"] = collection }, ["expand"] = new JsonArray("doctor") });
@@ -164,13 +164,13 @@ public class ExpandTests(PostgresFixture fx) : QueryTestBase(fx)
         Assert.True(full["included"]!.AsObject().ContainsKey(d));
     }
 
-    /// <summary>A resolver for "thing:" values: an in-memory table, with "secret" hidden from callers (not from the app).</summary>
-    private sealed class Things : IWincheReferenceResolver
+    /// <summary>A resolver of one kind: an in-memory table, with "secret" hidden from callers (not from the app).</summary>
+    private sealed class Table(string kind, string channel) : IWincheReferenceResolver
     {
         public System.Collections.Concurrent.ConcurrentDictionary<string, string> Names { get; } = new();
         public System.Collections.Concurrent.ConcurrentBag<ReferenceCaller> Callers { get; } = [];
-        public string Kind => "thing";
-        public string? ChangeChannel => "test_things_changed";
+        public string Kind => kind;
+        public string? ChangeChannel => channel;
         public Task<IReadOnlyDictionary<string, JsonObject>> ResolveAsync(IReadOnlyList<string> keys, ReferenceCaller caller, CancellationToken ct)
         {
             Callers.Add(caller);
@@ -182,44 +182,79 @@ public class ExpandTests(PostgresFixture fx) : QueryTestBase(fx)
     }
 
     [Fact]
-    public async Task Kinded_paths_are_resolved_as_the_caller_and_follow_documents_on_the_way()
+    public async Task File_and_user_references_are_resolved_by_their_type_as_the_caller()
     {
-        var things = new Things();
-        things.Names["t1"] = "First"; things.Names["t2"] = "Second"; things.Names["secret"] = "Hidden";
+        var files = new Table("file", "test_files_changed");
+        var users = new Table("user", "test_users_changed");
+        files.Names["scans/a.png"] = "Scan A"; files.Names["secret"] = "Hidden";
+        users.Names["u2"] = "Dr Lee";
         var owner = $"{U("owners")}/o";
         var item = $"{U("items")}/i";
         await Core().WriteAsync([
-            new SetWrite { Path = owner, Fields = F(("badge", new StringValue("t2"))) },
-            new SetWrite { Path = item, Fields = F(("thing", new StringValue("t1")), ("more", new ArrayValue([new StringValue("secret"), new StringValue("nope")]))
-                , ("owner", Ref(owner))) },
+            new SetWrite { Path = owner, Fields = F(("author", new UserRefValue("u2"))) },
+            new SetWrite { Path = item, Fields = F(("scan", new FileRefValue("scans/a.png")),
+                ("more", new ArrayValue([new FileRefValue("secret"), new FileRefValue("nope")])),
+                ("plain", new StringValue("scans/a.png")), ("owner", Ref(owner))) },
         ]);
-        await using var host = await WsTestHost.StartAsync(Fx.ConnectionString, o => { o.UseRules(Rules); o.Services.AddSingleton<IWincheReferenceResolver>(things); });
+        await using var host = await WsTestHost.StartAsync(Fx.ConnectionString, o =>
+        {
+            o.UseRules(Rules);
+            o.Services.AddSingleton<IWincheReferenceResolver>(files);
+            o.Services.AddSingleton<IWincheReferenceResolver>(users);
+        });
         await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server, "uid:ann");
 
-        var get = await ws.RequestAsync(new JsonObject { ["type"] = "doc.get", ["path"] = item, ["expand"] = new JsonArray("thing:thing", "thing:more", "thing:owner.badge") });
+        var get = await ws.RequestAsync(new JsonObject { ["type"] = "doc.get", ["path"] = item, ["expand"] = new JsonArray("scan", "more", "plain", "owner.author") });
         var resolved = get["result"]!["resolved"]!.AsObject();
-        Assert.Equal("First", (string?)resolved["thing:t1"]!["name"]);
-        Assert.Equal("Second", (string?)resolved["thing:t2"]!["name"]);   // through the owner's document
-        Assert.False(resolved.ContainsKey("thing:secret"));                  // hidden from the caller
-        Assert.False(resolved.ContainsKey("thing:nope"));
-        Assert.True(get["result"]!["included"]!.AsObject().ContainsKey(owner));
-        Assert.Contains(things.Callers, c => c.Uid == "ann" && !c.Trusted);
+        Assert.Equal("Scan A", (string?)resolved["file:scans/a.png"]!["name"]);
+        Assert.Equal("Dr Lee", (string?)resolved["user:u2"]!["name"]);       // through the owner's document
+        Assert.False(resolved.ContainsKey("file:secret"));                   // hidden from the caller
+        Assert.False(resolved.ContainsKey("file:nope"));
+        Assert.Equal(2, resolved.Count);                                     // a plain string is never resolved
+        Assert.Equal("scans/a.png", (string?)get["result"]!["document"]!["fields"]!["scan"]!["fileRefValue"]);
+        Assert.Contains(files.Callers, c => c.Uid == "ann" && !c.Trusted);
 
-        var unknown = await ws.RequestAsync(new JsonObject { ["type"] = "doc.get", ["path"] = item, ["expand"] = new JsonArray("photo:thing") });
-        Assert.Equal("invalid-argument", (string?)unknown["error"]!["code"]);
-
-        // Live: a change the resolver announces reaches the subscriber.
-        var resp = await ws.RequestAsync(new JsonObject { ["type"] = "doc.listen", ["path"] = item, ["expand"] = new JsonArray("thing:thing") });
+        // Live: a change a resolver announces reaches the subscriber.
+        var resp = await ws.RequestAsync(new JsonObject { ["type"] = "doc.listen", ["path"] = item, ["expand"] = new JsonArray("scan") });
         var sub = (string?)resp["result"]!["subscriptionId"];
         var snap = await ws.WaitForAsync(f => (string?)f["type"] == "listen.snapshot" && (string?)f["subscriptionId"] == sub);
-        Assert.Equal("First", (string?)snap["resolved"]!["thing:t1"]!["name"]);
-        things.Names["t1"] = "Renamed";
-        await using (var cmd = Fx.DataSource.CreateCommand("SELECT pg_notify('test_things_changed', '')")) await cmd.ExecuteNonQueryAsync();
+        Assert.Equal("Scan A", (string?)snap["resolved"]!["file:scans/a.png"]!["name"]);
+        files.Names["scans/a.png"] = "Renamed";
+        await using (var cmd = Fx.DataSource.CreateCommand("SELECT pg_notify('test_files_changed', '')")) await cmd.ExecuteNonQueryAsync();
         var delta = await ws.WaitForAsync(f => (string?)f["type"] == "listen.delta" && (string?)f["subscriptionId"] == sub && f["resolved"] is not null);
-        Assert.Equal("Renamed", (string?)delta["resolved"]!["thing:t1"]!["name"]);
-        things.Names.TryRemove("t1", out _);
-        await using (var cmd = Fx.DataSource.CreateCommand("SELECT pg_notify('test_things_changed', '')")) await cmd.ExecuteNonQueryAsync();
+        Assert.Equal("Renamed", (string?)delta["resolved"]!["file:scans/a.png"]!["name"]);
+        files.Names.TryRemove("scans/a.png", out _);
+        await using (var cmd = Fx.DataSource.CreateCommand("SELECT pg_notify('test_files_changed', '')")) await cmd.ExecuteNonQueryAsync();
         var gone = await ws.WaitForAsync(f => (string?)f["type"] == "listen.delta" && (string?)f["subscriptionId"] == sub && f["unresolved"] is not null);
-        Assert.Equal(["thing:t1"], gone["unresolved"]!.AsArray().Select(x => (string)x!));
+        Assert.Equal(["file:scans/a.png"], gone["unresolved"]!.AsArray().Select(x => (string)x!));
+    }
+
+    [Fact]
+    public async Task File_and_user_references_are_queried_and_ordered_by_type_and_old_references_still_match()
+    {
+        var c = U("refq");
+        await Core().WriteAsync([
+            new SetWrite { Path = $"{c}/a", Fields = F(("who", new UserRefValue("u1"))) },
+            new SetWrite { Path = $"{c}/b", Fields = F(("who", new StringValue("u1"))) },
+            new SetWrite { Path = $"{c}/c", Fields = F(("who", new FileRefValue("u1"))) },
+            new SetWrite { Path = $"{c}/d", Fields = F(("who", new UserRefValue("u2"))) },
+        ]);
+        // A document stored before 1.0 carries the old tag.
+        await using (var cmd = Fx.DataSource.CreateCommand("UPDATE winche_documents SET data = $1::jsonb WHERE document_path = $2"))
+        {
+            cmd.Parameters.AddWithValue("""{"who":{"referenceValue":"people/p1"}}""");
+            cmd.Parameters.AddWithValue($"{c}/b");
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        async Task<string[]> Ids(Value v) => [.. (await Core().QueryAsync(new Querying.Ast.Query(c,
+            new Querying.Ast.FieldFilter(Documents.FieldPath.Parse("who"), Querying.Ast.FilterOperator.Eq, v)))).Documents.Select(d => d.Id)];
+        Assert.Equal(["a"], await Ids(new UserRefValue("u1")));          // not the file reference, not the string
+        Assert.Equal(["c"], await Ids(new FileRefValue("u1")));
+        Assert.Equal(["b"], await Ids(new ReferenceValue("people/p1"))); // the old tag still matches a document reference
+        Assert.Equal("people/p1", ((ReferenceValue)(await Core().GetAsync($"{c}/b"))!.Fields["who"]).Path);
+
+        var ordered = await Core().QueryAsync(new Querying.Ast.Query(c, null, [new Querying.Ast.Ordering(Documents.FieldPath.Parse("who"), Querying.Ast.SortDirection.Asc)]));
+        Assert.Equal(["b", "c", "a", "d"], ordered.Documents.Select(d => d.Id));   // document refs, then files, then users
     }
 }

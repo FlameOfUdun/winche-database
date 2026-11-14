@@ -40,6 +40,8 @@ public static class DocumentLimits
         StringValue s => Utf8(s.Value) + 1,
         BytesValue b => b.Value.Length,
         ReferenceValue r => NameSize(r.Path) + 16,
+        FileRefValue f => Utf8(f.Path) + 1,
+        UserRefValue u => Utf8(u.Uid) + 1,
         ArrayValue a => ArrayBudget(a.Values),
         MapValue m => MapBudget(m.Fields),
         _ => throw new InvalidOperationException($"Unhandled Value subtype in size budget: {value.GetType().Name}"),

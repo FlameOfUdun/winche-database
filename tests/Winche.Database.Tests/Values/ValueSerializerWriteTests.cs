@@ -32,7 +32,9 @@ public class ValueSerializerWriteTests
     }
 
     [Fact] public void Bytes_WritesBase64() => Assert.Equal("""{"bytesValue":"AQID"}""", Json(new BytesValue([1, 2, 3])));
-    [Fact] public void Reference_Writes() => Assert.Equal("""{"referenceValue":"users/u1"}""", Json(new ReferenceValue("users/u1")));
+    [Fact] public void Reference_Writes() => Assert.Equal("""{"docRefValue":"users/u1"}""", Json(new ReferenceValue("users/u1")));
+    [Fact] public void FileRef_Writes() => Assert.Equal("""{"fileRefValue":"scans/a.png"}""", Json(new FileRefValue("scans/a.png")));
+    [Fact] public void UserRef_Writes() => Assert.Equal("""{"userRefValue":"u1"}""", Json(new UserRefValue("u1")));
     [Fact] public void GeoPoint_Writes() => Assert.Equal("""{"geoPointValue":{"latitude":59.9,"longitude":10.7}}""", Json(new GeoPointValue(59.9, 10.7)));
 
     [Fact]

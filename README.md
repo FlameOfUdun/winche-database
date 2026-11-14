@@ -114,7 +114,7 @@ The built-in claims/exception filters are always applied internally and run oute
 
 ## Features
 
-- **typed engine** — 11 tagged value types (`null`, `bool`, `int64`, `double`, `timestamp`, `string`, `bytes`, `reference`, `geopoint`, `array`, `map`); cross-type total order; same-type-class inequality semantics; `__name__` tiebreaker; int/double numeric equality
+- **typed engine** — 13 tagged value types (`null`, `bool`, `int64`, `double`, `timestamp`, `string`, `bytes`, `docRef`, `fileRef`, `userRef`, `geopoint`, `array`, `map`); cross-type total order; same-type-class inequality semantics; `__name__` tiebreaker; int/double numeric equality
 - **Document storage** — Store documents as typed field maps; each document carries `path`, `id`, `collection`, `createTime`, `updateTime`, and `version` metadata
 - **Querying** — 15 filter operators (including Winche extensions: `arrayContainsAll`, `contains`, `startsWith`, `endsWith`, `regex`, field-compare); `and`/`or`/`not` composites; `orderBy` with `__name__` tiebreaker; cursor-based pagination (`startAt`/`startAfter`/`endAt`/`endBefore`); field projection via `select`; `offset` (skip first N results) and `limitToLast` (last N results in ascending order)
 - **Live queries with delta listeners** — changes are applied to a live result in memory (filters, order, cursors, limits, select; re-queried for offsets, when held spares run out, and every 5 minutes), listeners updated in parallel; Subscribe to a query and receive an initial full snapshot, then indexed `added`/`modified`/`removed`/`deleted` deltas with a `count` checksum; `listen.snapshot` REPLACES client state, `listen.delta` MUTATES it. `removed` means the document left this query's window/filter (it still exists); `deleted` means it no longer exists at all (clients tombstone it). The `deleted` kind is sent only to clients that advertise `"protocol": >= 2` on the subscribe frame; older clients keep getting `removed`. Resuming with a still-current token sends a lightweight `listen.current` marker (live and up to date — no re-download) instead of a fresh snapshot; a stale/expired token resets via a full snapshot
@@ -847,26 +847,24 @@ An explicit `Limit` on the query **caps** all aggregations (consistent with `Cou
 
 ## Expanding references
 
-A `referenceValue` field points at another document. Ask for it to be followed, and its document comes back with the
-results, under `included` (keyed by path), while the field itself stays a pointer:
+A reference field points at something: `docRefValue` (a document), `fileRefValue` (a file in Winche Storage) or
+`userRefValue` (a Winche Auth user). Ask for references to be followed, and what they point at comes back with the
+results, while the fields themselves stay references:
 
 ```csharp
-var request = ExpandRequest.Of(["patient", "patient.doctor", "team"]);
-var expansion = await ReferenceExpander.ExpandAsync(db, [visit], request);   // read as the caller (rules apply)
-var doctor = expansion.Included.GetValueOrDefault(doctorPath);               // null: missing or not readable
+var request = ExpandRequest.Of(["patient", "patient.doctor", "team", "scan", "author"]);
+var expansion = await ReferenceExpander.ExpandAsync(db, [visit], request, ct, resolvers.For(db));   // as the caller
+expansion.Included["patients/p1"];      // documents, by path
+expansion.Resolved["file:scans/a.png"]; // files and users (Winche.Storage / Winche Auth), by kind:value
 ```
 
 Over the wire: `"expand": [...]` on `doc.get`, `doc.getAll`, `query`, `listen`, `doc.listen` (WebSocket), `?expand=` on
-`GET`, `"expand"` on `:batchGet` / `:runQuery` (REST). Paths walk maps, lists (each item) and references
-(`patient.doctor` is the `doctor` of the `patient`'s document); 10 paths, 4 deep, 100 documents per response at most.
-Live subscriptions follow every referenced document too: a change to one is sent as a `listen.delta` with `included` /
-`excluded` (and `changes: []` when the results themselves didn't change). `LiveExpansion` does the same for server code.
+`GET`, `"expand"` on `:batchGet` / `:runQuery` (REST). Paths walk maps, lists (each item) and document references
+(`patient.doctor` is the `doctor` of the `patient`'s document); 10 paths, 4 deep, 100 at most. Each referenced
+document, file and user is read as the caller: one they may not see is left out. Live subscriptions follow every
+referenced document, file and user: a change is sent as a `listen.delta` (`changes: []` when only they changed).
+`LiveExpansion` does the same for server code. `referenceValue` (before 1.0) is still read as a document reference.
 See PROTOCOL §7.7.
-
-**Files and users.** `expand: ["file:scan", "user:author", "user:patient.author"]`: the string a kinded
-path ends at is resolved by that kind's `IWincheReferenceResolver` (Winche.Core): Winche.Storage registers `file`
-(the file's record, as the caller may `get` it), Winche Auth `user` (a public profile). Results come back under
-`resolved` (`kind:value` → JSON) and follow changes live.
 
 ## Transactions
 

@@ -230,7 +230,9 @@ public static class SchemaSql
             WHEN v ? 'timestampValue' THEN 40
             WHEN v ? 'stringValue' THEN 50
             WHEN v ? 'bytesValue' THEN 60
-            WHEN v ? 'referenceValue' THEN 70
+            WHEN v ? 'docRefValue' OR v ? 'referenceValue' THEN 70   -- referenceValue: stored before 1.0
+            WHEN v ? 'fileRefValue' THEN 72
+            WHEN v ? 'userRefValue' THEN 74
             WHEN v ? 'geoPointValue' THEN 80
             WHEN v ? 'arrayValue' THEN 90
             WHEN v ? 'mapValue' THEN 100
@@ -271,7 +273,10 @@ public static class SchemaSql
         CREATE OR REPLACE FUNCTION winche_text(v jsonb) RETURNS text AS $f$
         SELECT CASE
             WHEN v ? 'stringValue' THEN v->>'stringValue'
+            WHEN v ? 'docRefValue' THEN v->>'docRefValue'
             WHEN v ? 'referenceValue' THEN v->>'referenceValue'
+            WHEN v ? 'fileRefValue' THEN v->>'fileRefValue'
+            WHEN v ? 'userRefValue' THEN v->>'userRefValue'
         END
         $f$ LANGUAGE sql IMMUTABLE STRICT;
 
@@ -330,7 +335,7 @@ public static class SchemaSql
                 WHEN 40 THEN RETURN res || int8send((winche_num(v))::int8 # -9223372036854775808);
                 WHEN 50 THEN RETURN res || winche_eskey(convert_to(v->>'stringValue', 'UTF8'));
                 WHEN 60 THEN RETURN res || winche_eskey(decode(v->>'bytesValue', 'base64'));
-                WHEN 70 THEN RETURN res || winche_eskey(convert_to(v->>'referenceValue', 'UTF8'));
+                WHEN 70, 72, 74 THEN RETURN res || winche_eskey(convert_to(winche_text(v), 'UTF8'));   -- doc, file, user refs
                 WHEN 80 THEN RETURN res
                     || winche_f8key((v->'geoPointValue'->>'latitude')::float8)
                     || winche_f8key((v->'geoPointValue'->>'longitude')::float8);
