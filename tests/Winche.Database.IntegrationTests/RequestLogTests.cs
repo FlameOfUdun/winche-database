@@ -95,7 +95,7 @@ public class RequestLogTests(PostgresFixture fx) : IAsyncLifetime
         Assert.Equal(LogLevel.Warning, log[2].Level);
         Assert.Equal("u2 was denied reading users/u1: no rule allows it.", log[2].Message);
         Assert.Equal(("u2", "users/u1", "denied"), ((string)log[2].Values["Principal"]!, (string)log[2].Values["Path"]!, (string)log[2].Values["Outcome"]!));
-        Assert.Equal("u2 was denied writing users/u1: no rule allows it.", log[3].Message);
+        Assert.Equal("u2 was denied deleting users/u1: no rule allows it.", log[3].Message);
         Assert.Equal("signed out was denied querying users: no rule allows it.", log[4].Message);
         Assert.IsType<long>(log[4].Values["LatencyMs"]);
     }
@@ -126,6 +126,8 @@ public class RequestLogTests(PostgresFixture fx) : IAsyncLifetime
         await db.GetAsync("users/u1");
         var write = Assert.Single(Requests(capture));
         Assert.Equal("database.write", write.Values["Operation"]);
+        await db.WriteAsync([new DeleteWrite { Path = "users/u1" }]);   // a delete is a change too
+        Assert.Equal("database.delete", Requests(capture)[^1].Values["Operation"]);
     }
 
     [Fact]
@@ -148,8 +150,9 @@ public class RequestLogTests(PostgresFixture fx) : IAsyncLifetime
         Assert.Equal(System.Net.HttpStatusCode.NoContent, (await host.Client.DeleteAsync($"/documents/v1/{path}")).StatusCode);
 
         // Write, write, read, delete: one entry each (a write's answer and a delete's check are part of it).
-        var ops = Requests(capture).Select(e => (string)e.Values["Operation"]!).ToList();
-        Assert.Equal(["database.write", "database.write", "database.get", "database.write"], ops);
+        var log = Requests(capture);
+        Assert.Equal(["database.write", "database.write", "database.get", "database.delete"], log.Select(e => (string)e.Values["Operation"]!).ToList());
+        Assert.StartsWith("signed out deleted notes/n1 (", log[3].Message);
     }
 
     [Fact]

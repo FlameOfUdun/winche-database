@@ -107,7 +107,7 @@ public sealed class RuleGuardedDocumentDatabase(
 
     public Task<IReadOnlyList<WriteResult>> WriteAsync(
         IReadOnlyList<Write> writes, CancellationToken ct = default) =>
-        Logged("database.write", Target(writes), () => inner.WriteAsync(writes, ct));   // authorized inside the write transaction by IWriteAuthorizer
+        Logged(writes.Count > 0 && writes.All(w => w is DeleteWrite) ? "database.delete" : "database.write", Target(writes), () => inner.WriteAsync(writes, ct));   // authorized inside the write transaction by IWriteAuthorizer
 
     public Task<Document> AddAsync(string collectionPath, IReadOnlyDictionary<string, Value> fields, CancellationToken ct = default) =>
         Logged("database.add", collectionPath, () => inner.AddAsync(collectionPath, fields, ct));   // create authorized inside the write transaction

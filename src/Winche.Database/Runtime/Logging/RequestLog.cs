@@ -107,7 +107,7 @@ internal sealed class RequestLog(ILogger logger, Func<RequestLogOptions?> curren
     };
 
     /// <summary>The operations that change data: logged every time they succeed.</summary>
-    private static readonly HashSet<string> Writes = ["database.write", "database.add", "database.commit"];
+    private static readonly HashSet<string> Writes = ["database.write", "database.delete", "database.add", "database.commit"];
 
     private void Done(string operation, string path, string outcome, Stopwatch watch)
     {
@@ -142,6 +142,7 @@ public sealed class RequestEntry(string operation, string path, string principal
         ["database.count"] = ("counted", "counting"),
         ["database.aggregate"] = ("aggregated", "aggregating"),
         ["database.write"] = ("wrote", "writing"),
+        ["database.delete"] = ("deleted", "deleting"),
         ["database.add"] = ("added a document to", "adding a document to"),
         ["database.listen"] = ("started a live query on", "listening to"),
         ["database.listenDocument"] = ("started watching", "watching"),
