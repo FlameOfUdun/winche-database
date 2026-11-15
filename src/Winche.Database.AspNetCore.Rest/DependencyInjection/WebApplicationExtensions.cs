@@ -1,3 +1,4 @@
+using Winche.Database.Runtime.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -62,7 +63,8 @@ public static class WebApplicationExtensions
         {
             var decoded = DecodeBase64(path);
             await db.WriteAsync([new SetWrite { Path = decoded, Fields = body.Fields }], ct);
-            var doc = await db.GetAsync(decoded, ct);
+            Document? doc;
+            using (RequestLog.Quietly()) doc = await db.GetAsync(decoded, ct);   // the answer, not a read of its own
             return Results.Json(doc, statusCode: 200, contentType: "application/json");
         });
 
@@ -83,7 +85,8 @@ public static class WebApplicationExtensions
         group.MapDelete("/{path}", async (string path, IDocumentDatabase db, CancellationToken ct = default) =>
         {
             var decoded = DecodeBase64(path);
-            if (await db.GetAsync(decoded, ct) is null) return Results.NotFound();
+            using (RequestLog.Quietly())
+                if (await db.GetAsync(decoded, ct) is null) return Results.NotFound();   // only the delete is logged
             await db.WriteAsync([new DeleteWrite { Path = decoded, Cascade = true }], ct);
             return Results.NoContent();
         });
@@ -95,7 +98,8 @@ public static class WebApplicationExtensions
                 kv => FieldPath.Parse(kv.Key),
                 kv => kv.Value);
             await db.WriteAsync([new UpdateWrite { Path = decoded, Fields = updateFields }], ct);
-            var doc = await db.GetAsync(decoded, ct);
+            Document? doc;
+            using (RequestLog.Quietly()) doc = await db.GetAsync(decoded, ct);   // the answer, not a read of its own
             return doc is null ? Results.NotFound() : Results.Json(doc, statusCode: 200, contentType: "application/json");
         });
 

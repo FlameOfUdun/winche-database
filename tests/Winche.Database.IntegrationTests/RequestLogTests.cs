@@ -129,6 +129,30 @@ public class RequestLogTests(PostgresFixture fx) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_rest_request_is_one_entry_its_follow_up_reads_are_not_logged()
+    {
+        var capture = new Capture();
+        await using var host = await Rest.RestTestHost.StartAsync(fx.ConnectionString, o =>
+        {
+            o.UseRulesText("match notes/{id} { allow read, write: if true; }");
+            o.LogRequests(r => r.SuccessSampleRate = 1.0);
+        }, capture);
+        var path = System.Buffers.Text.Base64Url.EncodeToString("notes/n1"u8);
+        using var put = await host.Client.PutAsync($"/documents/v1/{path}",
+            new StringContent("""{ "fields": { "a": { "integerValue": "1" } } }""", System.Text.Encoding.UTF8, "application/json"));
+        Assert.Equal(System.Net.HttpStatusCode.OK, put.StatusCode);
+        using var patch = await host.Client.PatchAsync($"/documents/v1/{path}",
+            new StringContent("""{ "fields": { "b": { "integerValue": "2" } } }""", System.Text.Encoding.UTF8, "application/json"));
+        Assert.Equal(System.Net.HttpStatusCode.OK, patch.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.OK, (await host.Client.GetAsync($"/documents/v1/{path}")).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.NoContent, (await host.Client.DeleteAsync($"/documents/v1/{path}")).StatusCode);
+
+        // Write, write, read, delete: one entry each (a write's answer and a delete's check are part of it).
+        var ops = Requests(capture).Select(e => (string)e.Values["Operation"]!).ToList();
+        Assert.Equal(["database.write", "database.write", "database.get", "database.write"], ops);
+    }
+
+    [Fact]
     public async Task Without_LogRequests_nothing_is_logged()
     {
         var capture = new Capture();

@@ -28,10 +28,11 @@ public sealed class RestTestHost : IAsyncDisposable
     }
 
     public static async Task<RestTestHost> StartAsync(string connectionString,
-        Action<WincheDatabaseOptions>? configureDb = null)
+        Action<WincheDatabaseOptions>? configureDb = null, Microsoft.Extensions.Logging.ILoggerProvider? logs = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
+        if (logs is not null) builder.Services.AddSingleton(logs);   // an extra logger provider (tests read what was logged)
         builder.Services.AddWincheDatabase(config =>
         {
             config.ConnectionString = connectionString;

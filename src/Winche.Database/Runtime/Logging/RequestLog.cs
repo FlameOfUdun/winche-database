@@ -28,6 +28,24 @@ internal sealed class RequestLog(ILogger logger, Func<RequestLogOptions?> curren
 
     public const string Category = "Winche.Database.Requests";
 
+    private static readonly AsyncLocal<bool> Quiet = new();
+
+    /// <summary>
+    /// Until disposed, nothing is logged: for reads that are part of a request already logged (REST answers a write
+    /// with the document as saved, and checks a document exists before deleting it), so one request is one entry.
+    /// </summary>
+    internal static IDisposable Quietly()
+    {
+        var was = Quiet.Value;
+        Quiet.Value = true;
+        return new Restore(was);
+    }
+
+    private sealed class Restore(bool was) : IDisposable
+    {
+        public void Dispose() => Quiet.Value = was;
+    }
+
     public async Task<T> RunAsync<T>(string operation, string path, Func<Task<T>> body)
     {
         var watch = Stopwatch.StartNew();
@@ -93,7 +111,7 @@ internal sealed class RequestLog(ILogger logger, Func<RequestLogOptions?> curren
 
     private void Done(string operation, string path, string outcome, Stopwatch watch)
     {
-        if (current() is not { } options) return;   // logging turned off
+        if (current() is not { } options || Quiet.Value) return;   // logging turned off, or part of a request logged already
         var ms = watch.ElapsedMilliseconds;
         var slow = ms >= options.SlowThreshold.TotalMilliseconds;
         var level = outcome is "ok" or "notFound" && !slow ? LogLevel.Information : LogLevel.Warning;
