@@ -79,7 +79,11 @@ public static class WebApplicationExtensions
         var ownClaims = context.RequestServices.GetService<DocumentClaimsAccessor>();
         var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("WincheWs");
 
-        using var socket = await context.WebSockets.AcceptWebSocketAsync();
+        using var socket = await context.WebSockets.AcceptWebSocketAsync(new WebSocketAcceptContext
+        {
+            DangerousEnableCompression = options.Compression,
+            DisableServerContextTakeover = true,   // each message compressed on its own
+        });
         await using var conn = new WsConnection(socket, options);
         Winche.Database.Runtime.WincheDatabaseMetrics.WsConnections.Add(1);
         using var sendLoopCts = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, conn.Closed);

@@ -39,6 +39,13 @@ public sealed class WsOptions
     /// Lets the console change the per-user and per-connection limits (settings area <c>database.live</c>); what's set
     /// here becomes the starting values. New connections get the new limits. Needs <c>AddWincheConfig(…)</c> to save.
     /// </summary>
+    /// <summary>
+    /// Compress frames when the client offers to (permessage-deflate, RFC 7692; default off). Documents' repeated keys
+    /// compress well. Each message is compressed on its own (no context kept between messages), so what one message
+    /// holds can't be guessed from another's size.
+    /// </summary>
+    public bool Compression { get; set; }
+
     public WsOptions UseSettings()
     {
         SettingsEnabled = true;
