@@ -59,6 +59,13 @@ public sealed class WincheDatabaseOptions
     public TtlConfig Ttl { get; set; } = new();
 
     /// <summary>
+    /// The most referenced documents, files and users one <c>expand</c> response includes (default 100, at most
+    /// 10,000); past it, references come back without data. Each level of references is one batched read by path, so
+    /// a higher limit costs larger reads, not more of them; live subscriptions listen to each linked document.
+    /// </summary>
+    public int ExpandLimit { get; set; } = Runtime.Expansion.ExpandRequest.DefaultLimit;
+
+    /// <summary>
     /// Registers one or more <see cref="IndexDefinition"/> instances. Multiple calls accumulate —
     /// each definition is registered as a singleton so that <c>GetServices&lt;IndexDefinition&gt;()</c>
     /// returns them all at startup.
@@ -75,6 +82,52 @@ public sealed class WincheDatabaseOptions
     {
         foreach (var def in definitions)
             Services.AddSingleton(def);
+        return this;
+    }
+
+    /// <summary>What's logged about requests (<see cref="LogRequests"/>), or null when off.</summary>
+    public Runtime.Logging.RequestLogOptions? RequestLog { get; internal set; }
+
+    /// <summary>
+    /// Log app requests that go through the access rules (11.1.0), as structured entries in the category
+    /// <c>Winche.Database.Requests</c>: denied and slow ones always (Warning), changes (writes, adds, commits) always,
+    /// and a sample of successful reads (Information).
+    /// The Winche console's Logs Explorer filters them by operation, path, user and outcome.
+    /// </summary>
+    public WincheDatabaseOptions LogRequests(Action<Runtime.Logging.RequestLogOptions>? configure = null)
+    {
+        var o = new Runtime.Logging.RequestLogOptions();
+        configure?.Invoke(o);
+        RequestLog = o;
+        return this;
+    }
+
+    /// <summary>The document history kept (<see cref="KeepHistory"/>), or null when off.</summary>
+    public HistoryConfig? History { get; internal set; }
+
+    /// <summary>
+    /// Lets the console change indexes, expiry (TTL), history, write limits, the slow-query threshold and request
+    /// logging without a deploy (11.1.0); what's set here becomes the starting values. Needs <c>AddWincheConfig(…)</c>
+    /// to save changes. Rules, hooks and the connection stay in code.
+    /// </summary>
+    public WincheDatabaseOptions UseSettings()
+    {
+        SettingsEnabled = true;
+        return this;
+    }
+
+    /// <summary>Whether the console may change these settings (<see cref="UseSettings"/>).</summary>
+    public bool SettingsEnabled { get; private set; }
+
+    /// <summary>
+    /// Keep every document's history (11.1.0): each change records the document before and after it, and who made it
+    /// (the caller's user id, or the actor set with <see cref="Runtime.History.DocumentWriteActor"/>). Read it with
+    /// <see cref="Runtime.History.DocumentHistory"/>. Change-feed rows are then kept at least <paramref name="retention"/>
+    /// (default 30 days). Costs a copy of each written document in the feed.
+    /// </summary>
+    public WincheDatabaseOptions KeepHistory(TimeSpan? retention = null)
+    {
+        History = new HistoryConfig { Retention = retention ?? TimeSpan.FromDays(30) };
         return this;
     }
 
@@ -218,6 +271,12 @@ public sealed record ListenerConfig
     public int MaxParallelUpdates { get; init; } = 8;
 }
 
+/// <summary>How long document history is kept (<see cref="WincheDatabaseOptions.KeepHistory"/>).</summary>
+public sealed record HistoryConfig
+{
+    public TimeSpan Retention { get; init; } = TimeSpan.FromDays(30);
+}
+
 public sealed record TtlConfig
 {
     /// <summary>
@@ -339,6 +398,9 @@ public sealed class TtlBuilder(IServiceCollection services)
 /// </summary>
 public sealed class HookBuilder(IServiceCollection services, List<string>? snapshotPaths = null)
 {
+    /// <summary>The app's services, for extensions that add hooks with their own needs (e.g. Winche.Webhooks).</summary>
+    public IServiceCollection Services => services;
+
     /// <summary>
     /// Registers a hook <typeparamref name="THook"/> (constructed via DI, so constructor injection
     /// works) bound to <paramref name="path"/>. The same hook type may be bound to multiple paths.
@@ -348,6 +410,24 @@ public sealed class HookBuilder(IServiceCollection services, List<string>? snaps
         services.TryAddSingleton<THook>();
         services.AddSingleton(sp => new HookRegistration(path, sp.GetRequiredService<THook>(), withSnapshots));
         if (withSnapshots) snapshotPaths?.Add(path);
+        return this;
+    }
+
+    /// <summary>
+    /// Registers a before hook <typeparamref name="THook"/> (built by DI) for documents at <paramref name="path"/>: it runs
+    /// in every matching write's transaction and may refuse or change it (see <see cref="DocumentBeforeHook"/>).
+    /// </summary>
+    public HookBuilder Before<THook>(string path) where THook : DocumentBeforeHook
+    {
+        services.TryAddSingleton<THook>();
+        services.AddSingleton(sp => new BeforeHookRegistration(path, sp.GetRequiredService<THook>()));
+        return this;
+    }
+
+    /// <summary>Registers a before hook instance for documents at <paramref name="path"/>.</summary>
+    public HookBuilder Before(string path, DocumentBeforeHook hook)
+    {
+        services.AddSingleton(new BeforeHookRegistration(path, hook));
         return this;
     }
 

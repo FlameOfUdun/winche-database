@@ -39,9 +39,9 @@ public class ChangesFeedTests(PostgresFixture fx) : QueryTestBase(fx)
     {
         var applier = new Winche.Database.Runtime.Writes.WriteApplier(Fx.DataSource);
         await applier.ApplyAsync([new Winche.Database.Runtime.Writes.SetWrite
-            { Path = "c/first", Fields = new Dictionary<string, Winche.Database.Values.Value>() }]);
+            { Path = "c/first", Fields = new Dictionary<string, Winche.Values.Value>() }]);
         await applier.ApplyAsync([new Winche.Database.Runtime.Writes.SetWrite
-            { Path = "c/second", Fields = new Dictionary<string, Winche.Database.Values.Value>() }]);
+            { Path = "c/second", Fields = new Dictionary<string, Winche.Values.Value>() }]);
 
         var rows = await Fx.ReadChangesAsync();
         Assert.Equal(2, rows.Count);

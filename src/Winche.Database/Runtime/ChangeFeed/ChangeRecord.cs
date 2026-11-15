@@ -26,23 +26,37 @@ internal static class ChangeTypes
 
 /// <summary>One durable feed row (winche_changes).</summary>
 public sealed record ChangeRecord(
-    long Seq, ChangeType Type, string Path, string Collection, long Version, DateTimeOffset CommitTime)
+    long Seq, ChangeType Type, string Path, string Collection, long Version, DateTimeOffset CommitTime) : IFeedRecord
 {
     /// <summary>The writing transaction (Postgres xid8); 0 for rows from before the feed recorded it.</summary>
     public ulong TxId { get; init; }
 
-    /// <summary>This record's place in the feed.</summary>
+    /// <summary>This record's place in the feed (<see cref="Winche.Core.Feeds.FeedPosition"/>).</summary>
     public FeedPosition Position => new(TxId, Seq);
+
+    DateTimeOffset IFeedRecord.At => CommitTime;
+
+    public string Describe() => $"change {Seq} ({ChangeTypes.ToWire(Type)} {Path})";
 }
 
-/// <summary>
-/// A place in the feed: records are read in (<see cref="TxId"/>, <see cref="Seq"/>) order, and a position means
-/// "everything at or before this has been delivered".
-/// </summary>
-public readonly record struct FeedPosition(ulong TxId, long Seq) : IComparable<FeedPosition>
+/// <summary>The database's change table (<c>winche_changes</c>) as a Winche.Core feed, named <see cref="Name"/>.</summary>
+internal static class DatabaseFeed
 {
-    public int CompareTo(FeedPosition other) =>
-        TxId != other.TxId ? TxId.CompareTo(other.TxId) : Seq.CompareTo(other.Seq);
+    public const string Name = "database";
+
+    public static WincheFeed<ChangeRecord> Open(Npgsql.NpgsqlDataSource db) => new(
+        db, Name, Constants.WincheDatabaseTables.Changes,
+        "seq, type, document_path, collection_path, version, commit_time, txid::text", "commit_time",
+        r => new ChangeRecord(r.GetInt64(0), ChangeTypes.FromWire(r.GetString(1)), r.GetString(2), r.GetString(3), r.GetInt64(4),
+            r.GetFieldValue<DateTimeOffset>(5)) { TxId = ulong.Parse(r.GetString(6), System.Globalization.CultureInfo.InvariantCulture) },
+        c => new System.Text.Json.Nodes.JsonObject
+        {
+            ["seq"] = c.Seq, ["txid"] = c.TxId.ToString(System.Globalization.CultureInfo.InvariantCulture), ["type"] = ChangeTypes.ToWire(c.Type),
+            ["path"] = c.Path, ["collection"] = c.Collection, ["version"] = c.Version, ["commitTime"] = c.CommitTime.ToString("O"),
+        },
+        j => new ChangeRecord((long)j["seq"]!, ChangeTypes.FromWire((string)j["type"]!), (string)j["path"]!, (string)j["collection"]!,
+            (long)j["version"]!, DateTimeOffset.Parse((string)j["commitTime"]!, System.Globalization.CultureInfo.InvariantCulture))
+        { TxId = ulong.Parse((string)j["txid"]!, System.Globalization.CultureInfo.InvariantCulture) });
 }
 
 /// <summary>

@@ -35,7 +35,7 @@ public static class WebApplicationExtensions
     /// <see cref="WsConnectionRegistry.CloseUserConnectionsAsync"/>.
     /// </para>
     /// </summary>
-    public static IEndpointConventionBuilder MapWincheDatabaseWsApi(this WebApplication app, string prefix = "documents") =>
+    public static IEndpointConventionBuilder MapWincheDatabaseWsApi(this WebApplication app, string prefix = "documents/v1") =>
         app.Map($"/{prefix}/ws", HandleAsync);
 
     /// <summary>
@@ -76,7 +76,7 @@ public static class WebApplicationExtensions
         var options = context.RequestServices.GetRequiredService<IOptions<WsOptions>>().Value;
         var router = context.RequestServices.GetRequiredService<MessageRouter>();
         var db = context.RequestServices.GetRequiredService<IDocumentDatabase>();
-        var claimsAccessor = context.RequestServices.GetRequiredService<DocumentClaimsAccessor>();
+        var ownClaims = context.RequestServices.GetService<DocumentClaimsAccessor>();
         var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("WincheWs");
 
         using var socket = await context.WebSockets.AcceptWebSocketAsync();
@@ -93,7 +93,7 @@ public static class WebApplicationExtensions
                 (code, reason) => conn.RevokeAsync(sendLoop, (WebSocketCloseStatus)code, reason, TimeSpan.FromSeconds(5)),
                 options.MaxConnectionsPerUser);
 
-        var scope = new ConnectionScope(Guid.NewGuid().ToString("N"), db, claimsAccessor)
+        var scope = new ConnectionScope(Guid.NewGuid().ToString("N"), db)
         {
             MaxSubscriptions = options.MaxSubscriptionsPerConnection,
         };
@@ -101,11 +101,15 @@ public static class WebApplicationExtensions
         try
         {
             // ── authenticate from the already-validated HttpContext.User ─────────
-            var claims = claimsAccessor.MapClaims(context);
+            var claims = await context.WincheCallerOf(ownClaims is null ? null : ownClaims.MapClaims);
             scope.SetClaims(claims ?? new Dictionary<string, object?>());
 
             // ── server-initiated welcome (no client hello frame) ─────────────────
-            conn.TrySend(new WelcomeMessage { ConnectionId = scope.ConnectionId });
+            conn.TrySend(new WelcomeMessage
+            {
+                ConnectionId = scope.ConnectionId,
+                ExpandLimit = context.RequestServices.GetService<IOptions<Winche.Database.DependencyInjection.WincheDatabaseOptions>>()?.Value.ExpandLimit,
+            });
 
             // ── serial message loop ───────────────────────────────────────────────
             while (!context.RequestAborted.IsCancellationRequested)
@@ -134,13 +138,7 @@ public static class WebApplicationExtensions
                         string? msgId = doc.RootElement.TryGetProperty("id", out var idProp)
                                         && idProp.ValueKind == JsonValueKind.String ? idProp.GetString() : null;
                         var mapped = ErrorMapper.Map(ex);
-                        conn.TrySend(new ErrorMessage
-                        {
-                            Id = msgId,
-                            Status = mapped.Status,
-                            Message = mapped.Message,
-                            Details = mapped.Details,
-                        });
+                        conn.TrySend(new ErrorMessage { Id = msgId, Error = mapped });
                         continue;
                     }
                 }

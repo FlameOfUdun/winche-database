@@ -2,7 +2,7 @@ using Npgsql;
 using Winche.Database.Documents;
 using Winche.Database.Querying.Matching;
 using Winche.Database.Querying.Sql;
-using Winche.Database.Values;
+using Winche.Values;
 
 namespace Winche.Database.Runtime.Writes;
 
@@ -19,9 +19,19 @@ namespace Winche.Database.Runtime.Writes;
 /// </summary>
 public sealed class WriteApplier(
     NpgsqlDataSource source, IWriteAuthorizer? authorizer = null, WriteLimits? limits = null,
-    IReadOnlyList<string>? snapshotPaths = null)
+    IReadOnlyList<string>? snapshotPaths = null, bool snapshotAll = false, Func<string?>? actor = null)
 {
-    private readonly WriteLimits _limits = limits ?? new();
+    private readonly WriteLimits _fixedLimits = limits ?? new();
+    private WriteLimits _limits => LimitsSource?.Invoke() ?? _fixedLimits;
+
+    /// <summary>Where the limits come from when they can change while running (the database's options).</summary>
+    internal Func<WriteLimits>? LimitsSource { get; init; }
+
+    /// <summary>The app's before hooks, run in the write's transaction after the access rules.</summary>
+    internal Abstraction.BeforeWriteHooks? BeforeHooks { get; set; }
+
+    /// <summary>Whether every write is snapshotted for history, when that can change while running.</summary>
+    internal Func<bool>? HistorySource { get; init; }
     private readonly IReadOnlyList<string> _snapshotPaths = snapshotPaths ?? [];
 
     private sealed class DocState
@@ -58,7 +68,7 @@ public sealed class WriteApplier(
             outcome = ex.Status == RuntimeStatus.Aborted ? "aborted" : "invalid";
             throw;
         }
-        catch (Authorization.AccessDeniedException)
+        catch (Exception ex) when (ex is Authorization.AccessDeniedException or WincheDeniedException)
         {
             outcome = "denied";
             throw;
@@ -116,7 +126,8 @@ public sealed class WriteApplier(
 
             // Pre-write snapshots for authorization (taken before the apply loop mutates state).
             Dictionary<string, Document?>? before = null;
-            if (authorizer is not null)
+            var hooks = BeforeHooks is { Any: true } h ? h : null;
+            if (authorizer is not null || hooks is not null)
             {
                 before = new Dictionary<string, Document?>(StringComparer.Ordinal);
                 foreach (var w in writes)
@@ -185,6 +196,11 @@ public sealed class WriteApplier(
                 await authorizer.AuthorizeAsync(pending, new TxDocumentReader(conn, tx), commitTime, ct);
             }
 
+            // The app's before hooks: once per document changed (its final state), after the rules allowed the
+            // write. They may refuse it (throw → rolled back) or change the fields being saved.
+            if (hooks is not null)
+                await RunBeforeHooksAsync(hooks, writes, state, before!, cascadeVictims, new TxDocumentReader(conn, tx), ct);
+
             await PersistAsync(conn, tx, state, commitTime, ct);
             await tx.CommitAsync(ct);
             return results;
@@ -193,6 +209,30 @@ public sealed class WriteApplier(
         {
             // Defense-in-depth: deadlock detected — surface as Aborted so callers can retry.
             throw new RuntimeException(RuntimeStatus.Aborted, "Write contention (deadlock detected).");
+        }
+    }
+
+    private async Task RunBeforeHooksAsync(Abstraction.BeforeWriteHooks hooks, IReadOnlyList<Write> writes, Dictionary<string, DocState> state,
+        Dictionary<string, Document?> before, Dictionary<string, IReadOnlyList<string>> cascadeVictims, TxDocumentReader reader, CancellationToken ct)
+    {
+        var caller = hooks.Caller();
+        var paths = writes.Select(w => w.Path).Concat(cascadeVictims.Values.SelectMany(v => v)).Distinct(StringComparer.Ordinal);
+        foreach (var path in paths)
+        {
+            if (!hooks.Matches(path)) continue;
+            var doc = state[path];
+            var prior = before.GetValueOrDefault(path);
+            if (prior is null && !doc.Exists) continue;   // made and removed in one batch: nothing changes
+            var operation = !doc.Exists ? Abstraction.WriteOperation.Delete
+                : prior is null ? Abstraction.WriteOperation.Create
+                : Abstraction.WriteOperation.Update;
+            var write = new Abstraction.DocumentWrite(path, operation, prior, doc.Exists ? doc.Fields : null, caller, reader);
+            await hooks.RunAsync(write, ct);
+            if (write.Changed)
+            {
+                DocumentLimits.Validate(path, write.Fields!, _limits);
+                doc.Fields = write.Fields!;
+            }
         }
     }
 
@@ -452,7 +492,7 @@ public sealed class WriteApplier(
             changePaths.Add(path);
             changeCollections.Add(info.Collection);
             changeVersions.Add(doc.Exists ? doc.Version : doc.VersionBefore);
-            var snapshot = _snapshotPaths.Count > 0 && _snapshotPaths.Any(p => Winche.Rules.Matching.PathMatcher.IsMatch(p, path));
+            var snapshot = (HistorySource?.Invoke() ?? snapshotAll) || (_snapshotPaths.Count > 0 && _snapshotPaths.Any(p => Winche.Rules.Matching.PathMatcher.IsMatch(p, path)));
             changeBefore.Add(snapshot && doc.ExistedBefore ? ChangeFeed.ChangeSnapshots.Encode(doc.BeforeFields!, doc.BeforeCreatedAt, doc.BeforeUpdatedAt, doc.VersionBefore) : null);
             changeAfter.Add(snapshot && doc.Exists ? ChangeFeed.ChangeSnapshots.Encode(doc.Fields, doc.CreatedAt, doc.UpdatedAt, doc.Version) : null);
         }
@@ -469,7 +509,8 @@ public sealed class WriteApplier(
         {
             await using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
-            WriteSql.InsertChanges(changeTypes, changePaths, changeCollections, changeVersions, changeBefore, changeAfter, commitTime).Apply(cmd);
+            WriteSql.InsertChanges(changeTypes, changePaths, changeCollections, changeVersions, changeBefore, changeAfter, commitTime,
+                actor?.Invoke()).Apply(cmd);   // who made it, kept history or not (the console's History tab lists it either way)
             await cmd.ExecuteNonQueryAsync(ct);
         }
     }

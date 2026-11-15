@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -11,8 +12,9 @@ using Winche.Database.Querying;
 using Winche.Database.Querying.Ast;
 using Winche.Database.Querying.Ast.Serialization;
 using Winche.Database.Runtime;
+using Winche.Database.Runtime.Expansion;
 using Winche.Database.Runtime.Writes;
-using Winche.Database.Values;
+using Winche.Values;
 
 namespace Winche.Database.AspNetCore.Rest.DependencyInjection;
 
@@ -23,10 +25,20 @@ public static class WebApplicationExtensions
     private static readonly JsonSerializerOptions QueryAstOptions = new() { Converters = { new QueryAstJsonConverter() } };
     private static readonly JsonSerializerOptions FieldsOptions = new() { Converters = { new FieldsJsonConverter() } };
 
-    private static string DecodeBase64(string base64)
+    /// <summary>
+    /// A document path from the URL: base64url (<c>-</c>, <c>_</c>, padding optional — recommended, since it never
+    /// contains <c>/</c> or <c>+</c>) or standard base64. Anything else is a 400, not a 500.
+    /// </summary>
+    internal static string DecodeBase64(string base64)
     {
-        byte[] bytes = Convert.FromBase64String(base64);
-        return Encoding.UTF8.GetString(bytes);
+        try
+        {
+            return WincheBase64Url.Decode(base64);
+        }
+        catch (FormatException)
+        {
+            throw new ArgumentException("The document path in the URL isn't base64url (or base64).");
+        }
     }
 
     /// <summary>
@@ -37,13 +49,14 @@ public static class WebApplicationExtensions
     /// lands on every endpoint including the verbs. The built-in claims/exception filters are always
     /// applied internally and run outermost regardless.
     /// </summary>
-    public static IEndpointConventionBuilder MapWincheDatabaseRestApi(this WebApplication app, string prefix = "documents")
+    public static IEndpointConventionBuilder MapWincheDatabaseRestApi(this WebApplication app, string prefix = "documents/v1")
     {
         var p = prefix.TrimStart('/');
         var group = app.MapGroup($"/{p}");
 
-        group.AddEndpointFilter<ClaimsAccessor>();
+        // ExceptionHandler first, so it's outermost: a failure in the claims mapper is mapped (and logged) too.
         group.AddEndpointFilter<ExceptionHandler>();
+        group.AddEndpointFilter<ClaimsAccessor>();
 
         group.MapPut("/{path}", async (string path, DocumentPayload body, IDocumentDatabase db, CancellationToken ct = default) =>
         {
@@ -53,11 +66,18 @@ public static class WebApplicationExtensions
             return Results.Json(doc, statusCode: 200, contentType: "application/json");
         });
 
-        group.MapGet("/{path}", async (string path, IDocumentDatabase db, CancellationToken ct = default) =>
+        // ?expand=patient,patient.doctor: the referenced documents come back under "included" (by path).
+        group.MapGet("/{path}", async (string path, string? expand, IDocumentDatabase db, ReferenceResolvers resolvers,
+            Microsoft.Extensions.Options.IOptions<Winche.Database.DependencyInjection.WincheDatabaseOptions> options, CancellationToken ct = default) =>
         {
             var decoded = DecodeBase64(path);
             var document = await db.GetAsync(decoded, ct);
-            return document is null ? Results.NotFound() : Results.Json(document, statusCode: 200, contentType: "application/json");
+            if (document is null) return Results.NotFound();
+            var request = ExpandRequest.Parse(expand, options.Value.ExpandLimit);
+            if (request is null) return Results.Json(document, statusCode: 200, contentType: "application/json");
+            var body = JsonSerializer.SerializeToNode(document)!.AsObject();
+            await AddIncludedAsync(body, db, resolvers, [document], request, ct);
+            return Results.Json(body, statusCode: 200, contentType: "application/json");
         });
 
         group.MapDelete("/{path}", async (string path, IDocumentDatabase db, CancellationToken ct = default) =>
@@ -91,8 +111,8 @@ public static class WebApplicationExtensions
         RouteHandlerBuilder Verb(string verb, Delegate handler)
         {
             var builder = app.MapPost($"/{p}:{verb}", handler)
-               .AddEndpointFilter<ClaimsAccessor>()
-               .AddEndpointFilter<ExceptionHandler>();
+               .AddEndpointFilter<ExceptionHandler>()
+               .AddEndpointFilter<ClaimsAccessor>();
             verbs.Add(builder);
             return builder;
         }
@@ -157,7 +177,10 @@ public static class WebApplicationExtensions
                     list.Add(await db.GetAsync(transaction, docPath, ct));  // recorded reads
                 docs = list;
             }
-            return Results.Json(new { documents = docs }, statusCode: 200, contentType: "application/json");
+            if (Expand(node, request.HttpContext) is not { } expandDocs) return Results.Json(new { documents = docs }, statusCode: 200, contentType: "application/json");
+            var batch = new JsonObject { ["documents"] = JsonSerializer.SerializeToNode(docs) };
+            await AddIncludedAsync(batch, db, request.HttpContext.RequestServices.GetRequiredService<ReferenceResolvers>(), docs, expandDocs, ct);
+            return Results.Json(batch, statusCode: 200, contentType: "application/json");
         });
 
         Verb("runQuery", async (HttpRequest request, IDocumentDatabase db, CancellationToken ct) =>
@@ -172,7 +195,10 @@ public static class WebApplicationExtensions
             var result = transaction is null
                 ? await db.QueryAsync(query, ct)
                 : await db.QueryAsync(transaction, query, ct);
-            return Results.Json(result, statusCode: 200, contentType: "application/json");
+            if (Expand(node, request.HttpContext) is not { } expandQuery) return Results.Json(result, statusCode: 200, contentType: "application/json");
+            var body = JsonSerializer.SerializeToNode(result)!.AsObject();
+            await AddIncludedAsync(body, db, request.HttpContext.RequestServices.GetRequiredService<ReferenceResolvers>(), result.Documents, expandQuery, ct);
+            return Results.Json(body, statusCode: 200, contentType: "application/json");
         });
 
         Verb("count", async (HttpRequest request, IDocumentDatabase db, CancellationToken ct) =>
@@ -224,6 +250,31 @@ public static class WebApplicationExtensions
         });
 
         return new CompositeEndpointConventionBuilder([group, .. verbs]);
+    }
+
+    /// <summary>A body's <c>expand</c>: the reference paths to follow.</summary>
+    private static ExpandRequest? Expand(JsonObject body, HttpContext http) => body["expand"] switch
+    {
+        null => null,
+        JsonArray a => ExpandRequest.Of(a.Select(n => n?.GetValue<string>() ?? ""),
+            http.RequestServices.GetService<Microsoft.Extensions.Options.IOptions<Winche.Database.DependencyInjection.WincheDatabaseOptions>>()?.Value.ExpandLimit ?? ExpandRequest.DefaultLimit),
+        _ => throw new RuntimeException(RuntimeStatus.InvalidArgument, "'expand' is a list of field paths."),
+    };
+
+    /// <summary>Adds the readable referenced documents (<c>included</c>, by path) and resolved values (<c>resolved</c>).</summary>
+    private static async Task AddIncludedAsync(JsonObject body, IDocumentDatabase db, ReferenceResolvers resolvers, IEnumerable<Document?> docs,
+        ExpandRequest request, CancellationToken ct)
+    {
+        var expansion = await ReferenceExpander.ExpandAsync(db, docs, request, ct, resolvers.For(db));
+        var included = new JsonObject();
+        foreach (var (path, doc) in expansion.Included) included[path] = JsonSerializer.SerializeToNode(doc);
+        body["included"] = included;
+        if (expansion.Resolved.Count > 0)
+        {
+            var resolved = new JsonObject();
+            foreach (var (key, value) in expansion.Resolved) resolved[key] = value.DeepClone();
+            body["resolved"] = resolved;
+        }
     }
 }
 

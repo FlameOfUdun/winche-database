@@ -5,7 +5,7 @@ using Winche.Database.Documents;
 using Winche.Database.Runtime;
 using Winche.Database.Runtime.Hosting;
 using Winche.Database.Runtime.Ttl;
-using Winche.Database.Values;
+using Winche.Values;
 
 namespace Winche.Database.IntegrationTests;
 

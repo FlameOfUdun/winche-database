@@ -22,9 +22,11 @@ public sealed class TtlSweeper(
     [FromKeyedServices(WincheDatabaseKeys.DataSource)] NpgsqlDataSource source,
     IEnumerable<TtlPolicy> policies,
     IOptions<WincheDatabaseOptions> options,
-    ILogger<TtlSweeper> logger) : BackgroundService
+    ILogger<TtlSweeper> logger,
+    Schema.IndexCatalog? catalog = null) : BackgroundService
 {
-    private readonly IReadOnlyList<TtlPolicy> _policies = policies.ToList();
+    private readonly IReadOnlyList<TtlPolicy> _declared = policies.ToList();
+    private IReadOnlyList<TtlPolicy> _policies => catalog?.TtlPolicies ?? _declared;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

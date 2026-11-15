@@ -1,7 +1,7 @@
 using Winche.Database.Documents;
 using Winche.Database.Querying.Ast;
 using Winche.Database.Querying.Matching;
-using Winche.Database.Values;
+using Winche.Values;
 
 namespace Winche.Database.Tests.Querying;
 

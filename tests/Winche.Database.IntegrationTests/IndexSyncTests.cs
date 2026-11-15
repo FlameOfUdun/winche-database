@@ -1,7 +1,7 @@
 using Winche.Database.Constants;
 using Winche.Database.Documents;
 using Winche.Database.Querying.Sql;
-using Winche.Database.Values;
+using Winche.Values;
 
 namespace Winche.Database.IntegrationTests;
 

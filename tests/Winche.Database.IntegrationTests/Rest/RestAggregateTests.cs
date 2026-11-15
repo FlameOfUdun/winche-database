@@ -2,7 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json.Nodes;
 using Winche.Database.Documents;
-using Winche.Database.Values;
+using Winche.Values;
 using Winche.Rules;
 using Winche.Rules.Expressions;
 
@@ -38,7 +38,7 @@ public class RestAggregateTests(PostgresFixture fx) : QueryTestBase(fx)
         await Seed("b", ("n", new IntegerValue(3)));
 
         await using var host = await AllowAllHost();
-        var (status, body) = await PostAsync(host.Client, "/documents:aggregate",
+        var (status, body) = await PostAsync(host.Client, "/documents/v1:aggregate",
             """{"query":{"collection":"c"},"aggregations":[{"kind":"count","alias":"cnt"},{"kind":"sum","field":"n","alias":"s"}]}""");
 
         Assert.Equal(HttpStatusCode.OK, status);
@@ -51,11 +51,11 @@ public class RestAggregateTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Aggregate_DenyAll_PermissionDenied()
     {
         await using var host = await DenyAllHost();
-        var (status, body) = await PostAsync(host.Client, "/documents:aggregate",
+        var (status, body) = await PostAsync(host.Client, "/documents/v1:aggregate",
             """{"query":{"collection":"c"},"aggregations":[{"kind":"count","alias":"cnt"}]}""");
 
         Assert.Equal(HttpStatusCode.Forbidden, status);
-        Assert.Equal("PERMISSION_DENIED", (string?)body["status"]);
+        Assert.Equal("permission-denied", (string?)body["error"]!["code"]);
     }
 
     [Fact]
@@ -65,7 +65,7 @@ public class RestAggregateTests(PostgresFixture fx) : QueryTestBase(fx)
         await Seed("b", ("n", new IntegerValue(4)));
 
         await using var host = await AllowAllHost();
-        var (status, body) = await PostAsync(host.Client, "/documents:aggregate",
+        var (status, body) = await PostAsync(host.Client, "/documents/v1:aggregate",
             """{"query":{"collection":"c"},"aggregations":[{"kind":"average","field":"n","alias":"avg"}]}""");
 
         Assert.Equal(HttpStatusCode.OK, status);
@@ -76,7 +76,7 @@ public class RestAggregateTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Aggregate_EmptyCollection_CountZero()
     {
         await using var host = await AllowAllHost();
-        var (status, body) = await PostAsync(host.Client, "/documents:aggregate",
+        var (status, body) = await PostAsync(host.Client, "/documents/v1:aggregate",
             """{"query":{"collection":"nope"},"aggregations":[{"kind":"count","alias":"cnt"}]}""");
 
         Assert.Equal(HttpStatusCode.OK, status);
@@ -87,10 +87,10 @@ public class RestAggregateTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Aggregate_InvalidKind_BadRequest()
     {
         await using var host = await AllowAllHost();
-        var (status, body) = await PostAsync(host.Client, "/documents:aggregate",
+        var (status, body) = await PostAsync(host.Client, "/documents/v1:aggregate",
             """{"query":{"collection":"c"},"aggregations":[{"kind":"median","alias":"x"}]}""");
 
         Assert.Equal(HttpStatusCode.BadRequest, status);
-        Assert.Equal("INVALID_ARGUMENT", (string?)body["status"]);
+        Assert.Equal("invalid-argument", (string?)body["error"]!["code"]);
     }
 }

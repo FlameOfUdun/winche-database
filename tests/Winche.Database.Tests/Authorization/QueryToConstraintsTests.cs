@@ -1,7 +1,7 @@
 using Winche.Database.Authorization;
 using Winche.Database.Documents;
 using Winche.Database.Querying.Ast;
-using Winche.Database.Values;
+using Winche.Values;
 using Winche.Rules.Expressions;
 
 namespace Winche.Database.Tests.Authorization;

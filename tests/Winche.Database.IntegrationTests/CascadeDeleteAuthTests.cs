@@ -3,7 +3,7 @@ using Winche.Database.Authorization;
 using Winche.Database.DependencyInjection;
 using Winche.Database.Runtime;
 using Winche.Database.Runtime.Writes;
-using Winche.Database.Values;
+using Winche.Values;
 using Winche.Rules;
 using Winche.Rules.Expressions;
 
@@ -23,7 +23,7 @@ public class CascadeDeleteAuthTests(PostgresFixture fx) : QueryTestBase(fx)
         r.Match("users/{uid}", b => b.Allow(RuleOperations.Of(RuleOperation.Get, RuleOperation.Delete), owner));
         r.Match("users/{uid}/{coll}/{doc}", b => b.Allow(
             RuleOperations.Of(RuleOperation.Delete),
-            owner.And(Expr.Param("coll").In(Expr.Value(RuleValue.List([RuleValue.String("audit")]))).Not())));
+            owner.And(Expr.Param("coll").In(Expr.Value(new ArrayValue([new StringValue("audit")]))).Not())));
     });
 
     private DocumentDatabase Core() => new(Fx.DataSource, Options.Create(new WincheDatabaseOptions()));
@@ -31,7 +31,7 @@ public class CascadeDeleteAuthTests(PostgresFixture fx) : QueryTestBase(fx)
     private DocumentDatabase As(string uid) =>
         new(Fx.DataSource, Options.Create(new WincheDatabaseOptions()),
             writeAuthorizer: new RulesWriteAuthorizer(
-                new RuleEngine(new StaticRuleSetRepository(Rules), WincheRuleValueComparer.Instance),
+                new RuleEngine(new StaticRuleSetRepository(Rules)),
                 new StaticClaimsAccessor(new Dictionary<string, object?> { ["uid"] = uid })));
 
     private static SetWrite Doc(string path) => new() { Path = path, Fields = new Dictionary<string, Value> { ["x"] = new IntegerValue(1) } };

@@ -42,6 +42,7 @@ public sealed class PostgresFixture : IAsyncLifetime
             cmd.CommandText = SchemaSql.ChangesDdl();
             await cmd.ExecuteNonQueryAsync();
         }
+        await WincheFeedTables.EnsureAsync(DataSource);   // durable consumers' cursors and dead letters (Winche.Core)
     }
 
     public async Task DisposeAsync()
@@ -59,7 +60,7 @@ public sealed class PostgresFixture : IAsyncLifetime
         await cmd.ExecuteNonQueryAsync();
         await ResetChangesAsync();
         await using var cmd2 = conn.CreateCommand();
-        cmd2.CommandText = $"TRUNCATE {WincheDatabaseTables.FeedCursors}, {WincheDatabaseTables.DeadLetters}, {WincheDatabaseTables.FeedPruned}, {WincheDatabaseTables.Transactions}";
+        cmd2.CommandText = $"TRUNCATE {WincheFeedTables.Cursors}, {WincheFeedTables.DeadLetters}, {WincheDatabaseTables.FeedPruned}, {WincheDatabaseTables.Transactions}";
         await cmd2.ExecuteNonQueryAsync();
     }
 

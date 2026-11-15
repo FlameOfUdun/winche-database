@@ -47,7 +47,7 @@ public class UseTtlTests
             o.UseTtl(t => t.Add("c", "ttl"));
         });
 
-        Assert.Contains(services, d => d.ServiceType == typeof(IHostedService) && d.ImplementationType == typeof(TtlSweeper));
+        Assert.Contains(services, d => d.ImplementationInstance is Winche.Core.WincheProductServiceInfo { Service: var s } && s == typeof(TtlSweeper));
         Assert.Contains(services, d => d.ServiceType == typeof(TtlPolicy));
     }
 }

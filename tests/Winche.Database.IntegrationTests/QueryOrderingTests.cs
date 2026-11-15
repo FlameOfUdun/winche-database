@@ -1,5 +1,5 @@
 using Winche.Database.Querying.Ast;
-using Winche.Database.Values;
+using Winche.Values;
 
 namespace Winche.Database.IntegrationTests;
 

@@ -3,7 +3,7 @@ using Winche.Database.Authorization;
 using Winche.Database.DependencyInjection;
 using Winche.Database.Runtime;
 using Winche.Database.Runtime.Writes;
-using Winche.Database.Values;
+using Winche.Values;
 using Winche.Rules;
 using Xunit;
 
@@ -16,7 +16,7 @@ public class TransactionalWriteAuthTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task TxCommit_DeniedWrite_RollsBack()
     {
         var ruleset = RuleSetBuilder.Build(_ => { });   // deny-all
-        var authorizer = new RulesWriteAuthorizer(new RuleEngine(new StaticRuleSetRepository(ruleset), WincheRuleValueComparer.Instance), new StaticClaimsAccessor(new Dictionary<string, object?> { ["uid"] = "u" }));
+        var authorizer = new RulesWriteAuthorizer(new RuleEngine(new StaticRuleSetRepository(ruleset)), new StaticClaimsAccessor(new Dictionary<string, object?> { ["uid"] = "u" }));
         var core = new DocumentDatabase(Fx.DataSource, Options.Create(new WincheDatabaseOptions()),
             listeners: null, scopes: null, writeAuthorizer: authorizer);
 

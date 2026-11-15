@@ -1,6 +1,6 @@
 // tests/Winche.Database.IntegrationTests/ComparerSqlConsistencyTests.cs
 using Winche.Database.Documents;
-using Winche.Database.Values;
+using Winche.Values;
 
 namespace Winche.Database.IntegrationTests;
 

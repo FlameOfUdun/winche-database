@@ -54,7 +54,7 @@ public class WsDocListenTests(PostgresFixture fx) : QueryTestBase(fx)
         // "not-a-doc-path" has no slash → not a valid document path.
         var resp = await ws.RequestAsync(new JsonObject { ["type"] = "doc.listen", ["path"] = "not-a-doc-path" });
         Assert.Equal("error", (string?)resp["type"]);
-        Assert.Equal("INVALID_ARGUMENT", (string?)resp["status"]);
+        Assert.Equal("invalid-argument", (string?)resp["error"]!["code"]);
     }
 
     [Fact]
@@ -64,7 +64,7 @@ public class WsDocListenTests(PostgresFixture fx) : QueryTestBase(fx)
         await using var ws = await WsTestClient.ConnectAndWelcomeAsync(host.Server);
 
         var resp = await ws.RequestAsync(new JsonObject { ["type"] = "doc.listen", ["path"] = "wsdl/a" });
-        Assert.Equal("PERMISSION_DENIED", (string?)resp["status"]);
+        Assert.Equal("permission-denied", (string?)resp["error"]!["code"]);
     }
 
     [Fact]

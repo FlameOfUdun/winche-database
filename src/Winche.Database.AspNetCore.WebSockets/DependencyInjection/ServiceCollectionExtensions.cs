@@ -16,11 +16,17 @@ public static class ServiceCollectionExtensions
         var options = new WsOptions();
         configure?.Invoke(options);
         services.AddSingleton(Options.Create(options));
+        if (options.SettingsEnabled)
+        {
+            var area = Winche.Core.ServiceCollectionExtensions.AddWincheSettingsArea(services, LiveConnectionSettings.Area, "Live connections",
+                LiveConnectionSettings.From(options), s => s.Problems());
+            area.Changed += s => s.ApplyTo(options);
+        }
         services.AddSingleton<MessageRouter>();
         services.AddSingleton(sp => new WsConnectionRegistry(
             sp.GetRequiredKeyedService<NpgsqlDataSource>(WincheDatabaseKeys.DataSource),
             sp.GetRequiredService<ILogger<WsConnectionRegistry>>()));
-        services.AddHostedService(sp => new WsRevocationListener(
+        Winche.Core.WincheReadyServiceExtensions.AddWincheProductService(services, Winche.Core.WincheProductNames.Database, sp => new WsRevocationListener(
             sp.GetRequiredKeyedService<NpgsqlDataSource>(WincheDatabaseKeys.DataSource),
             sp.GetRequiredService<WsConnectionRegistry>(),
             sp.GetRequiredService<ILogger<WsRevocationListener>>()));

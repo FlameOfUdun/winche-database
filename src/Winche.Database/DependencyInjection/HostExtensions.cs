@@ -2,7 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Npgsql;
 using Winche.Database.Constants;
-using Winche.Database.Runtime.Coordination;
+using Winche.Core;
 using Winche.Database.Schema;
 
 namespace Winche.Database.DependencyInjection;
@@ -20,6 +20,10 @@ public static class HostExtensions
         var source = scope.ServiceProvider.GetRequiredKeyedService<NpgsqlDataSource>(WincheDatabaseKeys.DataSource);
         await using var _ = await AdvisoryLease.AcquireAsync(source, "schema", TimeSpan.FromSeconds(30), ct);
 
+        // Saved settings first, so the console's indexes are synced rather than dropped and rebuilt.
+        if (scope.ServiceProvider.GetService<Winche.Core.SettingsArea<Settings.DatabaseSettings>>() is not null
+            && scope.ServiceProvider.GetService<Winche.Core.SettingsStore>() is { } settings)
+            await settings.EnsureLoadedAsync(ct);
         var schema = scope.ServiceProvider.GetRequiredService<ISchemaManager>();
         await schema.EnsureCreatedAsync(ct);
         await schema.SyncIndexesAsync(ct);

@@ -15,6 +15,8 @@ public sealed record WelcomeMessage : ServerMessage
 {
     [JsonPropertyName("type")] public string Type { get; } = "welcome";
     [JsonPropertyName("connectionId")] public required string ConnectionId { get; init; }
+    /// <summary>The most referenced documents, files and users one expand response includes (the SDKs follow it offline).</summary>
+    [JsonPropertyName("expandLimit")] public int? ExpandLimit { get; init; }
 }
 
 public sealed record ResponseMessage : ServerMessage
@@ -28,9 +30,8 @@ public sealed record ErrorMessage : ServerMessage
 {
     [JsonPropertyName("type")] public string Type { get; } = "error";
     [JsonPropertyName("id")] public string? Id { get; init; }
-    [JsonPropertyName("status")] public required string Status { get; init; }
-    [JsonPropertyName("message")] public required string Message { get; init; }
-    [JsonPropertyName("details")] public JsonObject? Details { get; init; }
+    /// <summary>The shared error shape, as REST sends it under <c>error</c>.</summary>
+    [JsonPropertyName("error")] public required WincheError Error { get; init; }
 }
 
 public sealed record ListenSnapshotMessage : ServerMessage
@@ -40,6 +41,12 @@ public sealed record ListenSnapshotMessage : ServerMessage
     [JsonPropertyName("documents")] public required IReadOnlyList<Document> Documents { get; init; }
     [JsonPropertyName("readTime")] public required DateTimeOffset ReadTime { get; init; }
     [JsonPropertyName("resumeToken")] public required long ResumeToken { get; init; }
+    /// <summary>With <c>expand</c>: every referenced document the caller may read, by path (replaces what the client had).</summary>
+    [JsonPropertyName("included"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyDictionary<string, Document>? Included { get; init; }
+    /// <summary>With kinded <c>expand</c> paths: every resolved value, by <c>kind:value</c> (replaces what the client had).</summary>
+    [JsonPropertyName("resolved"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyDictionary<string, JsonObject>? Resolved { get; init; }
 }
 
 public sealed record ListenCurrentMessage : ServerMessage
@@ -63,4 +70,16 @@ public sealed record ListenDeltaMessage : ServerMessage
     [JsonPropertyName("count")] public required int Count { get; init; }
     [JsonPropertyName("readTime")] public required DateTimeOffset ReadTime { get; init; }
     [JsonPropertyName("resumeToken")] public required long ResumeToken { get; init; }
+    /// <summary>With <c>expand</c>: referenced documents new or changed since the last frame, by path.</summary>
+    [JsonPropertyName("included"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyDictionary<string, Document>? Included { get; init; }
+    /// <summary>With <c>expand</c>: referenced documents no longer included (deleted, unreadable, or no longer referenced).</summary>
+    [JsonPropertyName("excluded"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? Excluded { get; init; }
+    /// <summary>Resolved values new or changed since the last frame, by <c>kind:value</c>.</summary>
+    [JsonPropertyName("resolved"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyDictionary<string, JsonObject>? Resolved { get; init; }
+    /// <summary>Resolved values no longer there (deleted, unreadable, no longer referenced).</summary>
+    [JsonPropertyName("unresolved"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? Unresolved { get; init; }
 }

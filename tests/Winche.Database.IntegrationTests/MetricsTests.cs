@@ -14,7 +14,7 @@ using Winche.Database.Runtime;
 using Winche.Database.Runtime.ChangeFeed;
 using Winche.Database.Runtime.Listening;
 using Winche.Database.Runtime.Writes;
-using Winche.Database.Values;
+using Winche.Values;
 using Winche.Rules;
 using Winche.Rules.Expressions;
 
@@ -30,7 +30,7 @@ internal sealed class MetricCapture : IDisposable
     {
         _listener.InstrumentPublished = (instrument, l) =>
         {
-            if (instrument.Meter.Name == WincheDatabaseMetrics.MeterName) l.EnableMeasurementEvents(instrument);
+            if (instrument.Meter.Name is WincheDatabaseMetrics.MeterName or WincheFeedMetrics.MeterName) l.EnableMeasurementEvents(instrument);
         };
         _listener.SetMeasurementEventCallback<double>((i, v, tags, _) => Add(i, v, tags));
         _listener.SetMeasurementEventCallback<long>((i, v, tags, _) => Add(i, v, tags));
@@ -116,8 +116,9 @@ public class MetricsTests(PostgresFixture fx) : QueryTestBase(fx)
             Assert.Contains(m.Of("winche.database.listener.update.duration"), x => (string?)x.Tags["method"] == "in_memory");
 
             await Eventually(() => hook.Changes.Count == 1);
-            await Eventually(() => m.Of("winche.database.hook.changes", t => (string?)t["consumer"] == consumer).Count > 0);
-            var lag = m.Of("winche.database.hook.lag", t => (string?)t["consumer"] == consumer).Last().Value;
+            // Durable consumers run on Winche.Core's feed, so they're measured on its meter, tagged with the feed.
+            await Eventually(() => m.Of("winche.feed.delivered", t => (string?)t["consumer"] == consumer && (string?)t["feed"] == "database").Count > 0);
+            var lag = m.Of("winche.feed.lag", t => (string?)t["consumer"] == consumer).Last().Value;
             Assert.InRange(lag, 0, 30);
         }
         finally
@@ -140,7 +141,7 @@ public class MetricsTests(PostgresFixture fx) : QueryTestBase(fx)
             await ws.RequestAsync(new JsonObject { ["type"] = "ping" });
             await ws.RequestAsync(new JsonObject { ["type"] = "listen", ["query"] = new JsonObject { ["collection"] = "mws" } });
             var refused = await ws.RequestAsync(new JsonObject { ["type"] = "listen", ["query"] = new JsonObject { ["collection"] = "mws2" } });
-            Assert.Equal("RESOURCE_EXHAUSTED", (string?)refused["status"]);
+            Assert.Equal("resource-exhausted", (string?)refused["error"]!["code"]);
             await ws.RequestAsync(new JsonObject { ["type"] = "made.up" });
         }
         await Eventually(() => m.Of("winche.database.ws.connections").Sum(x => x.Value) == 0 && m.Of("winche.database.ws.connections").Count >= 2);

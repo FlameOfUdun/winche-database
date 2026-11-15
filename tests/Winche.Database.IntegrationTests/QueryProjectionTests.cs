@@ -5,7 +5,7 @@ using Winche.Database.Documents;
 using Winche.Database.Querying.Ast;
 using Winche.Database.Runtime;
 using Winche.Database.Runtime.Writes;
-using Winche.Database.Values;
+using Winche.Values;
 using Winche.Rules;
 using Winche.Rules.Expressions;
 
@@ -243,7 +243,7 @@ public class QueryProjectionTests(PostgresFixture fx) : QueryTestBase(fx)
         }]);
 
         var aliceGuard = new RuleGuardedDocumentDatabase(
-            core, new RuleEngine(new StaticRuleSetRepository(ruleset), WincheRuleValueComparer.Instance),
+            core, new RuleEngine(new StaticRuleSetRepository(ruleset)),
             new StaticClaimsAccessor(new Dictionary<string, object?> { ["uid"] = "alice" }));
 
         // Query with WHERE ownerId == "alice" AND Select: ["name"]
@@ -287,7 +287,7 @@ public class QueryProjectionTests(PostgresFixture fx) : QueryTestBase(fx)
         }]);
 
         var aliceGuard = new RuleGuardedDocumentDatabase(
-            core, new RuleEngine(new StaticRuleSetRepository(ruleset), WincheRuleValueComparer.Instance),
+            core, new RuleEngine(new StaticRuleSetRepository(ruleset)),
             new StaticClaimsAccessor(new Dictionary<string, object?> { ["uid"] = "alice" }));
 
         // Unconstrained query + Select: ["ownerId"] → still denied (rules are not filters)

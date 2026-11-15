@@ -10,7 +10,7 @@ using Winche.Database.Querying.Planning;
 using Winche.Database.Querying.Sql;
 using Winche.Database.Runtime.Writes;
 using Winche.Database.Schema;
-using Winche.Database.Values;
+using Winche.Values;
 
 namespace Winche.Database.IntegrationTests;
 
@@ -185,6 +185,18 @@ public class IndexManagementTests(PostgresFixture fx) : QueryTestBase(fx)
     private static string? Advise(CollectionIndexResolver r, Query q) => r.Advise(q, Normalizer.Normalize(q));
 
     private static FieldPath F(string p) => FieldPath.Parse(p);
+
+    [Fact]
+    public void A_suggestion_is_the_index_itself_and_serves_the_query_once_declared()
+    {
+        var byType = new Query("userData/u1/sessionHistory",
+            Where: new FieldFilter(F("runtimeType"), FilterOperator.Eq, new StringValue("airway")),
+            OrderBy: [new Ordering(F("finishedAt"), SortDirection.Desc)]);
+        var s = new CollectionIndexResolver([]).SuggestionFor(byType, Normalizer.Normalize(byType))!;
+        Assert.Equal(("sessionHistory", IndexKind.Ordered, false), (s.CollectionId, s.Kind, s.CollectionGroup));
+        Assert.Equal([new IndexField("runtimeType"), new IndexField("finishedAt", SortDirection.Desc)], s.Fields);
+        Assert.Null(Advise(new CollectionIndexResolver([s.ToDefinition()]), byType));
+    }
 
     [Fact]
     public void Advice_names_the_index_a_query_needs_and_nothing_when_one_serves_it()

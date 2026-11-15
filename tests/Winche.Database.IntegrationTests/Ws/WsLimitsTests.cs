@@ -37,7 +37,7 @@ public class WsLimitsTests(PostgresFixture fx) : QueryTestBase(fx)
 
         var third = await ws.RequestAsync(Listen("lim2"));
         Assert.Equal("error", (string?)third["type"]);
-        Assert.Equal("RESOURCE_EXHAUSTED", (string?)third["status"]);
+        Assert.Equal("resource-exhausted", (string?)third["error"]!["code"]);
 
         // Still open, and freeing one makes room.
         await ws.RequestAsync(Unlisten((string)first["result"]!["subscriptionId"]!));

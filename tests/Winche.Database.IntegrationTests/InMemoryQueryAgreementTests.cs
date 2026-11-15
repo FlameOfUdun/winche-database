@@ -9,7 +9,7 @@ using Winche.Database.Runtime;
 using Winche.Database.Runtime.ChangeFeed;
 using Winche.Database.Runtime.Listening;
 using Winche.Database.Runtime.Writes;
-using Winche.Database.Values;
+using Winche.Values;
 
 namespace Winche.Database.IntegrationTests;
 

@@ -27,14 +27,16 @@ All field values use a **tagged-value** encoding. Each value is a JSON object wi
 
 | C# type | Wire key | Payload | Notes |
 | - | - | - | - |
-| `NullValue` | `nullValue` | `null` (JSON null) | Payload **must** be JSON null — any other JSON value is `INVALID_ARGUMENT` |
+| `NullValue` | `nullValue` | `null` (JSON null) | Payload **must** be JSON null — any other JSON value is `invalid-argument` |
 | `BooleanValue` | `booleanValue` | JSON boolean | |
 | `IntegerValue` | `integerValue` | string or JSON number (int64) | Prefer string form for large values; both accepted |
 | `DoubleValue` | `doubleValue` | JSON number **or** one of the strings `"NaN"`, `"Infinity"`, `"-Infinity"` | |
 | `TimestampValue` | `timestampValue` | RFC 3339 string, UTC (`Z`), microsecond precision (`yyyy-MM-ddTHH:mm:ss.ffffffZ`) | Stored truncated to µs (sub-µs ticks dropped) |
 | `StringValue` | `stringValue` | JSON string | Unicode; code-point order for sorting |
 | `BytesValue` | `bytesValue` | standard base64 string | |
-| `ReferenceValue` | `referenceValue` | document path string (e.g. `"users/u1"`) | |
+| `ReferenceValue` | `docRefValue` | document path string (e.g. `"users/u1"`) | A document |
+| `FileRefValue` | `fileRefValue` | file path string (e.g. `"scans/a.png"`) | A file in Winche Storage |
+| `UserRefValue` | `userRefValue` | uid string (e.g. `"u1"`) | A Winche Auth user |
 | `GeoPointValue` | `geoPointValue` | `{"latitude": <number>, "longitude": <number>}` | |
 | `ArrayValue` | `arrayValue` | `{"values": [<value>, …]}` | `values` key may be absent for an empty array |
 | `MapValue` | `mapValue` | `{"fields": {"<key>": <value>, …}}` | `fields` key may be absent for an empty map |
@@ -52,7 +54,9 @@ All field values use a **tagged-value** encoding. Each value is a JSON object wi
 {"timestampValue": "2026-06-07T12:34:56.000000Z"}
 {"stringValue": "hello"}
 {"bytesValue": "SGVsbG8="}
-{"referenceValue": "users/u1"}
+{"docRefValue": "users/u1"}
+{"fileRefValue": "scans/a.png"}
+{"userRefValue": "u1"}
 {"geoPointValue": {"latitude": 59.913, "longitude": 10.752}}
 {"arrayValue": {"values": [{"integerValue": "1"}, {"integerValue": "2"}]}}
 {"arrayValue": {}}
@@ -73,7 +77,9 @@ The engine uses a total order across all types. The numeric rank values are:
 | Timestamp | 40 | |
 | String | 50 | Unicode code-point order (`COLLATE "C"` in Postgres) |
 | Bytes | 60 | Lexicographic byte order |
-| Reference | 70 | Whole-path Unicode code-point (byte) comparison — **not** per-segment; this differs from per-segment ordering for ids containing chars < `'/'` (U+002F) |
+| Document reference | 70 | Whole-path Unicode code-point (byte) comparison — **not** per-segment; this differs from per-segment ordering for ids containing chars < `'/'` (U+002F) |
+| File reference | 72 | Path, Unicode code-point comparison |
+| User reference | 74 | Uid, Unicode code-point comparison |
 | GeoPoint | 80 | Latitude first, then longitude |
 | Array | 90 | Element-wise; shorter prefix array sorts first |
 | Map | 100 | Keys sorted by code-point order; compared **interleaved** (key₁, value₁, key₂, value₂, …); shorter map wins on a prefix tie. Example: `{"a":{"integerValue":"1"},"b":{"integerValue":"0"}}` < `{"a":{"integerValue":"2"}}` — key `"a"` ties, value `1 < 2` decides |
@@ -147,8 +153,8 @@ The special pseudo-field `__name__` refers to the document path; it is valid in 
 
 Every mutation goes through a `writes[]` array. REST uses `:commit`; WS uses `write`. A batch is **atomic** — it commits at a single timestamp or not at all.
 
-- Minimum: 1 write. Maximum: **500** writes (`INVALID_ARGUMENT` beyond that).
-- Each write is a JSON object with exactly **one** of the shape keys `set`, `update`, or `delete`. Having zero or more than one is `INVALID_ARGUMENT`.
+- Minimum: 1 write. Maximum: **500** writes (`invalid-argument` beyond that).
+- Each write is a JSON object with exactly **one** of the shape keys `set`, `update`, or `delete`. Having zero or more than one is `invalid-argument`.
 
 ### 3.2 Set write
 
@@ -176,7 +182,7 @@ Every mutation goes through a `writes[]` array. REST uses `:commit`; WS uses `wr
 
 **Merge semantics (`merge: true`):** When `merge: true` the write recurses through `MapValue` fields and merges them. Top-level keys in `fields` that are `mapValue`s are merged recursively. Non-map existing fields at the same key are replaced. The `deleteField` sentinel is legal as a map value at any depth inside a merge-set (see [§3.6 deleteField](#36-deletefield-sentinel)).
 
-**Merge-mask semantics (`mergeFields`):** Only the paths listed in `mergeFields` are written. For each masked path: if the path is present in `fields`, that value is set; if the path is absent from `fields` (or is a `deleteField` sentinel), that path is deleted from the document. Paths not in the mask are left completely untouched. A masked intermediate path (e.g. `"m"`) replaces the entire subtree at that key with the data's value. `mergeFields` and `merge: true` are mutually exclusive (→ `INVALID_ARGUMENT`). An empty `mergeFields` array is `INVALID_ARGUMENT`.
+**Merge-mask semantics (`mergeFields`):** Only the paths listed in `mergeFields` are written. For each masked path: if the path is present in `fields`, that value is set; if the path is absent from `fields` (or is a `deleteField` sentinel), that path is deleted from the document. Paths not in the mask are left completely untouched. A masked intermediate path (e.g. `"m"`) replaces the entire subtree at that key with the data's value. `mergeFields` and `merge: true` are mutually exclusive (→ `invalid-argument`). An empty `mergeFields` array is `invalid-argument`.
 
 ### 3.3 Update write
 
@@ -201,7 +207,7 @@ Every mutation goes through a `writes[]` array. REST uses `:commit`; WS uses `wr
 | `transforms` | array | Optional. |
 | `precondition` | object | Optional. `UpdateWrite` always has an implicit `exists: true` precondition in addition to any explicit one. |
 
-The update creates or patches individual nested fields without disturbing siblings. An `UpdateWrite` on a missing document yields `NOT_FOUND`.
+The update creates or patches individual nested fields without disturbing siblings. An `UpdateWrite` on a missing document yields `not-found`.
 
 ### 3.4 Delete write
 
@@ -230,13 +236,13 @@ The update creates or patches individual nested fields without disturbing siblin
 {"exists": true, "updateTime": "2026-06-07T10:05:00+00:00"}
 ```
 
-At least one of `exists` or `updateTime` must be set (an object with neither is `INVALID_ARGUMENT`).
+At least one of `exists` or `updateTime` must be set (an object with neither is `invalid-argument`).
 
 | Check | Failure |
 | - | - |
-| `exists: true` on missing doc | `NOT_FOUND` |
-| `exists: false` on existing doc | `ALREADY_EXISTS` |
-| `updateTime` mismatch (µs-exact) | `FAILED_PRECONDITION` |
+| `exists: true` on missing doc | `not-found` |
+| `exists: false` on existing doc | `already-exists` |
+| `updateTime` mismatch (µs-exact) | `failed-precondition` |
 
 Precondition failures abort the **entire** batch — nothing is applied.
 
@@ -249,9 +255,9 @@ Precondition failures abort the **entire** batch — nothing is applied.
 | `UpdateWrite.Fields` values (any depth via dotted path keys) | Yes |
 | `SetWrite(merge: true).Fields` values — top-level or inside `mapValue` at any depth | Yes |
 | `SetWrite(mergeFields: [...]).Fields` values — for a masked path, signals deletion of that path | Yes |
-| `SetWrite(merge: false).Fields` values | No — `INVALID_ARGUMENT` |
-| Inside any `ArrayValue` (at any depth) | No — `INVALID_ARGUMENT` |
-| In transform operands | No — `INVALID_ARGUMENT` |
+| `SetWrite(merge: false).Fields` values | No — `invalid-argument` |
+| Inside any `ArrayValue` (at any depth) | No — `invalid-argument` |
+| In transform operands | No — `invalid-argument` |
 
 **Mask semantics:** The sentinel removes the leaf field. If removing a field leaves a map empty, that **empty map is preserved** (no phantom removal of parent maps). A scalar parent referenced via a dotted-path key is left untouched by the sentinel — only the exact target field is affected.
 
@@ -472,7 +478,7 @@ The engine automatically appends `__name__` (the document path) as a tiebreaker 
 
 `values` must be tagged values corresponding positionally to `orderBy` fields (including the implicit `__name__` tiebreaker if it is needed). Cursor arity may be any **prefix** of the sort keys (1 to N values); the remaining sort keys are unconstrained.
 
-**C# convenience — `Cursor.FromDocument`.** `Cursor.FromDocument(Document doc, IReadOnlyList<Ordering>? orderBy, bool before)` derives cursor values from a document snapshot: for each `orderBy` field it reads that field's value from `doc`, then appends the implicit `__name__` tiebreaker as `{"referenceValue": "<doc.Path>"}`. A null or empty `orderBy` produces a `__name__`-only cursor. Throws `ArgumentException` if a required field is absent from the document. The resulting `Cursor` is identical on the wire to one constructed by hand — `Cursor.FromDocument` is a client-side convenience only.
+**C# convenience — `Cursor.FromDocument`.** `Cursor.FromDocument(Document doc, IReadOnlyList<Ordering>? orderBy, bool before)` derives cursor values from a document snapshot: for each `orderBy` field it reads that field's value from `doc`, then appends the implicit `__name__` tiebreaker as `{"docRefValue": "<doc.Path>"}`. A null or empty `orderBy` produces a `__name__`-only cursor. Throws `ArgumentException` if a required field is absent from the document. The resulting `Cursor` is identical on the wire to one constructed by hand — `Cursor.FromDocument` is a client-side convenience only.
 
 | `Query` property | `before` | Equivalent |
 | - | - | - |
@@ -485,57 +491,49 @@ The engine automatically appends `__name__` (the document path) as a tiebreaker 
 
 ## 5. Errors
 
-### 5.1 Error status vocabulary
+Every Winche API — this one, storage, auth and functions — answers a failed request the same way: an `error` object
+with a `code` from one shared list, a `message` for people, and, where it helps, a more precise `reason` and `details`.
 
-All errors — WS `error` frames and REST error bodies — use this status vocabulary:
+### 5.1 Error codes
 
-| Status | Description |
-| - | - |
-| `INVALID_ARGUMENT` | Malformed request, bad field types, batch size exceeded, write shape invalid |
-| `INVALID_QUERY` | Query parse error (surfaces on **both** REST 400 and WS error frame; `details.jsonPath` for JSON parse errors, `details.code` for plan-validation failures) |
-| `NOT_FOUND` | `UpdateWrite`/`exists:true` precondition on a missing document |
-| `ALREADY_EXISTS` | `exists:false` precondition on an existing document |
-| `FAILED_PRECONDITION` | `updateTime` precondition mismatch |
-| `ABORTED` | Transaction conflict, expired transaction, or unknown transaction id |
-| `PERMISSION_DENIED` | Access rule denied the operation |
-| `UNAUTHENTICATED` | Authentication token invalid or missing |
-| `DEADLINE_EXCEEDED` | Operation timed out |
-| `INTERNAL` | Unexpected server error (always a bug; report it) |
+| Code | HTTP | Here |
+| - | - | - |
+| `invalid-argument` | 400 | Malformed request, bad field types, batch size exceeded, write shape invalid; a query that doesn't parse or validate has `reason: "invalid-query"` (`details.jsonPath` for JSON parse errors, `details.code` for plan-validation failures) |
+| `failed-precondition` | 400 | `updateTime` precondition mismatch |
+| `unauthenticated` | 401 | Authentication token invalid or missing |
+| `permission-denied` | 403 | Access rule denied the operation |
+| `not-found` | 404 | `UpdateWrite`/`exists:true` precondition on a missing document |
+| `already-exists` | 409 | `exists:false` precondition on an existing document |
+| `aborted` | 409 | Transaction conflict, expired transaction, or unknown transaction id |
+| `resource-exhausted` | 429 | Too many live subscriptions on one connection |
+| `deadline-exceeded` | 504 | Operation timed out |
+| `internal` | 500 | Unexpected server error (always a bug; `details.errorId` finds it in the server's log) |
 
-### 5.2 REST error body
+The full list (`cancelled`, `unknown`, `out-of-range`, `unimplemented`, `unavailable`, `data-loss`, …) is shared by
+every Winche API; these are the ones the database sends.
 
-```json
-{"status": "NOT_FOUND", "message": "Document 'users/u99' does not exist.", "details": null}
-```
-
-`details` may be null. For `INVALID_QUERY` parse errors (REST and WS) it contains `jsonPath`:
+### 5.2 Error body (REST) and error frame (WebSocket)
 
 ```json
-{"status": "INVALID_QUERY", "message": "Unknown operator", "details": {"jsonPath": "$.where.op"}}
+{"error": {"code": "not-found", "message": "Document 'users/u99' does not exist."}}
 ```
 
-For `INVALID_QUERY` plan-validation failures it contains `code`:
+`reason` and `details` appear only when there is something in them:
 
 ```json
-{"status": "INVALID_QUERY", "message": "'limit' and 'limitToLast' are mutually exclusive.", "details": {"code": "LIMIT_CONFLICT"}}
+{"error": {"code": "invalid-argument", "reason": "invalid-query", "message": "Unknown operator", "details": {"jsonPath": "$.where.op"}}}
+{"error": {"code": "invalid-argument", "reason": "invalid-query", "message": "'limit' and 'limitToLast' are mutually exclusive.", "details": {"code": "LIMIT_CONFLICT"}}}
 ```
 
-### 5.3 REST status → HTTP code mapping
+A WebSocket error frame carries the same object: `{"type": "error", "id": "req-42", "error": {"code": "…", "message": "…"}}`.
 
-| Status | HTTP |
-| - | - |
-| `NOT_FOUND` | 404 |
-| `ALREADY_EXISTS`, `ABORTED` | 409 |
-| `FAILED_PRECONDITION` | 412 |
-| `PERMISSION_DENIED` | 403 |
-| `UNAUTHENTICATED` | 401 |
-| `DEADLINE_EXCEEDED` | 504 |
-| `INTERNAL` | 500 |
-| `INVALID_ARGUMENT`, `INVALID_QUERY`, body binding errors | 400 |
+### 5.3 HTTP status
+
+As in §5.1, the same for every Winche API. Body binding errors are `invalid-argument` (400).
 
 ### 5.4 Plan-validation error codes
 
-These codes appear in `details.code` for `INVALID_QUERY` plan-validation failures (`PlanValidationException`):
+These codes appear in `details.code` for `invalid-query` plan-validation failures (`PlanValidationException`):
 
 | Code | Meaning |
 | - | - |
@@ -567,11 +565,11 @@ Document paths in URL segments are **Base64-encoded** (standard, UTF-8 bytes) to
 
 | Method | Route | Request body | Response | Description |
 | - | - | - | - | - |
-| `GET` | `/documents/{base64Path}` | — | `Document` or 404 | Get a document |
-| `PUT` | `/documents/{base64Path}` | `{"fields": {…}}` | `Document` | Create or replace (set without merge). Performs a read after write to return the current document. |
-| `PATCH` | `/documents/{base64Path}` | `{"fields": {…}}` | `Document` or 404 | Patch fields (update). Field keys are dotted paths. |
-| `DELETE` | `/documents/{base64Path}` | — | 204 or 404 | Delete (cascade). Returns 404 if missing (performs read first). |
-| `GET` | `/documents/ping` | — | 200 | Health check |
+| `GET` | `/documents/v1/{base64Path}` | — | `Document` or 404 | Get a document |
+| `PUT` | `/documents/v1/{base64Path}` | `{"fields": {…}}` | `Document` | Create or replace (set without merge). Performs a read after write to return the current document. |
+| `PATCH` | `/documents/v1/{base64Path}` | `{"fields": {…}}` | `Document` or 404 | Patch fields (update). Field keys are dotted paths. |
+| `DELETE` | `/documents/v1/{base64Path}` | — | 204 or 404 | Delete (cascade). Returns 404 if missing (performs read first). |
+| `GET` | `/documents/v1/ping` | — | 200 | Health check |
 
 ### 6.2 Colon-verb endpoints
 
@@ -579,21 +577,21 @@ These endpoints use literal-colon URL segments and are mapped **outside** the `/
 
 | Endpoint | Request body | Response | Description |
 | - | - | - | - |
-| `POST /documents:add` | `{"collection": "<collectionPath>", "fields": {…}}` | `{"document": <Document>}` | Create a document with a generated 20-char base62 id. Evaluated as a **create** by the rules engine. |
-| `POST /documents:commit` | `{"writes": [...], "transaction"?: "id"}` | `{"writeResults": [...]}` | Atomic write batch. With `transaction`: commits the transaction. |
-| `POST /documents:beginTransaction` | `{}` | `{"transaction": "id"}` | Begin an optimistic transaction. |
-| `POST /documents:rollback` | `{"transaction": "id"}` | `{}` | Roll back (idempotent; unknown id is a no-op). |
-| `POST /documents:batchGet` | `{"documents": ["path1","path2",...], "transaction"?: "id"}` | `{"documents": [Document\|null, ...]}` | Bulk read preserving input order; missing docs are `null`. |
-| `POST /documents:runQuery` | `{"query": <Query>, "transaction"?: "id"}` | `{"documents": [...], "hasMore": false}` | Execute a query. Default `limit` = 100 when omitted. |
-| `POST /documents:count` | `{"query": <Query>}` | `{"count": N}` | Count documents matching the query. An explicit `limit` caps the count; omitted = full match (the 100 default does **not** apply). Authorized as a `list` operation — the query must provably satisfy a read rule or the request is rejected with `PERMISSION_DENIED`. |
-| `POST /documents:aggregate` | `{"query": <Query>, "aggregations": [...]}` | `{"result": {<alias>: <tagged value>, …}}` | Run one or more aggregations (count / sum / average) over a query. An explicit `limit` caps all aggregations. Authorized as a `list` operation. |
+| `POST /documents/v1:add` | `{"collection": "<collectionPath>", "fields": {…}}` | `{"document": <Document>}` | Create a document with a generated 20-char base62 id. Evaluated as a **create** by the rules engine. |
+| `POST /documents/v1:commit` | `{"writes": [...], "transaction"?: "id"}` | `{"writeResults": [...]}` | Atomic write batch. With `transaction`: commits the transaction. |
+| `POST /documents/v1:beginTransaction` | `{}` | `{"transaction": "id"}` | Begin an optimistic transaction. |
+| `POST /documents/v1:rollback` | `{"transaction": "id"}` | `{}` | Roll back (idempotent; unknown id is a no-op). |
+| `POST /documents/v1:batchGet` | `{"documents": ["path1","path2",...], "transaction"?: "id"}` | `{"documents": [Document\|null, ...]}` | Bulk read preserving input order; missing docs are `null`. |
+| `POST /documents/v1:runQuery` | `{"query": <Query>, "transaction"?: "id"}` | `{"documents": [...], "hasMore": false}` | Execute a query. Default `limit` = 100 when omitted. |
+| `POST /documents/v1:count` | `{"query": <Query>}` | `{"count": N}` | Count documents matching the query. An explicit `limit` caps the count; omitted = full match (the 100 default does **not** apply). Authorized as a `list` operation — the query must provably satisfy a read rule or the request is rejected with `permission-denied`. |
+| `POST /documents/v1:aggregate` | `{"query": <Query>, "aggregations": [...]}` | `{"result": {<alias>: <tagged value>, …}}` | Run one or more aggregations (count / sum / average) over a query. An explicit `limit` caps all aggregations. Authorized as a `list` operation. |
 
 ### 6.3 Request/response examples
 
 **:add**
 
 ```json
-POST /documents:add
+POST /documents/v1:add
 {
   "collection": "users",
   "fields": {
@@ -619,14 +617,14 @@ POST /documents:add
 }
 ```
 
-Errors: missing or non-string `collection`, or missing `fields` → `INVALID_ARGUMENT` (HTTP 400); create denied by rules → `PERMISSION_DENIED` (HTTP 403).
+Errors: missing or non-string `collection`, or missing `fields` → `invalid-argument` (HTTP 400); create denied by rules → `permission-denied` (HTTP 403).
 
 > **Design note:** unlike the CRUD convenience endpoints (which encode the document path in a Base64 URL segment), `:add` carries `collection` in the JSON request body. This is consistent with the other colon-verbs (`:commit`, `:runQuery`, `:count`), which also take structured JSON bodies. Winche's colon-verb form is the deliberate, uniform choice.
 
 **:commit (batch)**
 
 ```json
-POST /documents:commit
+POST /documents/v1:commit
 {
   "writes": [
     {"set": {"path": "users/u1", "fields": {"name": {"stringValue": "Alice"}}}},
@@ -648,19 +646,19 @@ POST /documents:commit
 **:beginTransaction + :batchGet + :commit**
 
 ```json
-POST /documents:beginTransaction
+POST /documents/v1:beginTransaction
 {}
 
 200 OK
 {"transaction": "6a3f2e..."}
 
-POST /documents:batchGet
+POST /documents/v1:batchGet
 {"documents": ["users/u1"], "transaction": "6a3f2e..."}
 
 200 OK
 {"documents": [{"path": "users/u1", "fields": {...}, ...}]}
 
-POST /documents:commit
+POST /documents/v1:commit
 {"writes": [{"set": {"path": "users/u1", "fields": {"score": {"integerValue": "99"}}}}],
  "transaction": "6a3f2e..."}
 
@@ -671,7 +669,7 @@ POST /documents:commit
 **:runQuery**
 
 ```json
-POST /documents:runQuery
+POST /documents/v1:runQuery
 {
   "query": {
     "collection": "users",
@@ -688,7 +686,7 @@ POST /documents:runQuery
 **:count**
 
 ```json
-POST /documents:count
+POST /documents/v1:count
 {
   "query": {
     "collection": "users",
@@ -705,7 +703,7 @@ POST /documents:count
 Request body: `query` (required) and `aggregations` (required, 1–5 items). Each aggregation has a `kind` (`"count"`, `"sum"`, or `"average"`), an `alias` (non-empty, unique within the request), and for `sum`/`average` a `field` (dotted field path; may not be `__name__`). `count` takes no `field`.
 
 ```json
-POST /documents:aggregate
+POST /documents/v1:aggregate
 {
   "query": {
     "collection": "orders",
@@ -730,9 +728,9 @@ POST /documents:aggregate
 
 Each value in the response is a tagged value (see §1). `count` → `integerValue`. `sum` → `integerValue` when all matched operands are integers; `doubleValue` when any is a double (NaN/Infinity propagated; integer overflow → double); empty match → `{"integerValue":"0"}`. `average` → `doubleValue`, or `{"nullValue":null}` when no numeric operand matched.
 
-Errors: bad `kind`, missing `alias`, duplicate alias, empty alias, missing `aggregations` array, more than 5 aggregations, `sum`/`average` with no `field`, `count` with a `field`, field is `__name__` → `INVALID_ARGUMENT` (HTTP 400); denied by rules → `PERMISSION_DENIED` (HTTP 403).
+Errors: bad `kind`, missing `alias`, duplicate alias, empty alias, missing `aggregations` array, more than 5 aggregations, `sum`/`average` with no `field`, `count` with a `field`, field is `__name__` → `invalid-argument` (HTTP 400); denied by rules → `permission-denied` (HTTP 403).
 
-> **Authorization:** `:aggregate` is authorized under the **`list`** rule (field-agnostic, same as `:count` and `:runQuery`). The query must provably satisfy a read rule or the request is rejected with `PERMISSION_DENIED`.
+> **Authorization:** `:aggregate` is authorized under the **`list`** rule (field-agnostic, same as `:count` and `:runQuery`). The query must provably satisfy a read rule or the request is rejected with `permission-denied`.
 
 > **Notes:** an explicit `limit` on the query caps all aggregations; collection-group queries are not supported.
 
@@ -742,7 +740,7 @@ Errors: bad `kind`, missing `alias`, duplicate alias, empty alias, missing `aggr
 >
 > Transaction state lives in the **serving node's in-memory ledger**. In a multi-node (horizontally scaled) deployment, all requests belonging to the same transaction must be routed to the **same node** (sticky sessions, consistent hashing, or similar) for the duration of the transaction — from `:beginTransaction` through `:commit` or `:rollback`.
 >
-> If a request in an active transaction is routed to a different node, the transaction id will be unknown to that node and the operation will return `ABORTED`. No data corruption occurs — an `ABORTED` response is always safe to retry with a new transaction.
+> If a request in an active transaction is routed to a different node, the transaction id will be unknown to that node and the operation will return `aborted`. No data corruption occurs — an `aborted` response is always safe to retry with a new transaction.
 >
 > For use cases requiring transaction-safe multi-node operation without sticky routing, use the **WebSocket API** instead: a WS connection is pinned to one server for its lifetime, so the transaction is always on the correct node.
 
@@ -752,7 +750,7 @@ Errors: bad `kind`, missing `alias`, duplicate alias, empty alias, missing `aggr
 
 ### 7.1 Connection and authentication
 
-Connect via standard WebSocket to `/{prefix}/ws` (default `/documents/ws`).
+Connect via standard WebSocket to `/{prefix}/ws` (default `/documents/v1/ws`).
 
 **Authentication is at the HTTP upgrade.** Because browsers cannot set `Authorization` headers on WebSocket upgrades, the library ships `UseWincheWsQueryToken()` middleware. Place it **before** `UseAuthentication()`: it promotes a `?access_token=<token>` query parameter to an `Authorization: Bearer …` header so the registered authentication handler can validate it at the upgrade. Gate the endpoint with `.RequireAuthorization()` to reject unauthenticated upgrades before the socket is accepted.
 
@@ -761,8 +759,11 @@ An invalid or missing token results in an **HTTP 401** response — the WebSocke
 On a successful upgrade the server **immediately** sends:
 
 ```json
-{"type": "welcome", "connectionId": "a1b2c3..."}
+{"type": "welcome", "connectionId": "a1b2c3...", "expandLimit": 100}
 ```
+
+`expandLimit` is the server's limit on referenced documents, files and users per expand response (§7.7); clients
+follow it when they expand from their cache offline.
 
 The connection's identity is fixed for its lifetime. On token expiry the client reconnects.
 
@@ -791,7 +792,7 @@ Every operation produces exactly one terminal server frame: either a `response` 
 
 ```json
 {"type": "response", "id": "req-42", "result": {"document": {...}}}
-{"type": "error",    "id": "req-42", "status": "NOT_FOUND", "message": "..."}
+{"type": "error",    "id": "req-42", "error": {"code": "not-found", "message": "..."}}
 ```
 
 Listener events are the only server frames that are **not** responses; they carry `subscriptionId` instead of `id`.
@@ -847,7 +848,7 @@ Server: {
 
 > **Note on the nested `result.result`:** the outer `result` is the standard WS response envelope (every `response` frame has `"result": {…}`); the inner `result` is the aggregate result object, mirroring the REST `:aggregate` response body. So the full path to the alias map is `response.result.result`.
 
-> **Authorization:** `aggregate` is authorized under the **`list`** rule (field-agnostic, same as `count` and `query`). The query must provably satisfy a read rule or the server returns an `error` frame with `PERMISSION_DENIED`.
+> **Authorization:** `aggregate` is authorized under the **`list`** rule (field-agnostic, same as `count` and `query`). The query must provably satisfy a read rule or the server returns an `error` frame with `permission-denied`.
 
 #### Writes
 
@@ -884,7 +885,7 @@ Server: {"type": "response", "id": "6", "result": {"document": {
 On denial:
 
 ```json
-Server: {"type": "error", "id": "6", "status": "PERMISSION_DENIED", "message": "Access denied."}
+Server: {"type": "error", "id": "6", "error": {"code": "permission-denied", "message": "Access denied."}}
 ```
 
 #### Keepalive
@@ -896,7 +897,7 @@ Server: {"type": "response", "id": "6", "result": {}}
 
 ### 7.5 Transactions
 
-Transactions are **connection-owned**. The WS layer enforces ownership: a `tx.get`, `tx.query`, or `tx.commit` from a different connection than the one that called `tx.begin` returns `ABORTED` — not a security error, just an ownership boundary.
+Transactions are **connection-owned**. The WS layer enforces ownership: a `tx.get`, `tx.query`, or `tx.commit` from a different connection than the one that called `tx.begin` returns `aborted` — not a security error, just an ownership boundary.
 
 On disconnect, the server **best-effort rolls back** all open transactions belonging to that connection.
 
@@ -921,7 +922,7 @@ Server: {"type": "response", "id": "t4", "result": {"writeResults": [...]}}
 On conflict:
 
 ```json
-Server: {"type": "error", "id": "t4", "status": "ABORTED", "message": "Transaction conflict."}
+Server: {"type": "error", "id": "t4", "error": {"code": "aborted", "message": "Transaction conflict."}}
 ```
 
 Rollback (idempotent):
@@ -931,7 +932,7 @@ Client: {"type": "tx.rollback", "id": "t5", "transactionId": "abc123..."}
 Server: {"type": "response", "id": "t5", "result": {}}
 ```
 
-**Transaction expiry:** Transactions idle out after **60 seconds** of no activity (default; configurable via `WincheDatabaseOptions.TransactionConfig.IdleTimeoutSpan`). The absolute maximum lifetime is **5 minutes** (configurable via `TotalTimeoutSpan`). Access on an expired or unknown transaction id yields `ABORTED`.
+**Transaction expiry:** Transactions idle out after **60 seconds** of no activity (default; configurable via `WincheDatabaseOptions.TransactionConfig.IdleTimeoutSpan`). The absolute maximum lifetime is **5 minutes** (configurable via `TotalTimeoutSpan`). Access on an expired or unknown transaction id yields `aborted`.
 
 ### 7.6 Listener protocol
 
@@ -999,11 +1000,11 @@ Errors:
 
 ```json
 Client: {"type": "doc.listen", "id": "d2", "path": "users"}
-Server: {"type": "error", "id": "d2", "status": "INVALID_ARGUMENT", "message": "..."}
+Server: {"type": "error", "id": "d2", "error": {"code": "invalid-argument", "message": "..."}}
 ```
 
 ```json
-Server: {"type": "error", "id": "d1", "status": "PERMISSION_DENIED", "message": "Access denied."}
+Server: {"type": "error", "id": "d1", "error": {"code": "permission-denied", "message": "Access denied."}}
 ```
 
 > **Authorization note:** `doc.listen` is authorized under the **`get`** rule on the document path — single-document reads (one-shot or realtime) are governed by the per-document get rule, never the parent-collection `list` rule. Use `RuleOperations.Read` (which expands to both `get` and `list`) or an explicit `get` rule to permit single-document listens.
@@ -1105,6 +1106,31 @@ The runtime listener channel is a **bounded coalescing channel** (capacity 1, dr
 The **send queue** is bounded at 64 frames (configurable). If it fills up, the connection is closed with code `1013`.
 
 ---
+
+### 7.7 Expanding references
+
+`doc.get`, `doc.getAll`, `query`, `listen` and `doc.listen` take `"expand": ["patient", "patient.doctor", "team", "scan", "author"]`
+(REST: `GET …/{path}?expand=patient,patient.doctor`; `:batchGet` and `:runQuery` take `"expand"` in the body).
+
+- **Paths:** each segment names a field; maps are walked into, lists apply the rest to each item, and a `docRefValue`
+  applies the rest to the document it points to. `patient.doctor` follows `patient`, then `doctor` in that document.
+  At most 10 paths, 4 references deep, and the server's `ExpandLimit` documents, files and users per response
+  (default 100, at most 10,000; announced in `welcome`); past that, references stay
+  as they are.
+- **Documents:** come beside the results under `"included": { "<path>": <document>, … }`, each once however often
+  it's referenced (cycles included). The fields themselves are unchanged.
+- **Files and users:** a `fileRefValue` or `userRefValue` a path ends at is resolved by Winche.Storage / Winche Auth
+  and comes under `"resolved": { "file:<path>": {…}, "user:<uid>": {…} }`: the file's record (as storage returns it,
+  never a download link) if the storage rules let the caller `get` it; the user's public profile (`uid`,
+  `displayName`, `photoUrl`, and the claims the app lists as public) to signed-in callers, the whole account to its
+  own user. A plain string is never resolved: store references with their types.
+- **Rules:** each referenced document is read as the caller (its `get` rule). One they may not read, or that doesn't
+  exist, is simply not in `included`/`resolved`: the client can't tell which.
+- **Listening:** `listen.snapshot` carries the full `included` and `resolved`. Each `listen.delta` carries `included`
+  and `resolved` (new or changed since the last frame) and `excluded` / `unresolved` (no longer there: deleted,
+  unreadable, or no longer referenced). When only referenced things changed, the delta has `"changes": []`. The
+  server listens to every referenced document and to storage and auth changes. A subscription with `expand` ignores
+  `resumeToken` and always starts with a full `listen.snapshot`.
 
 ## 8. Operational Notes
 

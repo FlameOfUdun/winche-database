@@ -3,7 +3,7 @@ using Winche.Database.Querying.Ast;
 using Winche.Database.Querying.Matching;
 using Winche.Database.Querying.Planning;
 using Winche.Database.Runtime.ChangeFeed;
-using Winche.Database.Values;
+using Winche.Values;
 
 namespace Winche.Database.Runtime.Listening;
 

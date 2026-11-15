@@ -4,7 +4,7 @@ using Winche.Database.Querying.Ast;
 using Winche.Database.Runtime.Listening;
 using Winche.Database.Runtime.Transactions;
 using Winche.Database.Runtime.Writes;
-using Winche.Database.Values;
+using Winche.Values;
 
 namespace Winche.Database.Runtime;
 
@@ -13,6 +13,12 @@ public interface IDocumentDatabase
 {
     Task<Document?> GetAsync(string path, CancellationToken ct = default);
     Task<IReadOnlyList<Document?>> GetAllAsync(IReadOnlyList<string> paths, CancellationToken ct = default);
+
+    /// <summary>
+    /// Like <see cref="GetAllAsync"/>, but a document the caller may not read comes back as null instead of failing the
+    /// whole read (used to expand references: a pointer the caller can't follow stays a pointer).
+    /// </summary>
+    Task<IReadOnlyList<Document?>> GetReadableAsync(IReadOnlyList<string> paths, CancellationToken ct = default) => GetAllAsync(paths, ct);
     Task<QueryResult> QueryAsync(Query query, CancellationToken ct = default);
     Task<long> CountAsync(Query query, CancellationToken ct = default);
 

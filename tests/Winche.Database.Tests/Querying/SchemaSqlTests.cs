@@ -1,5 +1,5 @@
 using Winche.Database.Querying.Sql;
-using Winche.Database.Values;
+using Winche.Values;
 
 namespace Winche.Database.Tests.Querying;
 

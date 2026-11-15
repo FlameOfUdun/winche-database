@@ -15,7 +15,7 @@ Supports real-time live queries with indexed delta listeners, optimistic ACID tr
 | Package | Description |
 | --- | --- |
 | `Winche.Database` | Core document store: typed values, CRUD, queries, transactions, live listeners, hooks, filtered indexes, and rule-based access control (Winche.Rules) |
-| `Winche.Database.AspNetCore` | Shared ASP.NET Core abstractions: `DocumentClaimsAccessor` and the `MapClaims` registration extension |
+| `Winche.Database.AspNetCore` | Shared ASP.NET Core abstractions: `DocumentClaimsAccessor` and `MapClaims`, a database-specific override of the caller the host sets once for every Winche package (`AddWincheCaller` + `UseWincheCaller`, Winche.Core.AspNetCore) |
 | `Winche.Database.AspNetCore.Rest` | ASP.NET Core minimal API REST endpoints |
 | `Winche.Database.AspNetCore.WebSockets` | ASP.NET Core WebSocket transport, real-time delta listeners, and connection management |
 
@@ -93,8 +93,8 @@ await app.InitializeWincheDatabaseAsync();   // Creates winche_* tables/function
 app.UseWincheWsQueryToken();                 // surfaces ?access_token= to your auth scheme (before UseAuthentication)
 app.UseAuthentication();
 app.UseWebSockets();                         // required before mapping the WS endpoint
-app.MapWincheDatabaseWsApi().RequireAuthorization();   // WebSocket endpoint: /documents/ws
-app.MapWincheDatabaseRestApi();                        // REST routes under /documents (configurable)
+app.MapWincheDatabaseWsApi().RequireAuthorization();   // WebSocket endpoint: /documents/v1/ws
+app.MapWincheDatabaseRestApi();                        // REST routes under /documents/v1 (configurable)
 ```
 
 Both `Map*` methods return an `IEndpointConventionBuilder` covering **all** of their endpoints — for REST that includes the CRUD routes *and* every colon-verb (`:commit`, `:runQuery`, …); for WS the upgrade route. Apply cross-cutting policy on it once and it lands everywhere:
@@ -106,7 +106,7 @@ app.MapWincheDatabaseWsApi().RequireRateLimiting("ws"); // throttle socket upgra
 
 The built-in claims/exception filters are always applied internally and run outermost, so caller conventions compose on top of them.
 
-> **WebSocket authentication is at the HTTP upgrade.** Browsers cannot set `Authorization` headers on WebSocket upgrades, so the library provides `app.UseWincheWsQueryToken()` — middleware that promotes a `?access_token=<jwt>` query parameter to an `Authorization: Bearer …` header so your existing auth scheme (JWT bearer, etc.) can validate it at the upgrade. Place it **before** `app.UseAuthentication()`. The library does **not** validate the token; that is the responsibility of your registered authentication handler. Once the upgrade succeeds, `HttpContext.User` is populated for the lifetime of the connection and the server sends a `welcome` frame immediately — there is no in-band `hello` handshake or `auth.refresh` message. Gate with `.RequireAuthorization()` to reject unauthenticated upgrades before the socket is accepted. Connect at `/documents/ws?access_token=<jwt>`.
+> **WebSocket authentication is at the HTTP upgrade.** Browsers cannot set `Authorization` headers on WebSocket upgrades, so the library provides `app.UseWincheWsQueryToken()` — middleware that promotes a `?access_token=<jwt>` query parameter to an `Authorization: Bearer …` header so your existing auth scheme (JWT bearer, etc.) can validate it at the upgrade. Place it **before** `app.UseAuthentication()`. The library does **not** validate the token; that is the responsibility of your registered authentication handler. Once the upgrade succeeds, `HttpContext.User` is populated for the lifetime of the connection and the server sends a `welcome` frame immediately — there is no in-band `hello` handshake or `auth.refresh` message. Gate with `.RequireAuthorization()` to reject unauthenticated upgrades before the socket is accepted. Connect at `/documents/v1/ws?access_token=<jwt>`.
 >
 > **Revoking open connections.** A connection keeps the identity it was opened with. When a user is deleted or disabled, call `WsConnectionRegistry.CloseUserConnectionsAsync(userId)` (inject `WsConnectionRegistry`): every connection that user has open, on every node, is closed with code `4401` (the node that receives the call notifies the others over Postgres `NOTIFY`). A client that is still entitled reconnects with a fresh token. The user is identified by the `sub` claim by default (`WsOptions.UserIdClaimType`).
 >
@@ -114,16 +114,16 @@ The built-in claims/exception filters are always applied internally and run oute
 
 ## Features
 
-- **typed engine** — 11 tagged value types (`null`, `bool`, `int64`, `double`, `timestamp`, `string`, `bytes`, `reference`, `geopoint`, `array`, `map`); cross-type total order; same-type-class inequality semantics; `__name__` tiebreaker; int/double numeric equality
+- **typed engine** — 13 tagged value types (`null`, `bool`, `int64`, `double`, `timestamp`, `string`, `bytes`, `docRef`, `fileRef`, `userRef`, `geopoint`, `array`, `map`); cross-type total order; same-type-class inequality semantics; `__name__` tiebreaker; int/double numeric equality
 - **Document storage** — Store documents as typed field maps; each document carries `path`, `id`, `collection`, `createTime`, `updateTime`, and `version` metadata
 - **Querying** — 15 filter operators (including Winche extensions: `arrayContainsAll`, `contains`, `startsWith`, `endsWith`, `regex`, field-compare); `and`/`or`/`not` composites; `orderBy` with `__name__` tiebreaker; cursor-based pagination (`startAt`/`startAfter`/`endAt`/`endBefore`); field projection via `select`; `offset` (skip first N results) and `limitToLast` (last N results in ascending order)
 - **Live queries with delta listeners** — changes are applied to a live result in memory (filters, order, cursors, limits, select; re-queried for offsets, when held spares run out, and every 5 minutes), listeners updated in parallel; Subscribe to a query and receive an initial full snapshot, then indexed `added`/`modified`/`removed`/`deleted` deltas with a `count` checksum; `listen.snapshot` REPLACES client state, `listen.delta` MUTATES it. `removed` means the document left this query's window/filter (it still exists); `deleted` means it no longer exists at all (clients tombstone it). The `deleted` kind is sent only to clients that advertise `"protocol": >= 2` on the subscribe frame; older clients keep getting `removed`. Resuming with a still-current token sends a lightweight `listen.current` marker (live and up to date — no re-download) instead of a fresh snapshot; a stale/expired token resets via a full snapshot
-- **Optimistic transactions** — Optimistic read-version ledger; `ABORTED` on conflict with safe retry; `RunTransactionAsync` with automatic retry; reads-before-writes enforced; idle (60 s) and absolute (5 min) timeouts
+- **Optimistic transactions** — Optimistic read-version ledger; `aborted` on conflict with safe retry; `RunTransactionAsync` with automatic retry; reads-before-writes enforced; idle (60 s) and absolute (5 min) timeouts
 - **Batch writes** — Atomic commit of up to 500 `set`/`update`/`delete` operations with field transforms, preconditions, and a single commit timestamp; use `new WriteBatch(db)` for a fluent builder; `set` supports explicit merge masks via `MergeFields` (subset-merge alternative to `merge: true`)
 - **Field transforms** — `serverTimestamp`, `increment` (saturating int, promotes to double on mixed), `maximum`, `minimum`, `arrayUnion`, `arrayRemove`; use the `FieldValue` factory for a fluent C# API (`FieldValue.ServerTimestamp`, `Increment`, `Maximum`, `Minimum`, `ArrayUnion`, `ArrayRemove`, `Delete`)
 - **Durable hooks** — Feed-driven, true at-least-once end-to-end; a cursor per hook type, so a failing hook holds back only itself; only the failing change is retried (capped backoff), and dead-lettered after `DeadLetterAfter` (replayable); hooks fire for writes from any node; cursor persisted across restarts; status + health check; idempotency required
 - **Secondary indexes** — composite expression indexes declared by **collection ID** (the last path segment), covering every collection with that id under any parent; `IndexDefinition.Where` for filtered/partial indexes (agreement tested against engine) (see below)
-- **Access control** — in-memory rules engine (Winche.Rules); OR semantics with default-deny; for `list`/query operations the query must provably satisfy a read rule or it is rejected with PERMISSION_DENIED (rules are not post-filters)
+- **Access control** — in-memory rules engine (Winche.Rules); OR semantics with default-deny; for `list`/query operations the query must provably satisfy a read rule or it is rejected with permission-denied (rules are not post-filters)
 - **TTL (auto-expiry)** — Documents are automatically deleted once a registered timestamp field is in the past; configurable sweep interval (default 5 min) and batch size (default 500); collection-group scoped; TTL deletes emit change-feed events; bypass access rules; cascade to subcollections by default (opt out with `CascadeDelete = false`)
 - **PostgreSQL backend** — All data stored as typed JSONB; queries compiled to native PostgreSQL SQL backed by a family of `winche_*` ordering helper functions (`winche_rank`, `winche_num`, `winche_text`, `winche_key`, …); `IMMUTABLE` functions back expression indexes
 
@@ -173,7 +173,7 @@ path so one scan orders every collection with that id together.
 ## Access Rules
 
 Access rules determine whether a caller can perform an operation. They are written in the rules language
-(Firestore-style; see Winche.Rules) and evaluated in memory by Winche.Rules on every operation. There is no C#
+(see Winche.Rules) and evaluated in memory by Winche.Rules on every operation. There is no C#
 builder (11.0.0): rules are text, in one place you can read and review.
 
 ```text
@@ -211,6 +211,7 @@ replaces the file's rules at startup.
 | `request.time` | the request time |
 | `exists(path)` / `get(path)` | cross-document existence check / read |
 | `a \|\| b`, `a && b`, `!a`, `==`, `!=`, `<`, `in`, `is`, functions | see Winche.Rules |
+| `+`, `-`, `*`, `/`, `%` | arithmetic (`+` also joins strings and lists), e.g. `request.resource.total == request.resource.price * request.resource.qty` |
 
 A document's own fields are exposed at the top level of `resource` (so `resource.ownerId`).
 `resource.data` (10.5.0) is the fields alone, without the storage columns below — what `keys()` and
@@ -271,7 +272,7 @@ ruleset. To evaluate rules directly, resolve `RuleEngine` under the same key.
 query is analyzed before execution: if its constraints provably satisfy a read rule (e.g. it
 constrains `ownerId == request.auth.uid` and there is a matching `allow read` rule), the query is
 permitted. If no read rule is provably satisfied by the query's constraints, the query is
-**rejected** with PERMISSION_DENIED — results are **never** silently post-filtered. This means the
+**rejected** with permission-denied — results are **never** silently post-filtered. This means the
 query itself must carry the constraining filter; the rule engine validates the query's intent, not
 its results.
 
@@ -348,7 +349,7 @@ config.UseHooks(h => h
 ### Before and after (10.5.0)
 
 Register a hook `withSnapshots: true` and override `OnChangeAsync` to see the document before and after each
-change — like Firestore's `change.before` / `change.after`:
+change (`Before` and `After`):
 
 ```csharp
 config.UseHooks(h => h.Add<StatusHook>("orders/{orderId}", withSnapshots: true));
@@ -371,6 +372,38 @@ such a hook covers store both versions in the change feed (kept for `ChangeFeed.
 `Before` is null and `After` is the document's current state when the hook runs, as before. The default
 `OnChangeAsync` calls `OnDocumentSetAsync` / `OnDocumentUpdatedAsync` / `OnDocumentDeletedAsync`, so existing
 hooks keep working either way.
+
+## Before hooks
+
+A `DocumentBeforeHook` runs **before** a write is saved, inside its transaction, after the access rules allowed it, for
+callers' writes and the app's own server-side ones alike. It can refuse the write or change the document being saved:
+
+```csharp
+public sealed class Records : DocumentBeforeHook
+{
+    public override Task OnBeforeWriteAsync(DocumentWrite write, CancellationToken ct)
+    {
+        if (write.Before?.Fields.GetValueOrDefault("signedOff") is BooleanValue { Value: true })
+            write.Deny("This record is signed off.");          // or throw new WincheDeniedException(...)
+        if (write.Operation != WriteOperation.Delete)
+            write.Set("updatedBy", write.Uid ?? "server").Remove("draftNote");
+        return Task.CompletedTask;
+    }
+}
+
+o.UseHooks(h => h.Before<Records>("patients/{pid}/records/{rid}"));
+```
+
+- **What it sees:** `Operation` (create, update, delete), `Before` (as stored), `Fields` (what will be saved, with earlier
+  hooks' changes), `Caller` / `Uid` (the request's claims), `Get(fieldPath)`, and `GetAsync(path)` for other documents
+  in the same transaction.
+- **Refusing:** the caller gets `permissionDenied` with your message (`reason: "denied"`) and nothing in the batch is
+  saved. Deletes are covered too, and a cascading delete asks about every document it removes: one refusal, nothing goes.
+- **Changing:** `Set` / `Remove` by dotted path; the result is checked against the write limits. A delete can only be
+  refused. The rules saw the caller's own proposal; the hook's changes are trusted server code.
+- **Once per document:** a batch writing a document several times shows it once, with its final state.
+- **Keep it quick:** every matching write waits for it. Emails, other services and anything else that can wait belong
+  in a `DocumentStoreHook`, which runs after the commit.
 
 ## TTL Policies (Auto-Expiry)
 
@@ -571,7 +604,7 @@ var write = new SetWrite
 };
 ```
 
-Constraints: `MergeFields` cannot be combined with `merge: true` (→ `INVALID_ARGUMENT`). An empty `MergeFields` array is also `INVALID_ARGUMENT`.
+Constraints: `MergeFields` cannot be combined with `merge: true` (→ `invalid-argument`). An empty `MergeFields` array is also `invalid-argument`.
 
 ### Auto-id documents (`AddAsync`)
 
@@ -625,7 +658,7 @@ All queries use the typed `Query`; the wire JSON and C# AST share the same shape
 ```csharp
 using Winche.Database.Querying.Ast;
 using Winche.Database.Documents;
-using Winche.Database.Values;
+using Winche.Values;   // Winche.Core: the values every Winche package shares
 
 var query = new Query(
     Collection: "users",
@@ -801,7 +834,7 @@ long   sum     = ((IntegerValue)result.Values["s"]).Value;
 double average = ((DoubleValue)result.Values["a"]).Value;
 ```
 
-Constraints (→ `INVALID_ARGUMENT`):
+Constraints (→ `invalid-argument`):
 - At least 1 and at most 5 aggregations per call.
 - `Sum` and `Average` require a field; `Count` takes no field.
 - The field may not be `__name__`.
@@ -811,12 +844,34 @@ An explicit `Limit` on the query **caps** all aggregations (consistent with `Cou
 
 > **Authorization:** aggregations are authorized under the **`list`** rule (field-agnostic), consistent with `CountAsync` and regular queries.
 
-> **Notes:** an explicit query `limit` caps all aggregations; collection-group queries are not yet supported.
+> **Notes:** an explicit query `limit` caps all aggregations; collection-group queries are supported (see [Collection group queries](#collection-group-queries-1050)).
+
+## Expanding references
+
+A reference field points at something: `docRefValue` (a document), `fileRefValue` (a file in Winche Storage) or
+`userRefValue` (a Winche Auth user). Ask for references to be followed, and what they point at comes back with the
+results, while the fields themselves stay references:
+
+```csharp
+var request = ExpandRequest.Of(["patient", "patient.doctor", "team", "scan", "author"]);
+var expansion = await ReferenceExpander.ExpandAsync(db, [visit], request, ct, resolvers.For(db));   // as the caller
+expansion.Included["patients/p1"];      // documents, by path
+expansion.Resolved["file:scans/a.png"]; // files and users (Winche.Storage / Winche Auth), by kind:value
+```
+
+Over the wire: `"expand": [...]` on `doc.get`, `doc.getAll`, `query`, `listen`, `doc.listen` (WebSocket), `?expand=` on
+`GET`, `"expand"` on `:batchGet` / `:runQuery` (REST). Paths walk maps, lists (each item) and document references
+(`patient.doctor` is the `doctor` of the `patient`'s document); 10 paths, 4 deep, and `o.ExpandLimit` (default 100, up to 10,000; also in the console's database settings)
+documents, files and users per response; past it, links come back without data. Each referenced
+document, file and user is read as the caller: one they may not see is left out. Live subscriptions follow every
+referenced document, file and user: a change is sent as a `listen.delta` (`changes: []` when only they changed).
+`LiveExpansion` does the same for server code.
+See PROTOCOL §7.7.
 
 ## Transactions
 
 ```csharp
-// Automatic retry on ABORTED (up to 5 attempts with backoff)
+// Automatic retry on aborted (up to 5 attempts with backoff)
 var result = await db.RunTransactionAsync(async tx =>
 {
     var doc = await tx.GetAsync("accounts/a1");
@@ -832,7 +887,7 @@ var doc    = await db.GetAsync(handle.Id, "accounts/a1");  // recorded read
 await db.CommitTransactionAsync(handle.Id, [new SetWrite { ... }]);
 ```
 
-> **Authorization:** under the rule guard, reads inside a `RunTransactionAsync` body — and the manual `GetAsync(transactionId, …)` / `QueryAsync(transactionId, …)` reads — are authorized as `get`/`list` exactly like non-transactional reads; a denied read throws `PERMISSION_DENIED` and aborts the transaction. Writes are authorized at commit.
+> **Authorization:** under the rule guard, reads inside a `RunTransactionAsync` body — and the manual `GetAsync(transactionId, …)` / `QueryAsync(transactionId, …)` reads — are authorized as `get`/`list` exactly like non-transactional reads; a denied read throws `permission-denied` and aborts the transaction. Writes are authorized at commit.
 
 Transaction configuration (`WincheDatabaseOptions.TransactionConfig`):
 
@@ -845,7 +900,7 @@ Transaction configuration (`WincheDatabaseOptions.TransactionConfig`):
 
 Write-validation limits (`WincheDatabaseOptions.WriteLimits`):
 
-`WriteLimits` is a record on `WincheDatabaseOptions` that configures limits applied to the **resulting document** of every `set` or `update` (not `delete`). Violations throw `INVALID_ARGUMENT` (HTTP 400 over REST) and abort the **entire** batch — nothing is committed.
+`WriteLimits` is a record on `WincheDatabaseOptions` that configures limits applied to the **resulting document** of every `set` or `update` (not `delete`). Violations throw `invalid-argument` (HTTP 400 over REST) and abort the **entire** batch — nothing is committed.
 
 | Field | Default | Description |
 | --- | --- | --- |
@@ -859,42 +914,47 @@ These limits are configurable — unlike many document databases that hard-code 
 > the default), so begin, reads and commit may each land on a different node — REST clients behind a load
 > balancer need no sticky routing. Each transactional read costs one small write; expiry uses the database clock.
 > `TransactionStore.Memory` keeps the old per-node, in-memory ledger (no extra writes; every request of a
-> transaction must reach the same node, or it is `ABORTED`).
+> transaction must reach the same node, or it is `aborted`).
 
 ## REST API
 
-Mapped under `/documents` by default (configurable via `MapWincheDatabaseRestApi(prefix: "...")`). Document paths in URL parameters are Base64-encoded (UTF-8 bytes).
+Mapped under `/documents/v1` by default (configurable via `MapWincheDatabaseRestApi(prefix: "...")`). Document paths in URL parameters are **base64url**-encoded UTF-8 (`-` and `_`, padding optional), which is always safe in a URL; standard base64 is still accepted, but its `/` and `+` can break the URL, so use base64url. A path that isn't either is a 400 `invalid-argument`.
 
 **Convenience endpoints:**
 
 | Method | Route | Description |
 | --- | --- | --- |
-| `GET` | `/documents/{base64Path}` | Get a document |
-| `PUT` | `/documents/{base64Path}` | Create or replace a document (returns document after write) |
-| `PATCH` | `/documents/{base64Path}` | Patch fields via dotted field paths |
-| `DELETE` | `/documents/{base64Path}` | Delete a document (reads first; 404 if missing) |
-| `GET` | `/documents/ping` | Health check |
+| `GET` | `/documents/v1/{base64Path}` | Get a document |
+| `PUT` | `/documents/v1/{base64Path}` | Create or replace a document (returns document after write) |
+| `PATCH` | `/documents/v1/{base64Path}` | Patch fields via dotted field paths |
+| `DELETE` | `/documents/v1/{base64Path}` | Delete a document and its subcollections (reads first; 404 if missing) |
+| `GET` | `/documents/v1/ping` | Health check |
 
 **Colon-verb endpoints:**
 
 | Method | Route | Description |
 | --- | --- | --- |
-| `POST` | `/documents:add` | Create a document with a generated id (returns `{"document": <document>}`) |
-| `POST` | `/documents:commit` | Atomic write batch (or commit a transaction) |
-| `POST` | `/documents:beginTransaction` | Begin an optimistic transaction |
-| `POST` | `/documents:rollback` | Roll back a transaction (idempotent; unknown id is a no-op) |
-| `POST` | `/documents:batchGet` | Bulk read preserving input order; missing docs are `null` |
-| `POST` | `/documents:runQuery` | Execute a query |
-| `POST` | `/documents:count` | Count documents matching a query (returns `{ "count": N }`) |
-| `POST` | `/documents:aggregate` | Run aggregations over a query (count / sum / average) |
+| `POST` | `/documents/v1:add` | Create a document with a generated id (returns `{"document": <document>}`) |
+| `POST` | `/documents/v1:commit` | Atomic write batch (or commit a transaction) |
+| `POST` | `/documents/v1:beginTransaction` | Begin an optimistic transaction |
+| `POST` | `/documents/v1:rollback` | Roll back a transaction (idempotent; unknown id is a no-op) |
+| `POST` | `/documents/v1:batchGet` | Bulk read preserving input order; missing docs are `null` |
+| `POST` | `/documents/v1:runQuery` | Execute a query: `{"query": {...}}`, plus optional `transaction` and `expand` |
+| `POST` | `/documents/v1:count` | Count documents matching a query: `{"query": {...}}` (returns `{ "count": N }`) |
+| `POST` | `/documents/v1:aggregate` | Run aggregations over a query: `{"query": {...}, "aggregations": [...]}` (returns `{"result": {...}}`) |
 
 Access rules are enforced on all routes. The claims accessor runs as an endpoint filter before every request.
+
+**Unexpected errors** (status `INTERNAL`, HTTP 500) — on REST, WebSocket requests and live subscriptions — are logged at
+Error level with the operation and the caller's user id, under a short error id that the caller also gets:
+`{"status":"INTERNAL","message":"Internal error (3f9c0a1b2c4d).","details":{"errorId":"3f9c0a1b2c4d"}}`. The
+exception itself is never sent to the caller.
 
 See [PROTOCOL](docs/PROTOCOL.md#6-rest-api) for full request/response examples.
 
 ## WebSocket API
 
-Connect at `/documents/ws?access_token=<jwt>`. The connection authenticates at the HTTP upgrade (see [WebSocket authentication](#3-initialize-schema-and-map-routes) above). On a successful upgrade the server sends `welcome` immediately — there is no `hello` handshake. All subsequent operations are exchanged as typed JSON messages over a single WebSocket.
+Connect at `/documents/v1/ws?access_token=<jwt>`. The connection authenticates at the HTTP upgrade (see [WebSocket authentication](#3-initialize-schema-and-map-routes) above). On a successful upgrade the server sends `welcome` immediately — there is no `hello` handshake. All subsequent operations are exchanged as typed JSON messages over a single WebSocket.
 
 | Message type | Direction | Description |
 | --- | --- | --- |
@@ -927,7 +987,7 @@ See [PROTOCOL](docs/PROTOCOL.md#7-websocket-protocol) for full message shapes, c
 
 | Option | Default | Past it |
 | --- | --- | --- |
-| `MaxSubscriptionsPerConnection` | 100 | `listen` / `doc.listen` gets `RESOURCE_EXHAUSTED`; the connection stays open |
+| `MaxSubscriptionsPerConnection` | 100 | `listen` / `doc.listen` gets `resource-exhausted`; the connection stays open |
 | `MaxConnectionsPerUser` | 10 | the user's **oldest** connection is closed with code 4429 (the new one stays) |
 | `RequestsPerSecond` / `RequestBurst` | 50 / 100 | the connection's next request is read later — slowed, never refused, so an offline write queue never has a write rejected |
 
@@ -942,7 +1002,10 @@ builder.Services.AddOpenTelemetry().WithMetrics(m => m
     .AddOtlpExporter());   // or Prometheus, CloudWatch via the OTel collector, …
 ```
 
-or watch them live with `dotnet-counters monitor --counters Winche.Database`. With nothing listening,
+or watch them live with `dotnet-counters monitor --counters Winche.Database,Winche.Feed`. Durable consumers (hooks,
+published changes) run on Winche.Core's feed (`Winche.Core.Feeds`), as storage's hooks do: their cursors and dead
+letters are in `winche_feed_cursors` / `winche_feed_dead_letters` (feed `database`), moved there from this package's
+own tables on upgrade, and they're measured on the `Winche.Feed` meter. With nothing listening,
 recording costs next to nothing.
 
 | Instrument | Unit | Tags | What |
@@ -952,19 +1015,76 @@ recording costs next to nothing.
 | `winche.database.write.documents` | | | writes committed |
 | `winche.database.listeners` | | `kind` (query/document) | live listeners held (up/down) |
 | `winche.database.listener.update.duration` | s | `kind`, `method` (in_memory/requery) | bringing a listener up to date |
-| `winche.database.hook.changes` | | `consumer` | changes delivered to hooks |
-| `winche.database.hook.lag` | s | `consumer` | commit → delivery |
-| `winche.database.hook.failures`, `…hook.dead_letters` | | `consumer` | failed deliveries, changes given up on |
+| `winche.feed.delivered` (meter `Winche.Feed`) | | `feed` (`database`), `consumer` | changes delivered to hooks and other durable consumers |
+| `winche.feed.lag` (meter `Winche.Feed`) | s | `feed`, `consumer` | commit → delivery |
+| `winche.feed.failures`, `…feed.dead_letters` (meter `Winche.Feed`) | | `feed`, `consumer` | failed deliveries, changes given up on |
 | `winche.database.ws.connections`, `…ws.subscriptions` | | | open WebSocket connections / subscriptions (up/down) |
 | `winche.database.ws.requests` | | `type` | WebSocket requests |
 | `winche.database.ws.throttled`, `…ws.limited` | | `limit` (subscriptions/connections) | delayed by the rate limit; refused or closed by a limit |
 
-Useful alarms: `hook.lag` p95 above a few minutes, any `hook.dead_letters`, `write.duration{outcome=aborted}`
+Useful alarms: `winche.feed.lag` p95 above a few minutes, any `winche.feed.dead_letters`, `write.duration{outcome=aborted}`
 rising, `query.duration{indexed=false}` p95 above the slow-query threshold.
+
+## Document history (11.1.0)
+
+```csharp
+config.KeepHistory(TimeSpan.FromDays(30));   // opt in; default 30 days
+```
+
+Every change then records the document **before and after** it. **Who made it** is recorded on every change, with
+history on or off: the actor set for the flow — `using (DocumentWriteActor.Use("console:admin@x")) …` (the Winche
+console does this for its own edits) — else the caller's user id (their claims' `uid`, else `sub`); a write with
+neither (a hook, a background job) has no actor. Read it back with `DocumentHistory` (registered by `AddWincheDatabase`):
+
+```csharp
+var entries = await history.QueryAsync(new HistoryQuery { Path = "users/u1" });          // one document
+var recent  = await history.QueryAsync(new HistoryQuery { Under = "users", Limit = 50 }); // a collection's subtree
+// also Actor = "u1" (one actor's changes) and Before = <seq> (the next page, newest first)
+// each: Type (added | modified | removed), At, Actor, Before, After, Fields (added/changed/removed, old → new)
+```
+
+Without history the entries still come back, with `Type`, `At` and `Actor`, but `Before`, `After` and `Fields` are null.
+
+It's stored in the change feed (`before`, `after` and a new `actor` column), whose rows are then kept at least the
+history's retention (`ChangeFeed.Retention` and `MaxRetention` still apply when longer). It costs a copy of each
+written document per change, so it's off by default. Changes made before it was turned on have no `Fields`. With
+`o.UseSettings()` the console can turn it on or off and change the retention.
+
+## Request logging (11.1.0)
+
+```csharp
+config.LogRequests(r => { r.SuccessSampleRate = 0.1; r.SlowThreshold = TimeSpan.FromSeconds(1); });   // the defaults
+```
+
+Every app request that goes through the access rules (REST, WebSocket, and `IDocumentDatabase` in your code) is
+logged in the category `Winche.Database.Requests` as a structured entry — `Operation` (`database.get`,
+`database.query`, `database.write`, …), `Path`, `Principal` (the caller's `uid`/`sub`, or `signed out`), `Outcome`
+(`ok`, `denied`, `notFound`, `alreadyExists`, `failedPrecondition`, `aborted`, `timeout`, `invalid`) and `LatencyMs` — with a plain
+message: *"u2 was denied reading users/u1: no rule allows it."* Denied, slow and failed requests (other than `notFound`) are always logged
+(Warning). Successful writes (`database.write`, `database.add`, `database.commit`) are always logged (Information);
+successful reads (including ones that find nothing) are sampled at `SuccessSampleRate`. Unexpected errors are logged where they're mapped,
+with their error id. Requests made without the rules (the console's own browsing, `DocumentDatabase` directly) aren't
+logged. With `o.UseSettings()` the console can change these settings too. The Winche console's Logs Explorer filters on
+these values; elsewhere, set the category's level to keep them out of other outputs.
+
+## Upgrading to 11.1.0
+
+Additive: startup adds an `actor` column and a path index to the change feed; who made each change is recorded there
+from now on, with or without `KeepHistory`. `KeepHistory` and `LogRequests` (above) are opt-in, as is `UseSettings()`,
+which lets the console change indexes, expiry, history, write limits, the slow-query threshold, the expand limit and
+request logging without a deploy (needs `AddWincheConfig(…)`; rules, hooks and the connection stay in code).
+
+## Upgrading to 11.0.1
+
+- REST document paths may be base64url (recommended — standard base64's `/` and `+` could break the URL); standard
+  base64 still works, and an undecodable path is now a 400 instead of a 500.
+- Unexpected errors were mapped to `INTERNAL` without being logged anywhere. They're now logged with an error id that
+  the caller also gets (REST, WebSocket requests and subscriptions). A failure in a claims mapper on REST is caught
+  and mapped too.
 
 ## Upgrading to 11.0.0
 
-Rules are text only, as in Firebase: `UseRules(r => r.Match(...).Allow(...))` is gone, and Winche.Rules 4.0.0 makes
+Rules are text only: `UseRules(r => r.Match(...).Allow(...))` is gone, and Winche.Rules 4.0.0 makes
 `RuleSetBuilder` and `Expr` internal. Move each ruleset into a `.rules` file (the console's editor shows a live
 ruleset as text, and `RuleText.FormatRuleSet(ruleSet)` prints one) and load it with `UseRulesFile(path)`, or pass
 the text to `UseRulesText(...)`. `UseRules(RuleSet)` still takes a parsed ruleset.
@@ -1051,7 +1171,7 @@ few APIs. No data migration is required. Breaking changes:
   document on.
 - **Reads inside `RunTransactionAsync`** — and the manual `GetAsync(transactionId, …)` /
   `QueryAsync(transactionId, …)` reads — **are now authorized** as `get`/`list` under the rule guard,
-  like non-transactional reads. A denied read throws `PERMISSION_DENIED` and aborts the transaction.
+  like non-transactional reads. A denied read throws `permission-denied` and aborts the transaction.
 - **`ListenerRegistry` is renamed to `QueryListenerRegistry`**; a new `DocumentListenerRegistry`
   backs single-document listeners. Relevant only if you reference these types directly.
 - **Some low-level types/members are now `internal`:** `DocumentOperations` and

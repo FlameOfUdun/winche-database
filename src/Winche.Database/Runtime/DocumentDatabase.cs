@@ -8,7 +8,7 @@ using Winche.Database.Querying.Ast;
 using Winche.Database.Runtime.Listening;
 using Winche.Database.Runtime.Transactions;
 using Winche.Database.Runtime.Writes;
-using Winche.Database.Values;
+using Winche.Values;
 
 namespace Winche.Database.Runtime;
 
@@ -29,9 +29,25 @@ public sealed class DocumentDatabase : IDocumentDatabase
     public DocumentDatabase(NpgsqlDataSource source, IOptions<WincheDatabaseOptions> options,
         QueryListenerRegistry? listeners = null, CollectionIndexResolver? scopes = null,
         IWriteAuthorizer? writeAuthorizer = null, DocumentListenerRegistry? docListeners = null)
+        : this(source, options, listeners, scopes, writeAuthorizer, docListeners, claims: null)
+    {
+    }
+
+    /// <summary>As above; <paramref name="claims"/> attributes writes to the caller in the document history.</summary>
+    public DocumentDatabase(NpgsqlDataSource source, IOptions<WincheDatabaseOptions> options,
+        QueryListenerRegistry? listeners, CollectionIndexResolver? scopes,
+        IWriteAuthorizer? writeAuthorizer, DocumentListenerRegistry? docListeners, Authorization.IRuleClaimsAccessor? claims)
     {
         _source = source;
-        _applier = new WriteApplier(source, writeAuthorizer, options.Value.WriteLimits, options.Value.HookSnapshotPaths);
+        // History and limits are read on each write: the console can change them while running.
+        var o = options.Value;
+        _applier = new WriteApplier(source, writeAuthorizer, o.WriteLimits, o.HookSnapshotPaths,
+            snapshotAll: o.History is not null,
+            actor: () => History.DocumentWriteActor.Current ?? Wire.ErrorMapper.UserOf(claims?.GetClaims()))
+        {
+            LimitsSource = () => o.WriteLimits,
+            HistorySource = () => o.History is not null,
+        };
         _ledger = options.Value.TransactionConfig.Store == TransactionStore.Memory
             ? new MemoryTransactionLedger(options.Value.TransactionConfig)
             : new PostgresTransactionLedger(source, options.Value.TransactionConfig);
@@ -39,6 +55,9 @@ public sealed class DocumentDatabase : IDocumentDatabase
         _documentListeners = docListeners;
         _scopes = scopes;
     }
+
+    /// <summary>The app's before hooks, for every write through this database.</summary>
+    internal Abstraction.BeforeWriteHooks? BeforeHooks { set => _applier.BeforeHooks = value; }
 
     /// <summary>Exposed for the Plan-3 expiry sweeper (internal — transaction-management detail).</summary>
     internal ITransactionLedger Ledger => _ledger;

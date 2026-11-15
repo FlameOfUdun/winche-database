@@ -1,7 +1,10 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Text.Json.Nodes;
 using Winche.Database.AspNetCore.WebSockets.Protocol;
 using Winche.Database.Documents;
 using Winche.Database.Runtime.Listening;
+using Winche.Database.Runtime.Expansion;
 using Winche.Database.Wire;
 
 namespace Winche.Database.AspNetCore.WebSockets.Connections;
@@ -23,19 +26,35 @@ public static class SubscriptionPump
     /// <summary>Minimum client protocol version that receives the `deleted` change kind. v1 clients get `removed`.</summary>
     internal const long DeletedKindMinProtocol = 2;
 
+    /// <summary>Runs a query subscription (unexpected errors aren't logged; see the overload with a logger).</summary>
+    public static Task RunQueryAsync(
+        string subscriptionId, IQueryListener listener, ConnectionScope scope, WsConnection conn,
+        bool supportsDeletedKind, CancellationToken ct) =>
+        RunQueryAsync(subscriptionId, listener, scope, conn, supportsDeletedKind, NullLogger.Instance, ct);
+
+    /// <summary>Runs a query subscription; an unexpected error is logged with an error id the client also gets.</summary>
     public static async Task RunQueryAsync(
         string subscriptionId, IQueryListener listener, ConnectionScope scope, WsConnection conn,
-        bool supportsDeletedKind, CancellationToken ct)
+        bool supportsDeletedKind, ILogger logger, CancellationToken ct, LiveExpansion? expansion = null)
     {
         try
         {
+            await using var exp = expansion;
             await using var snapshots = listener.Snapshots(ct).GetAsyncEnumerator(ct);
             IReadOnlyList<Document>? sent = null;
+            var lastToken = 0L;
+            var wait = new Waiter();
 
             while (true)
             {
                 scope.ApplyClaims();                              // inert for listener auth (subscribe-time only); kept for context coherence
-                if (!await snapshots.MoveNextAsync()) break;
+                if (exp is not null && sent is not null && await wait.ReferencesChangedFirstAsync(snapshots, exp, ct))
+                {
+                    var refs = await exp.RefreshAsync(ct);
+                    if (!refs.IsEmpty) conn.TrySend(IncludedOnly(subscriptionId, refs, sent.Count, lastToken));
+                    continue;
+                }
+                if (!await wait.NextAsync(snapshots)) break;
                 var snapshot = snapshots.Current;
 
                 if (snapshot.Current)
@@ -48,6 +67,8 @@ public static class SubscriptionPump
                     continue;
                 }
 
+                var included = exp is null ? null : await exp.SetRootsAsync(snapshot.Documents, ct);
+                lastToken = snapshot.ResumeToken;
                 if (sent is null)
                 {
                     conn.TrySend(new ListenSnapshotMessage
@@ -56,6 +77,8 @@ public static class SubscriptionPump
                         Documents = snapshot.Documents,
                         ReadTime = snapshot.ReadTime,
                         ResumeToken = snapshot.ResumeToken,
+                        Included = included?.All,
+                        Resolved = included?.AllResolved,
                     });
                     sent = snapshot.Documents;
                     continue;
@@ -63,7 +86,11 @@ public static class SubscriptionPump
 
                 var changes = SnapshotDiff.Compute(sent, snapshot.Documents);
                 sent = snapshot.Documents;
-                if (changes.Count == 0) continue;
+                if (changes.Count == 0)
+                {
+                    if (included is { IsEmpty: false }) conn.TrySend(IncludedOnly(subscriptionId, included, sent.Count, lastToken));
+                    continue;
+                }
 
                 // Batch the existence check for ALL removed changes into one probe so a
                 // bulk delete / limit-window churn costs a single DB round-trip, not one
@@ -108,6 +135,10 @@ public static class SubscriptionPump
                     Count = snapshot.Documents.Count,
                     ReadTime = snapshot.ReadTime,
                     ResumeToken = snapshot.ResumeToken,
+                    Included = Upserted(included),
+                    Excluded = Removed(included),
+                    Resolved = included is { ResolvedUpserted.Count: > 0 } r ? r.ResolvedUpserted : null,
+                    Unresolved = included is { ResolvedRemoved.Count: > 0 } u ? u.ResolvedRemoved : null,
                 });
             }
         }
@@ -115,24 +146,40 @@ public static class SubscriptionPump
         catch (Exception ex)
         {
             // listener failed (e.g. invalid stored query): surface once, stream ends; client may re-listen
-            SendSubscriptionError(subscriptionId, ex, conn);
+            SendSubscriptionError(subscriptionId, ex, conn, scope, logger);
         }
     }
 
+    /// <summary>Runs a document subscription (unexpected errors aren't logged; see the overload with a logger).</summary>
+    public static Task RunDocumentAsync(
+        string subscriptionId, IDocumentListener listener, ConnectionScope scope, WsConnection conn,
+        bool supportsDeletedKind, CancellationToken ct) =>
+        RunDocumentAsync(subscriptionId, listener, scope, conn, supportsDeletedKind, NullLogger.Instance, ct);
+
+    /// <summary>Runs a document subscription; an unexpected error is logged with an error id the client also gets.</summary>
     public static async Task RunDocumentAsync(
         string subscriptionId, IDocumentListener listener, ConnectionScope scope, WsConnection conn,
-        bool supportsDeletedKind, CancellationToken ct)
+        bool supportsDeletedKind, ILogger logger, CancellationToken ct, LiveExpansion? expansion = null)
     {
         try
         {
+            await using var exp = expansion;
             await using var snapshots = listener.Snapshots(ct).GetAsyncEnumerator(ct);
             Document? sent = null;
             var sentAny = false;
+            var lastToken = 0L;
+            var wait = new Waiter();
 
             while (true)
             {
                 scope.ApplyClaims();                              // inert for listener auth (subscribe-time only)
-                if (!await snapshots.MoveNextAsync()) break;
+                if (exp is not null && sentAny && await wait.ReferencesChangedFirstAsync(snapshots, exp, ct))
+                {
+                    var refs = await exp.RefreshAsync(ct);
+                    if (!refs.IsEmpty) conn.TrySend(IncludedOnly(subscriptionId, refs, sent is null ? 0 : 1, lastToken));
+                    continue;
+                }
+                if (!await wait.NextAsync(snapshots)) break;
                 var snapshot = snapshots.Current;
 
                 if (snapshot.Current)
@@ -146,6 +193,8 @@ public static class SubscriptionPump
                 }
 
                 IReadOnlyList<Document> docs = snapshot.Document is { } d ? new[] { d } : Array.Empty<Document>();
+                var included = exp is null ? null : await exp.SetRootsAsync(docs, ct);
+                lastToken = snapshot.ResumeToken;
 
                 if (!sentAny)
                 {
@@ -155,6 +204,8 @@ public static class SubscriptionPump
                         Documents = docs,
                         ReadTime = snapshot.ReadTime,
                         ResumeToken = snapshot.ResumeToken,
+                        Included = included?.All,
+                        Resolved = included?.AllResolved,
                     });
                     sent = snapshot.Document;
                     sentAny = true;
@@ -163,7 +214,11 @@ public static class SubscriptionPump
 
                 var change = DocumentChange(sent, snapshot.Document, supportsDeletedKind);
                 sent = snapshot.Document;
-                if (change is null) continue;
+                if (change is null)
+                {
+                    if (included is { IsEmpty: false }) conn.TrySend(IncludedOnly(subscriptionId, included, docs.Count, lastToken));
+                    continue;
+                }
 
                 conn.TrySend(new ListenDeltaMessage
                 {
@@ -172,28 +227,73 @@ public static class SubscriptionPump
                     Count = docs.Count,
                     ReadTime = snapshot.ReadTime,
                     ResumeToken = snapshot.ResumeToken,
+                    Included = Upserted(included),
+                    Excluded = Removed(included),
+                    Resolved = included is { ResolvedUpserted.Count: > 0 } r ? r.ResolvedUpserted : null,
+                    Unresolved = included is { ResolvedRemoved.Count: > 0 } u ? u.ResolvedRemoved : null,
                 });
             }
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            SendSubscriptionError(subscriptionId, ex, conn);
+            SendSubscriptionError(subscriptionId, ex, conn, scope, logger);
+        }
+    }
+
+    private static IReadOnlyDictionary<string, Document>? Upserted(IncludedChange? c) => c is { Upserted.Count: > 0 } ? c.Upserted : null;
+    private static IReadOnlyList<string>? Removed(IncludedChange? c) => c is { Removed.Count: > 0 } ? c.Removed : null;
+
+    /// <summary>A delta that only changes the included (referenced) documents: the results themselves are as they were.</summary>
+    private static ListenDeltaMessage IncludedOnly(string subscriptionId, IncludedChange change, int count, long resumeToken) => new()
+    {
+        SubscriptionId = subscriptionId,
+        Changes = [],
+        Count = count,
+        ReadTime = DateTimeOffset.UtcNow,
+        ResumeToken = resumeToken,
+        Included = Upserted(change),
+        Excluded = Removed(change),
+        Resolved = change.ResolvedUpserted.Count > 0 ? change.ResolvedUpserted : null,
+        Unresolved = change.ResolvedRemoved.Count > 0 ? change.ResolvedRemoved : null,
+    };
+
+    /// <summary>
+    /// Waits for the subscription's next snapshot or, with expansion, a referenced document changing, whichever is first;
+    /// a pending snapshot read is kept for the next turn rather than started twice.
+    /// </summary>
+    private sealed class Waiter
+    {
+        private Task<bool>? _next, _refs;
+
+        public async Task<bool> ReferencesChangedFirstAsync<T>(IAsyncEnumerator<T> snapshots, LiveExpansion exp, CancellationToken ct)
+        {
+            _next ??= snapshots.MoveNextAsync().AsTask();
+            _refs ??= exp.Changed.WaitToReadAsync(ct).AsTask();
+            var first = await Task.WhenAny(_next, _refs);
+            if (first != _refs || _next.IsCompleted) return false;
+            _refs = null;
+            return true;
+        }
+
+        public async Task<bool> NextAsync<T>(IAsyncEnumerator<T> snapshots)
+        {
+            var next = _next ?? snapshots.MoveNextAsync().AsTask();
+            _next = null;
+            return await next;
         }
     }
 
     /// <summary>Maps an exception to a wire error and sends it as the subscription's terminal frame.</summary>
-    private static void SendSubscriptionError(string subscriptionId, Exception ex, WsConnection conn)
+    private static void SendSubscriptionError(string subscriptionId, Exception ex, WsConnection conn, ConnectionScope scope, ILogger logger)
     {
-        var error = ErrorMapper.Map(ex);
+        var error = ErrorMapper.Map(ex, logger, $"WebSocket subscription {subscriptionId}", scope.UserId);
         var details = new JsonObject { ["subscriptionId"] = subscriptionId };
         if (error.Details is { } mapperDetails)
             foreach (var kvp in mapperDetails) details[kvp.Key] = kvp.Value?.DeepClone();
         conn.TrySend(new ErrorMessage
         {
-            Status = error.Status,
-            Message = $"Subscription '{subscriptionId}' failed: {error.Message}",
-            Details = details,
+            Error = error with { Message = $"Subscription '{subscriptionId}' failed: {error.Message}", Details = details },
         });
     }
 

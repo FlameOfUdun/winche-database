@@ -8,164 +8,37 @@ namespace Winche.Database.Runtime.ChangeFeed;
 public sealed class ChangeFeedReader(NpgsqlDataSource source)
 {
     /// <summary>
-    /// Reads up to <paramref name="limit"/> records after <paramref name="after"/>, in (txid, seq) order, from
-    /// transactions that have finished. This is gap-free: <c>seq</c> is assigned before a transaction commits,
-    /// so commits arrive out of seq order, but every transaction older than the oldest one still running
-    /// (<c>pg_snapshot_xmin</c>) is done, so no row can still appear below that line. A position read from here
-    /// never has to be revisited. The cost: a long write transaction holds back delivery (never loses it)
-    /// until it finishes. Within a transaction records stay in seq order; across transactions the order is
-    /// by transaction id, which for the same document matches commit order only loosely — consumers read the
-    /// document's current state, so they see the latest version either way.
+    /// The change table as a Winche.Core feed: durable consumers' cursors, failures and dead letters are kept there,
+    /// in the tables every package's feed shares.
     /// </summary>
-    public async Task<IReadOnlyList<ChangeRecord>> ReadAfterAsync(FeedPosition after, int limit, CancellationToken ct = default)
-    {
-        await using var conn = await source.OpenConnectionAsync(ct);
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"""
-            SELECT seq, type, document_path, collection_path, version, commit_time, txid::text
-            FROM {WincheDatabaseTables.Changes}
-            WHERE (txid, seq) > ($1::text::xid8, $2)
-              AND txid < pg_snapshot_xmin(pg_current_snapshot())
-            ORDER BY txid, seq
-            LIMIT $3
-            """;
-        cmd.Parameters.AddWithValue(after.TxId.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        cmd.Parameters.AddWithValue(after.Seq);
-        cmd.Parameters.AddWithValue(limit);
-        return await ReadRecordsAsync(cmd, ct);
-    }
+    internal WincheFeed<ChangeRecord> Feed { get; } = DatabaseFeed.Open(source);
 
-    /// <summary>
-    /// The position of "now": everything written by a transaction that has already finished counts as
-    /// before it, so reading from here delivers only what is still running or yet to come.
-    /// </summary>
-    public async Task<FeedPosition> GetHeadAsync(CancellationToken ct = default)
-    {
-        await using var conn = await source.OpenConnectionAsync(ct);
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT pg_snapshot_xmin(pg_current_snapshot())::text";
-        var xmin = ulong.Parse((string)(await cmd.ExecuteScalarAsync(ct))!, System.Globalization.CultureInfo.InvariantCulture);
-        return new FeedPosition(xmin - 1, long.MaxValue);
-    }
+    /// <summary>Up to <paramref name="limit"/> records after <paramref name="after"/>, of committed transactions only.</summary>
+    public Task<IReadOnlyList<ChangeRecord>> ReadAfterAsync(FeedPosition after, int limit, CancellationToken ct = default) =>
+        Feed.ReadAfterAsync(after, limit, ct);
 
-    /// <summary>A durable consumer's saved position; a cursor saved before txid was recorded reads as txid 0.</summary>
-    public async Task<FeedPosition?> GetPositionAsync(string consumer, CancellationToken ct = default)
-    {
-        await using var conn = await source.OpenConnectionAsync(ct);
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT seq, COALESCE(txid, '0')::text FROM {WincheDatabaseTables.FeedCursors} WHERE consumer = $1";
-        cmd.Parameters.AddWithValue(consumer);
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        if (!await reader.ReadAsync(ct)) return null;
-        return new FeedPosition(ulong.Parse(reader.GetString(1), System.Globalization.CultureInfo.InvariantCulture), reader.GetInt64(0));
-    }
+    /// <summary>Where the feed is now: past every committed record, before any still to commit.</summary>
+    public Task<FeedPosition> GetHeadAsync(CancellationToken ct = default) => Feed.GetHeadAsync(ct);
 
-    private const string ClearFailure =
-        "failing_txid = NULL, failing_seq = NULL, failing_since = NULL, failing_attempts = 0, failing_error = NULL";
+    /// <summary>Where <paramref name="consumer"/> has delivered up to, or null if it never ran.</summary>
+    public Task<FeedPosition?> GetPositionAsync(string consumer, CancellationToken ct = default) => Feed.GetPositionAsync(consumer, ct);
 
-    /// <summary>Saves a durable consumer's position and clears its failure state; never moves it backwards.</summary>
-    public async Task SavePositionAsync(string consumer, FeedPosition position, CancellationToken ct = default)
-    {
-        await using var conn = await source.OpenConnectionAsync(ct);
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $$"""
-            INSERT INTO {{WincheDatabaseTables.FeedCursors}} AS c (consumer, seq, txid, updated_at) VALUES ($1, $2, $3::text::xid8, now())
-            ON CONFLICT (consumer) DO UPDATE SET seq = EXCLUDED.seq, txid = EXCLUDED.txid, updated_at = now(),
-                {{ClearFailure}}
-            WHERE (COALESCE(c.txid, '0'), c.seq) < (EXCLUDED.txid, EXCLUDED.seq)
-            """;
-        cmd.Parameters.AddWithValue(consumer);
-        cmd.Parameters.AddWithValue(position.Seq);
-        cmd.Parameters.AddWithValue(position.TxId.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        await cmd.ExecuteNonQueryAsync(ct);
-    }
+    /// <summary>Moves <paramref name="consumer"/> forward to <paramref name="position"/> (never back) and clears its failure.</summary>
+    public Task SavePositionAsync(string consumer, FeedPosition position, CancellationToken ct = default) =>
+        Feed.SavePositionAsync(consumer, position, ct);
 
-    /// <summary>
-    /// Records that <paramref name="consumer"/> failed on <paramref name="record"/> (the change right after its
-    /// cursor). Returns how many times in a row it has failed on that change and for how long; a different
-    /// change restarts the count. Kept on the cursor row, so the clock survives restarts and node changes.
-    /// </summary>
-    public async Task<(int Attempts, TimeSpan FailingFor)> RecordFailureAsync(
-        string consumer, ChangeRecord record, string error, CancellationToken ct = default)
-    {
-        await using var conn = await source.OpenConnectionAsync(ct);
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"""
-            UPDATE {WincheDatabaseTables.FeedCursors} SET
-                failing_since    = CASE WHEN failing_txid = $2::text::xid8 AND failing_seq = $3 THEN failing_since ELSE now() END,
-                failing_attempts = CASE WHEN failing_txid = $2::text::xid8 AND failing_seq = $3 THEN failing_attempts + 1 ELSE 1 END,
-                failing_txid = $2::text::xid8, failing_seq = $3, failing_error = $4
-            WHERE consumer = $1
-            RETURNING failing_attempts, EXTRACT(EPOCH FROM now() - failing_since)::float8
-            """;
-        cmd.Parameters.AddWithValue(consumer);
-        cmd.Parameters.AddWithValue(Text(record.TxId));
-        cmd.Parameters.AddWithValue(record.Seq);
-        cmd.Parameters.AddWithValue(Truncate(error));
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        if (!await reader.ReadAsync(ct)) return (1, TimeSpan.Zero);
-        return (reader.GetInt32(0), TimeSpan.FromSeconds(reader.GetDouble(1)));
-    }
+    /// <summary>Notes a failure on <paramref name="record"/>: attempts so far, and how long it has been failing.</summary>
+    public Task<(int Attempts, TimeSpan FailingFor)> RecordFailureAsync(string consumer, ChangeRecord record, string error, CancellationToken ct = default) =>
+        Feed.RecordFailureAsync(consumer, record, error, ct);
 
-    /// <summary>
-    /// Gives up on <paramref name="record"/> for <paramref name="consumer"/>: copies it, with the recorded
-    /// failure, to the dead-letter table and moves the cursor past it, in one statement.
-    /// </summary>
-    public async Task DeadLetterAsync(string consumer, ChangeRecord record, CancellationToken ct = default)
-    {
-        await using var conn = await source.OpenConnectionAsync(ct);
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $$"""
-            WITH failure AS (
-                SELECT failing_error, failing_attempts, failing_since FROM {{WincheDatabaseTables.FeedCursors}} WHERE consumer = $1
-            ), dead AS (
-                INSERT INTO {{WincheDatabaseTables.DeadLetters}}
-                    (consumer, seq, txid, type, document_path, collection_path, version, commit_time, error, attempts, first_failed_at)
-                VALUES ($1, $2, $3::text::xid8, $4, $5, $6, $7, $8,
-                        (SELECT failing_error FROM failure),
-                        COALESCE((SELECT failing_attempts FROM failure), 0),
-                        COALESCE((SELECT failing_since FROM failure), now()))
-                ON CONFLICT (consumer, txid, seq) DO NOTHING
-            )
-            UPDATE {{WincheDatabaseTables.FeedCursors}} AS c SET seq = $2, txid = $3::text::xid8, updated_at = now(), {{ClearFailure}}
-            WHERE c.consumer = $1 AND (COALESCE(c.txid, '0'), c.seq) < ($3::text::xid8, $2)
-            """;
-        cmd.Parameters.AddWithValue(consumer);
-        cmd.Parameters.AddWithValue(record.Seq);
-        cmd.Parameters.AddWithValue(Text(record.TxId));
-        cmd.Parameters.AddWithValue(ChangeTypes.ToWire(record.Type));
-        cmd.Parameters.AddWithValue(record.Path);
-        cmd.Parameters.AddWithValue(record.Collection);
-        cmd.Parameters.AddWithValue(record.Version);
-        cmd.Parameters.AddWithValue(record.CommitTime);
-        await cmd.ExecuteNonQueryAsync(ct);
-    }
+    /// <summary>Moves <paramref name="record"/> to the dead letters and <paramref name="consumer"/> past it.</summary>
+    public Task DeadLetterAsync(string consumer, ChangeRecord record, CancellationToken ct = default) =>
+        Feed.DeadLetterAsync(consumer, record, ct);
 
-    /// <summary>
-    /// Gives each of <paramref name="consumers"/> that has no cursor yet a copy of <paramref name="from"/>'s
-    /// cursor, so consumers split out of an older one carry on where it was — but only while no cursor
-    /// starting with <paramref name="familyPrefix"/> exists, i.e. on the first upgrade. After that a new
-    /// consumer in the family starts from now, like any new consumer. Returns the cursors created.
-    /// </summary>
-    public async Task<int> InheritCursorAsync(string from, string familyPrefix, IReadOnlyList<string> consumers, CancellationToken ct = default)
-    {
-        if (consumers.Count == 0) return 0;
-        await using var conn = await source.OpenConnectionAsync(ct);
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"""
-            INSERT INTO {WincheDatabaseTables.FeedCursors} (consumer, seq, txid, updated_at)
-            SELECT n.name, old.seq, COALESCE(old.txid, '0'), now()
-            FROM unnest($3::text[]) AS n(name)
-            CROSS JOIN {WincheDatabaseTables.FeedCursors} AS old
-            WHERE old.consumer = $1
-              AND NOT EXISTS (SELECT 1 FROM {WincheDatabaseTables.FeedCursors} WHERE starts_with(consumer, $2))
-            ON CONFLICT (consumer) DO NOTHING
-            """;
-        cmd.Parameters.AddWithValue(from);
-        cmd.Parameters.AddWithValue(familyPrefix);
-        cmd.Parameters.AddWithValue(consumers.ToArray());
-        return await cmd.ExecuteNonQueryAsync(ct);
-    }
+    /// <summary>Gives each of <paramref name="consumers"/> the cursor of <paramref name="from"/> (see <see cref="WincheFeed{TRecord}.InheritCursorAsync"/>).</summary>
+    public Task<int> InheritCursorAsync(string from, string familyPrefix, IReadOnlyList<string> consumers, CancellationToken ct = default) =>
+        Feed.InheritCursorAsync(from, familyPrefix, consumers, ct);
+
 
     /// <summary>
     /// Retention that never drops a change a durable consumer still needs: deletes rows older than
@@ -180,8 +53,8 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source)
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
             WITH slowest AS (
-                SELECT COALESCE(txid, '0') AS txid, seq FROM {WincheDatabaseTables.FeedCursors}
-                WHERE consumer = ANY($3) ORDER BY 1, 2 LIMIT 1
+                SELECT COALESCE(txid, '0') AS txid, seq FROM {WincheFeedTables.Cursors}
+                WHERE feed = '{DatabaseFeed.Name}' AND consumer = ANY($3) ORDER BY 1, 2 LIMIT 1
             ), pruned AS (
                 DELETE FROM {WincheDatabaseTables.Changes} AS c
                 WHERE c.commit_time < $1
@@ -210,7 +83,6 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source)
 
     internal static string Text(ulong txid) => txid.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
-    private static string Truncate(string error) => error.Length <= 8000 ? error : error[..8000];
 
     /// <summary>
     /// Reads up to <paramref name="limit"/> change records with seq &gt; <paramref name="afterSeq"/>, ordered by seq.
@@ -328,40 +200,6 @@ public sealed class ChangeFeedReader(NpgsqlDataSource source)
         cmd.Parameters.AddWithValue(Text(throughTxId));
         return (bool)(await cmd.ExecuteScalarAsync(ct))!;
     }
-
-    /// <summary>Smallest seq still in the feed, or 0 when empty.</summary>
-    public async Task<long> GetMinSeqAsync(CancellationToken ct = default)
-    {
-        await using var conn = await source.OpenConnectionAsync(ct);
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT COALESCE(MIN(seq), 0) FROM {WincheDatabaseTables.Changes}";
-        return (long)(await cmd.ExecuteScalarAsync(ct))!;
-    }
-
-    public async Task<long?> GetCursorAsync(string consumer, CancellationToken ct = default)
-    {
-        await using var conn = await source.OpenConnectionAsync(ct);
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT seq FROM {WincheDatabaseTables.FeedCursors} WHERE consumer = $1";
-        cmd.Parameters.AddWithValue(consumer);
-        return await cmd.ExecuteScalarAsync(ct) is long seq ? seq : null;
-    }
-
-    public async Task SaveCursorAsync(string consumer, long seq, CancellationToken ct = default)
-    {
-        await using var conn = await source.OpenConnectionAsync(ct);
-        await using var cmd = conn.CreateCommand();
-        // GREATEST guard: a backwards save (due to the seq/commit-order race) can only cause
-        // redelivery (cursor stays at the higher value), never a permanent skip.
-        cmd.CommandText = $"""
-            INSERT INTO {WincheDatabaseTables.FeedCursors} (consumer, seq, updated_at) VALUES ($1, $2, now())
-            ON CONFLICT (consumer) DO UPDATE SET seq = GREATEST({WincheDatabaseTables.FeedCursors}.seq, EXCLUDED.seq), updated_at = now()
-            """;
-        cmd.Parameters.AddWithValue(consumer);
-        cmd.Parameters.AddWithValue(seq);
-        await cmd.ExecuteNonQueryAsync(ct);
-    }
-
     /// <summary>
     /// Deletes rows with commit_time older than the cutoff, delivered or not. Returns rows deleted.
     /// The pruner uses <see cref="PruneAsync"/>, which keeps rows a durable consumer still needs.

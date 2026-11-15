@@ -4,7 +4,7 @@ using Winche.Database.Documents;
 using Winche.Database.Querying.Sql;
 using Winche.Database.Runtime.Writes;
 using Winche.Database.Schema;
-using Winche.Database.Values;
+using Winche.Values;
 
 namespace Winche.Database.IntegrationTests;
 

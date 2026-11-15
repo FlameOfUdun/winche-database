@@ -27,7 +27,7 @@ public class RestAddTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Add_CreatesDocument_WithGeneratedId()
     {
         await using var host = await AllowAllHost();
-        var (status, body) = await PostAsync(host.Client, "/documents:add",
+        var (status, body) = await PostAsync(host.Client, "/documents/v1:add",
             """{"collection": "people", "fields": {"name": {"stringValue": "ada"}}}""");
 
         Assert.Equal(HttpStatusCode.OK, status);
@@ -41,21 +41,21 @@ public class RestAddTests(PostgresFixture fx) : QueryTestBase(fx)
     public async Task Add_NonStringCollection_ReturnsBadRequest()
     {
         await using var host = await AllowAllHost();
-        var (status, body) = await PostAsync(host.Client, "/documents:add",
+        var (status, body) = await PostAsync(host.Client, "/documents/v1:add",
             """{"collection": 42, "fields": {"name": {"stringValue": "ada"}}}""");
 
         Assert.Equal(HttpStatusCode.BadRequest, status);
-        Assert.Equal("INVALID_ARGUMENT", (string?)body["status"]);
+        Assert.Equal("invalid-argument", (string?)body["error"]!["code"]);
     }
 
     [Fact]
     public async Task Add_WithoutCreateRule_PermissionDenied()
     {
         await using var host = await DenyAllHost();
-        var (status, body) = await PostAsync(host.Client, "/documents:add",
+        var (status, body) = await PostAsync(host.Client, "/documents/v1:add",
             """{"collection": "people", "fields": {"name": {"stringValue": "ada"}}}""");
 
         Assert.Equal(HttpStatusCode.Forbidden, status);
-        Assert.Equal("PERMISSION_DENIED", (string?)body["status"]);
+        Assert.Equal("permission-denied", (string?)body["error"]!["code"]);
     }
 }

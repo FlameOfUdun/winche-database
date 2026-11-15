@@ -17,4 +17,8 @@
     <ProjectReference Include="..\Winche.Database\Winche.Database.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Winche.Core.AspNetCore" Version="1.0.0" />
+  </ItemGroup>
+
 </Project>
