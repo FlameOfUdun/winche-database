@@ -30,6 +30,21 @@ public static class WebApplicationExtensions
     /// A document path from the URL: base64url (<c>-</c>, <c>_</c>, padding optional — recommended, since it never
     /// contains <c>/</c> or <c>+</c>) or standard base64. Anything else is a 400, not a 500.
     /// </summary>
+    /// <summary>
+    /// A write's answer: the document as saved (200), or 204 when the caller may write it but not read it: the write
+    /// went through, and nothing they can't read is sent back. Reading it back is part of the request, not logged apart.
+    /// </summary>
+    private static async Task<IResult> SavedAsync(IDocumentDatabase db, string path, CancellationToken ct)
+    {
+        try
+        {
+            Document? doc;
+            using (RequestLog.Quietly()) doc = await db.GetAsync(path, ct);
+            return doc is null ? Results.NotFound() : Results.Json(doc, statusCode: 200, contentType: "application/json");
+        }
+        catch (Winche.Database.Authorization.AccessDeniedException) { return Results.NoContent(); }
+    }
+
     internal static string DecodeBase64(string base64)
     {
         try
@@ -63,9 +78,7 @@ public static class WebApplicationExtensions
         {
             var decoded = DecodeBase64(path);
             await db.WriteAsync([new SetWrite { Path = decoded, Fields = body.Fields }], ct);
-            Document? doc;
-            using (RequestLog.Quietly()) doc = await db.GetAsync(decoded, ct);   // the answer, not a read of its own
-            return Results.Json(doc, statusCode: 200, contentType: "application/json");
+            return await SavedAsync(db, decoded, ct);
         });
 
         // ?expand=patient,patient.doctor: the referenced documents come back under "included" (by path).
@@ -98,9 +111,7 @@ public static class WebApplicationExtensions
                 kv => FieldPath.Parse(kv.Key),
                 kv => kv.Value);
             await db.WriteAsync([new UpdateWrite { Path = decoded, Fields = updateFields }], ct);
-            Document? doc;
-            using (RequestLog.Quietly()) doc = await db.GetAsync(decoded, ct);   // the answer, not a read of its own
-            return doc is null ? Results.NotFound() : Results.Json(doc, statusCode: 200, contentType: "application/json");
+            return await SavedAsync(db, decoded, ct);
         });
 
         group.MapGet("/ping", async (CancellationToken ct = default) =>

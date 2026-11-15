@@ -925,8 +925,8 @@ Mapped under `/documents/v1` by default (configurable via `MapWincheDatabaseRest
 | Method | Route | Description |
 | --- | --- | --- |
 | `GET` | `/documents/v1/{base64Path}` | Get a document |
-| `PUT` | `/documents/v1/{base64Path}` | Create or replace a document (returns document after write) |
-| `PATCH` | `/documents/v1/{base64Path}` | Patch fields via dotted field paths |
+| `PUT` | `/documents/v1/{base64Path}` | Create or replace a document (returns it as saved; `204` when the rules let you write it but not read it) |
+| `PATCH` | `/documents/v1/{base64Path}` | Patch fields via dotted field paths (answered like `PUT`) |
 | `DELETE` | `/documents/v1/{base64Path}` | Delete a document and its subcollections (reads first; 404 if missing) |
 | `GET` | `/documents/v1/ping` | Health check |
 
