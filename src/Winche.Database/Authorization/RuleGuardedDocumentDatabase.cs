@@ -117,20 +117,21 @@ public sealed class RuleGuardedDocumentDatabase(
     public Task<TransactionHandle> BeginTransactionAsync(CancellationToken ct = default) =>
         inner.BeginTransactionAsync(ct);
 
-    public async Task<Document?> GetAsync(string transactionId, string path, CancellationToken ct = default)
+    // Reads inside a transaction are logged like any read (sampled when allowed, always when denied).
+    public Task<Document?> GetAsync(string transactionId, string path, CancellationToken ct = default) => Logged("database.get", path, async () =>
     {
         // Mirror the non-transactional get: read, then authorize against the read document.
         // Denied → throw before returning, so the caller never sees a document it cannot read.
         var doc = await inner.GetAsync(transactionId, path, ct);
         await AuthorizeGetAsync(path, doc, ct);
         return doc;
-    }
+    });
 
-    public Task<QueryResult> QueryAsync(string transactionId, Query query, CancellationToken ct = default)
+    public Task<QueryResult> QueryAsync(string transactionId, Query query, CancellationToken ct = default) => Logged("database.query", Target(query), () =>
     {
         AuthorizeListQuery(query);
         return inner.QueryAsync(transactionId, query, ct);
-    }
+    });
 
     public Task<IReadOnlyList<WriteResult>> CommitTransactionAsync(
         string transactionId, IReadOnlyList<Write> writes, CancellationToken ct = default) =>

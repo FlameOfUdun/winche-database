@@ -156,6 +156,22 @@ public class RequestLogTests(PostgresFixture fx) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Reads_inside_a_transaction_are_logged_and_their_denials_always()
+    {
+        var capture = new Capture();
+        var claims = new Claims { Value = new Dictionary<string, object?> { ["uid"] = "u1" } };
+        await using var sp = Provider(0.0, capture, claims);
+        var db = sp.GetRequiredService<IDocumentDatabase>();
+        var tx = await db.BeginTransactionAsync();
+        await db.GetAsync(tx.Id, "users/u1");   // allowed: sampled out at 0
+        await Assert.ThrowsAsync<AccessDeniedException>(() => db.GetAsync(tx.Id, "users/u2"));
+        await Assert.ThrowsAsync<AccessDeniedException>(() => db.QueryAsync(tx.Id, new Query("users")));
+        await db.RollbackTransactionAsync(tx.Id);
+        var log = Requests(capture);
+        Assert.Equal(["u1 was denied reading users/u2: no rule allows it.", "u1 was denied querying users: no rule allows it."], log.Select(e => e.Message).ToList());
+    }
+
+    [Fact]
     public async Task Without_LogRequests_nothing_is_logged()
     {
         var capture = new Capture();
