@@ -1025,7 +1025,7 @@ recording costs next to nothing.
 Useful alarms: `winche.feed.lag` p95 above a few minutes, any `winche.feed.dead_letters`, `write.duration{outcome=aborted}`
 rising, `query.duration{indexed=false}` p95 above the slow-query threshold.
 
-## Document history (11.1.0)
+## Document history (12.0.0)
 
 ```csharp
 config.KeepHistory(TimeSpan.FromDays(30));   // opt in; default 30 days
@@ -1050,7 +1050,7 @@ history's retention (`ChangeFeed.Retention` and `MaxRetention` still apply when 
 written document per change, so it's off by default. Changes made before it was turned on have no `Fields`. With
 `o.UseSettings()` the console can turn it on or off and change the retention.
 
-## Request logging (11.1.0)
+## Request logging (12.0.0)
 
 ```csharp
 config.LogRequests(r => { r.SuccessSampleRate = 0.1; r.SlowThreshold = TimeSpan.FromSeconds(1); });   // the defaults
@@ -1067,9 +1067,24 @@ with their error id. Requests made without the rules (the console's own browsing
 logged. With `o.UseSettings()` the console can change these settings too. The Winche console's Logs Explorer filters on
 these values; elsewhere, set the category's level to keep them out of other outputs.
 
-## Upgrading to 11.1.0
+## Upgrading to 12.0.0
 
-Additive: startup adds an `actor` column and a path index to the change feed; who made each change is recorded there
+**Breaking:**
+- **On Winche.Core.** Values, errors, settings and the change feed come from Winche.Core 1.0 (`Winche.Values`).
+- **Value names**, one per type, written in full: `documentReferenceValue`, `fileReferenceValue` and
+  `userReferenceValue` on the wire (the old `referenceValue` / `docRefValue` tags are refused), and
+  `DocumentReferenceValue`, `FileReferenceValue`, `UserReferenceValue` in code. Rules use the same names
+  (`is integer`, `is documentReference`, …: Winche.Rules 5.0.0).
+- **Routes** are under `/documents/v1` (REST) and `/documents/v1/ws` (live).
+- **Errors** have the shared shape `{"error": {"code", "message", "reason"?, "details"?}}` on REST and WebSocket.
+- **A REST write you may make but not read back** answers `204` with no body (it was `403`, though the write was saved).
+
+**Added:** expanding references on reads, queries and live subscriptions (documents, files, users); before-hooks
+that refuse or change a write in its transaction; indexes and expiry as text; WebSocket compression
+(`ws.Compression`); request logs with one entry per request (deletes as `database.delete`, reads in transactions
+included).
+
+Startup adds an `actor` column and a path index to the change feed; who made each change is recorded there
 from now on, with or without `KeepHistory`. `KeepHistory` and `LogRequests` (above) are opt-in, as is `UseSettings()`,
 which lets the console change indexes, expiry, history, write limits, the slow-query threshold, the expand limit and
 request logging without a deploy (needs `AddWincheConfig(…)`; rules, hooks and the connection stay in code).
