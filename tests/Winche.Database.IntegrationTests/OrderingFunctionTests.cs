@@ -51,7 +51,7 @@ public class OrderingFunctionTests(PostgresFixture fx) : IAsyncLifetime
         await Seed("d_number", new IntegerValue(42));
         await Seed("d2_timestamp", new TimestampValue(DateTimeOffset.UnixEpoch));
         await Seed("f_bytes", new BytesValue([1]));
-        await Seed("g_ref", new ReferenceValue("users/u1"));
+        await Seed("g_ref", new DocumentReferenceValue("users/u1"));
 
         var ids = await IdsOrderedByField();
 

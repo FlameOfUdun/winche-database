@@ -20,7 +20,7 @@ public class FilterMatrixTests(PostgresFixture fx) : QueryTestBase(fx)
         await Seed("strA", new StringValue("Apple"));
         await Seed("strB", new StringValue("banana"));
         await Seed("bytes", new BytesValue([1, 2]));
-        await Seed("ref", new ReferenceValue("users/u1"));
+        await Seed("ref", new DocumentReferenceValue("users/u1"));
         await Seed("geo", new GeoPointValue(10, 20));
         await Seed("arr", new ArrayValue([new IntegerValue(1), new StringValue("x")]));
         await Seed("map", new MapValue(new Dictionary<string, Value> { ["k"] = new IntegerValue(1) }));
@@ -59,7 +59,7 @@ public class FilterMatrixTests(PostgresFixture fx) : QueryTestBase(fx)
         Assert.Equal(["ts"], await Filter(FilterOperator.Eq, new TimestampValue(DateTimeOffset.UnixEpoch)));
         Assert.Equal(["strA"], await Filter(FilterOperator.Eq, new StringValue("Apple")));
         Assert.Equal(["bytes"], await Filter(FilterOperator.Eq, new BytesValue([1, 2])));
-        Assert.Equal(["ref"], await Filter(FilterOperator.Eq, new ReferenceValue("users/u1")));
+        Assert.Equal(["ref"], await Filter(FilterOperator.Eq, new DocumentReferenceValue("users/u1")));
         Assert.Equal(["geo"], await Filter(FilterOperator.Eq, new GeoPointValue(10, 20)));
     }
 

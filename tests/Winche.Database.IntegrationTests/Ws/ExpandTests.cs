@@ -26,7 +26,7 @@ public class ExpandTests(PostgresFixture fx) : QueryTestBase(fx)
     private const string Secret = "xsecret";
 
     private DocumentDatabase Core() => new(Fx.DataSource, Options.Create(new WincheDatabaseOptions()));
-    private static ReferenceValue Ref(string path) => new(path);
+    private static DocumentReferenceValue Ref(string path) => new(path);
     private static Dictionary<string, Value> F(params (string, Value)[] f) => f.ToDictionary(x => x.Item1, x => x.Item2);
     private static string U(string what) => $"{what}{Guid.NewGuid():N}"[..20];
 
@@ -79,7 +79,7 @@ public class ExpandTests(PostgresFixture fx) : QueryTestBase(fx)
         var included = get["result"]!["included"]!.AsObject();
         Assert.Equal("Dr Who", (string?)included[d]!["fields"]!["name"]!["stringValue"]);
         Assert.False(included.ContainsKey(s));
-        Assert.Equal(d, (string?)get["result"]!["document"]!["fields"]!["doctor"]!["docRefValue"]);   // the field itself stays a pointer
+        Assert.Equal(d, (string?)get["result"]!["document"]!["fields"]!["doctor"]!["documentReferenceValue"]);   // the field itself stays a pointer
 
         var collection = p.Split('/')[0];
         var query = await ws.RequestAsync(new JsonObject { ["type"] = "query", ["query"] = new JsonObject { ["collection"] = collection }, ["expand"] = new JsonArray("doctor") });
@@ -191,9 +191,9 @@ public class ExpandTests(PostgresFixture fx) : QueryTestBase(fx)
         var owner = $"{U("owners")}/o";
         var item = $"{U("items")}/i";
         await Core().WriteAsync([
-            new SetWrite { Path = owner, Fields = F(("author", new UserRefValue("u2"))) },
-            new SetWrite { Path = item, Fields = F(("scan", new FileRefValue("scans/a.png")),
-                ("more", new ArrayValue([new FileRefValue("secret"), new FileRefValue("nope")])),
+            new SetWrite { Path = owner, Fields = F(("author", new UserReferenceValue("u2"))) },
+            new SetWrite { Path = item, Fields = F(("scan", new FileReferenceValue("scans/a.png")),
+                ("more", new ArrayValue([new FileReferenceValue("secret"), new FileReferenceValue("nope")])),
                 ("plain", new StringValue("scans/a.png")), ("owner", Ref(owner))) },
         ]);
         await using var host = await WsTestHost.StartAsync(Fx.ConnectionString, o =>
@@ -211,7 +211,7 @@ public class ExpandTests(PostgresFixture fx) : QueryTestBase(fx)
         Assert.False(resolved.ContainsKey("file:secret"));                   // hidden from the caller
         Assert.False(resolved.ContainsKey("file:nope"));
         Assert.Equal(2, resolved.Count);                                     // a plain string is never resolved
-        Assert.Equal("scans/a.png", (string?)get["result"]!["document"]!["fields"]!["scan"]!["fileRefValue"]);
+        Assert.Equal("scans/a.png", (string?)get["result"]!["document"]!["fields"]!["scan"]!["fileReferenceValue"]);
         Assert.Contains(files.Callers, c => c.Uid == "ann" && !c.Trusted);
 
         // Live: a change a resolver announces reaches the subscriber.
@@ -234,18 +234,18 @@ public class ExpandTests(PostgresFixture fx) : QueryTestBase(fx)
     {
         var c = U("refq");
         await Core().WriteAsync([
-            new SetWrite { Path = $"{c}/a", Fields = F(("who", new UserRefValue("u1"))) },
-            new SetWrite { Path = $"{c}/b", Fields = F(("who", new ReferenceValue("people/p1"))) },
+            new SetWrite { Path = $"{c}/a", Fields = F(("who", new UserReferenceValue("u1"))) },
+            new SetWrite { Path = $"{c}/b", Fields = F(("who", new DocumentReferenceValue("people/p1"))) },
             new SetWrite { Path = $"{c}/e", Fields = F(("who", new StringValue("u1"))) },
-            new SetWrite { Path = $"{c}/c", Fields = F(("who", new FileRefValue("u1"))) },
-            new SetWrite { Path = $"{c}/d", Fields = F(("who", new UserRefValue("u2"))) },
+            new SetWrite { Path = $"{c}/c", Fields = F(("who", new FileReferenceValue("u1"))) },
+            new SetWrite { Path = $"{c}/d", Fields = F(("who", new UserReferenceValue("u2"))) },
         ]);
 
         async Task<string[]> Ids(Value v) => [.. (await Core().QueryAsync(new Querying.Ast.Query(c,
             new Querying.Ast.FieldFilter(Documents.FieldPath.Parse("who"), Querying.Ast.FilterOperator.Eq, v)))).Documents.Select(d => d.Id)];
-        Assert.Equal(["a"], await Ids(new UserRefValue("u1")));          // not the file reference, not the string
-        Assert.Equal(["c"], await Ids(new FileRefValue("u1")));
-        Assert.Equal(["b"], await Ids(new ReferenceValue("people/p1")));
+        Assert.Equal(["a"], await Ids(new UserReferenceValue("u1")));          // not the file reference, not the string
+        Assert.Equal(["c"], await Ids(new FileReferenceValue("u1")));
+        Assert.Equal(["b"], await Ids(new DocumentReferenceValue("people/p1")));
         Assert.Equal(["e"], await Ids(new StringValue("u1")));
 
         var ordered = await Core().QueryAsync(new Querying.Ast.Query(c, null, [new Querying.Ast.Ordering(Documents.FieldPath.Parse("who"), Querying.Ast.SortDirection.Asc)]));

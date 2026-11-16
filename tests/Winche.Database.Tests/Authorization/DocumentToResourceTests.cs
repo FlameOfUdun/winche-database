@@ -51,7 +51,7 @@ public class DocumentToResourceTests
     public void Convert_Path_IsFullPathAsRulePath()
     {
         var map = DocumentToResource.Convert(MakeDocument("users/u42", "u42", "users")).AsMap;
-        Assert.IsType<ReferenceValue>(map["path"]);
+        Assert.IsType<DocumentReferenceValue>(map["path"]);
         Assert.Equal("users/u42", map["path"].AsPath);
     }
 

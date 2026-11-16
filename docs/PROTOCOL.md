@@ -34,9 +34,9 @@ All field values use a **tagged-value** encoding. Each value is a JSON object wi
 | `TimestampValue` | `timestampValue` | RFC 3339 string, UTC (`Z`), microsecond precision (`yyyy-MM-ddTHH:mm:ss.ffffffZ`) | Stored truncated to µs (sub-µs ticks dropped) |
 | `StringValue` | `stringValue` | JSON string | Unicode; code-point order for sorting |
 | `BytesValue` | `bytesValue` | standard base64 string | |
-| `ReferenceValue` | `docRefValue` | document path string (e.g. `"users/u1"`) | A document |
-| `FileRefValue` | `fileRefValue` | file path string (e.g. `"scans/a.png"`) | A file in Winche Storage |
-| `UserRefValue` | `userRefValue` | uid string (e.g. `"u1"`) | A Winche Auth user |
+| `DocumentReferenceValue` | `documentReferenceValue` | document path string (e.g. `"users/u1"`) | A document |
+| `FileReferenceValue` | `fileReferenceValue` | file path string (e.g. `"scans/a.png"`) | A file in Winche Storage |
+| `UserReferenceValue` | `userReferenceValue` | uid string (e.g. `"u1"`) | A Winche Auth user |
 | `GeoPointValue` | `geoPointValue` | `{"latitude": <number>, "longitude": <number>}` | |
 | `ArrayValue` | `arrayValue` | `{"values": [<value>, …]}` | `values` key may be absent for an empty array |
 | `MapValue` | `mapValue` | `{"fields": {"<key>": <value>, …}}` | `fields` key may be absent for an empty map |
@@ -54,9 +54,9 @@ All field values use a **tagged-value** encoding. Each value is a JSON object wi
 {"timestampValue": "2026-06-07T12:34:56.000000Z"}
 {"stringValue": "hello"}
 {"bytesValue": "SGVsbG8="}
-{"docRefValue": "users/u1"}
-{"fileRefValue": "scans/a.png"}
-{"userRefValue": "u1"}
+{"documentReferenceValue": "users/u1"}
+{"fileReferenceValue": "scans/a.png"}
+{"userReferenceValue": "u1"}
 {"geoPointValue": {"latitude": 59.913, "longitude": 10.752}}
 {"arrayValue": {"values": [{"integerValue": "1"}, {"integerValue": "2"}]}}
 {"arrayValue": {}}
@@ -478,7 +478,7 @@ The engine automatically appends `__name__` (the document path) as a tiebreaker 
 
 `values` must be tagged values corresponding positionally to `orderBy` fields (including the implicit `__name__` tiebreaker if it is needed). Cursor arity may be any **prefix** of the sort keys (1 to N values); the remaining sort keys are unconstrained.
 
-**C# convenience — `Cursor.FromDocument`.** `Cursor.FromDocument(Document doc, IReadOnlyList<Ordering>? orderBy, bool before)` derives cursor values from a document snapshot: for each `orderBy` field it reads that field's value from `doc`, then appends the implicit `__name__` tiebreaker as `{"docRefValue": "<doc.Path>"}`. A null or empty `orderBy` produces a `__name__`-only cursor. Throws `ArgumentException` if a required field is absent from the document. The resulting `Cursor` is identical on the wire to one constructed by hand — `Cursor.FromDocument` is a client-side convenience only.
+**C# convenience — `Cursor.FromDocument`.** `Cursor.FromDocument(Document doc, IReadOnlyList<Ordering>? orderBy, bool before)` derives cursor values from a document snapshot: for each `orderBy` field it reads that field's value from `doc`, then appends the implicit `__name__` tiebreaker as `{"documentReferenceValue": "<doc.Path>"}`. A null or empty `orderBy` produces a `__name__`-only cursor. Throws `ArgumentException` if a required field is absent from the document. The resulting `Cursor` is identical on the wire to one constructed by hand — `Cursor.FromDocument` is a client-side convenience only.
 
 | `Query` property | `before` | Equivalent |
 | - | - | - |
@@ -1112,14 +1112,14 @@ The **send queue** is bounded at 64 frames (configurable). If it fills up, the c
 `doc.get`, `doc.getAll`, `query`, `listen` and `doc.listen` take `"expand": ["patient", "patient.doctor", "team", "scan", "author"]`
 (REST: `GET …/{path}?expand=patient,patient.doctor`; `:batchGet` and `:runQuery` take `"expand"` in the body).
 
-- **Paths:** each segment names a field; maps are walked into, lists apply the rest to each item, and a `docRefValue`
+- **Paths:** each segment names a field; maps are walked into, lists apply the rest to each item, and a `documentReferenceValue`
   applies the rest to the document it points to. `patient.doctor` follows `patient`, then `doctor` in that document.
   At most 10 paths, 4 references deep, and the server's `ExpandLimit` documents, files and users per response
   (default 100, at most 10,000; announced in `welcome`); past that, references stay
   as they are.
 - **Documents:** come beside the results under `"included": { "<path>": <document>, … }`, each once however often
   it's referenced (cycles included). The fields themselves are unchanged.
-- **Files and users:** a `fileRefValue` or `userRefValue` a path ends at is resolved by Winche.Storage / Winche Auth
+- **Files and users:** a `fileReferenceValue` or `userReferenceValue` a path ends at is resolved by Winche.Storage / Winche Auth
   and comes under `"resolved": { "file:<path>": {…}, "user:<uid>": {…} }`: the file's record (as storage returns it,
   never a download link) if the storage rules let the caller `get` it; the user's public profile (`uid`,
   `displayName`, `photoUrl`, and the claims the app lists as public) to signed-in callers, the whole account to its

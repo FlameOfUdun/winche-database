@@ -7,7 +7,7 @@ public class ValueTests
     [Fact]
     public void TypeRank_FollowsCrossTypeTotalOrder()
     {
-        // null < bool < NaN < number < timestamp < string < bytes < reference < geopoint < array < map
+        // null < bool < NaN < number < timestamp < string < bytes < references < geoPoint < array < map
         short[] ranks =
         [
             (short)new NullValue().Rank,
@@ -17,7 +17,7 @@ public class ValueTests
             (short)new TimestampValue(DateTimeOffset.UnixEpoch).Rank,
             (short)new StringValue("a").Rank,
             (short)new BytesValue([1]).Rank,
-            (short)new ReferenceValue("users/u1").Rank,
+            (short)new DocumentReferenceValue("users/u1").Rank,
             (short)new GeoPointValue(0, 0).Rank,
             (short)new ArrayValue([]).Rank,
             (short)new MapValue(new Dictionary<string, Value>()).Rank,

@@ -5,7 +5,7 @@ namespace Winche.Database.Querying.Sql;
 /// <summary>
 /// DDL for the winche_* ordering helper functions — the SQL mirror of Values.TypeRank.
 /// Canonical cross-type total order: null(10) &lt; bool(20) &lt; NaN(29) &lt; number(30) &lt; timestamp(40)
-/// &lt; string(50) &lt; bytes(60) &lt; reference(70) &lt; geopoint(80) &lt; array(90) &lt; map(100).
+/// &lt; string(50) &lt; bytes(60) &lt; references (70: documents, files, users) &lt; geoPoint(80) &lt; array(90) &lt; map(100).
 /// Phase 1 ships scalar ordering; winche_key (arrays/maps) ships in Phase 2.
 /// Reference ordering compares full path bytes (not per-segment); diverges from the reference ordering only for ids containing chars below '/' (0x2F).
 /// IMMUTABLE note: winche_num/winche_rank cast text→timestamptz, which is only truly immutable for offset-bearing strings; the engine always writes 'Z'-suffixed timestamps, so expression indexes are safe — externally-written offset-less strings would not be.
@@ -230,9 +230,9 @@ public static class SchemaSql
             WHEN v ? 'timestampValue' THEN 40
             WHEN v ? 'stringValue' THEN 50
             WHEN v ? 'bytesValue' THEN 60
-            WHEN v ? 'docRefValue' THEN 70
-            WHEN v ? 'fileRefValue' THEN 72
-            WHEN v ? 'userRefValue' THEN 74
+            WHEN v ? 'documentReferenceValue' THEN 70
+            WHEN v ? 'fileReferenceValue' THEN 72
+            WHEN v ? 'userReferenceValue' THEN 74
             WHEN v ? 'geoPointValue' THEN 80
             WHEN v ? 'arrayValue' THEN 90
             WHEN v ? 'mapValue' THEN 100
@@ -273,9 +273,9 @@ public static class SchemaSql
         CREATE OR REPLACE FUNCTION winche_text(v jsonb) RETURNS text AS $f$
         SELECT CASE
             WHEN v ? 'stringValue' THEN v->>'stringValue'
-            WHEN v ? 'docRefValue' THEN v->>'docRefValue'
-            WHEN v ? 'fileRefValue' THEN v->>'fileRefValue'
-            WHEN v ? 'userRefValue' THEN v->>'userRefValue'
+            WHEN v ? 'documentReferenceValue' THEN v->>'documentReferenceValue'
+            WHEN v ? 'fileReferenceValue' THEN v->>'fileReferenceValue'
+            WHEN v ? 'userReferenceValue' THEN v->>'userReferenceValue'
         END
         $f$ LANGUAGE sql IMMUTABLE STRICT;
 

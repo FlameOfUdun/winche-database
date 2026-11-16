@@ -124,7 +124,7 @@ internal static class Normalizer
 
         for (var i = 0; i < cursor.Values.Count; i++)
         {
-            if (sortKeys[i].Field.Equals(Name) && cursor.Values[i] is not (StringValue or ReferenceValue))
+            if (sortKeys[i].Field.Equals(Name) && cursor.Values[i] is not (StringValue or DocumentReferenceValue))
                 throw new PlanValidationException("CURSOR_TYPE",
                     $"'{which}' value {i} corresponds to __name__ and must be a string or reference.");
         }

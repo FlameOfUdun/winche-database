@@ -27,7 +27,7 @@ public class DocumentOperationsTests(PostgresFixture fx) : IAsyncLifetime
         ["ts"] = new TimestampValue(new DateTimeOffset(2026, 6, 6, 12, 0, 0, TimeSpan.Zero)),
         ["s"] = new StringValue("héllo 🌍"),
         ["by"] = new BytesValue([1, 2, 3]),
-        ["ref"] = new ReferenceValue("users/u1"),
+        ["ref"] = new DocumentReferenceValue("users/u1"),
         ["geo"] = new GeoPointValue(59.9, 10.7),
         ["arr"] = new ArrayValue([new IntegerValue(1), new MapValue(new Dictionary<string, Value> { ["x"] = new NullValue() })]),
         ["map"] = new MapValue(new Dictionary<string, Value> { ["nested"] = new TimestampValue(DateTimeOffset.UnixEpoch) }),

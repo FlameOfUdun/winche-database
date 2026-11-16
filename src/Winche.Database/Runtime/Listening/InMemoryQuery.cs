@@ -152,7 +152,7 @@ internal sealed class InMemoryQuery
         {
             var key = _keys[i];
             // __name__ cursor values are paths, given as a string or a reference.
-            var b = key.Field.Equals(Name) && bound[i] is StringValue s ? new ReferenceValue(s.Value) : bound[i];
+            var b = key.Field.Equals(Name) && bound[i] is StringValue s ? new DocumentReferenceValue(s.Value) : bound[i];
             var c = ValueComparer.Instance.Compare(KeyOf(key, doc), b);
             if (c != 0) return key.Direction == SortDirection.Desc ? -c : c;
         }
@@ -182,7 +182,7 @@ internal sealed class InMemoryQuery
 
     private static Value KeyOf(SortKey key, Document doc) =>
         key.Field.Equals(Name)
-            ? new ReferenceValue(doc.Path)
+            ? new DocumentReferenceValue(doc.Path)
             // orderBy fields carry an implicit exists filter, so every matching document has them.
             : FilterEvaluator.ResolveField(key.Field, doc.Fields)
               ?? throw new InvalidOperationException($"'{doc.Path}' has no '{key.Field}' to sort by");

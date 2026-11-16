@@ -24,7 +24,7 @@ public class ValueSerializerReadTests
         new StringValue("héllo 🌍"),
         new BytesValue([]),
         new BytesValue([1, 2, 3]),
-        new ReferenceValue("users/u1/orders/o1"),
+        new DocumentReferenceValue("users/u1/orders/o1"),
         new GeoPointValue(-90, 180),
         new ArrayValue([]),
         new ArrayValue([new IntegerValue(1), new ArrayValue([new StringValue("nested")])]),

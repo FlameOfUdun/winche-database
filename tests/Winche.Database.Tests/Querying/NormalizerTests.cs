@@ -221,7 +221,7 @@ public class NormalizerTests
 
         // string and reference are both fine
         Normalizer.Normalize(new Query("c", Start: new Cursor([new StringValue("c/a")], Before: true)));
-        Normalizer.Normalize(new Query("c", Start: new Cursor([new ReferenceValue("c/a")], Before: true)));
+        Normalizer.Normalize(new Query("c", Start: new Cursor([new DocumentReferenceValue("c/a")], Before: true)));
     }
 
     // ── I2: Typed error for unsupported operators on __name__ ────────────────

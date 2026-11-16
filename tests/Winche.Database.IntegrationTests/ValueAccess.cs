@@ -10,6 +10,6 @@ internal static class ValueAccess
         public IReadOnlyDictionary<string, Value> AsMap => ((MapValue)v).Fields;
         public long AsInt => ((IntegerValue)v).Value;
         public string AsString => ((StringValue)v).Value;
-        public string AsPath => ((ReferenceValue)v).Path;
+        public string AsPath => ((DocumentReferenceValue)v).Path;
     }
 }

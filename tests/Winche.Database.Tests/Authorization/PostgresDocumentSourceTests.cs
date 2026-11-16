@@ -96,7 +96,7 @@ public class PostgresDocumentSourceTests
         Assert.IsType<MapValue>(result);
         Assert.Equal("Bob", result.AsMap["name"].AsString);
         Assert.Equal("u2", result.AsMap["id"].AsString);
-        Assert.IsType<ReferenceValue>(result.AsMap["path"]);
+        Assert.IsType<DocumentReferenceValue>(result.AsMap["path"]);
     }
 
     [Fact]

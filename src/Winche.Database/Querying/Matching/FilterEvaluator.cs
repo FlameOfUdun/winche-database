@@ -93,7 +93,7 @@ public static class FilterEvaluator
         var s = operand switch
         {
             StringValue sv => sv.Value,
-            ReferenceValue rv => rv.Path,
+            DocumentReferenceValue rv => rv.Path,
             _ => null,
         };
         if (s is null) return false;

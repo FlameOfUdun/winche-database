@@ -23,7 +23,7 @@ public sealed record Cursor(IReadOnlyList<Value> Values, bool Before)
     /// <summary>
     /// Builds a cursor from a document snapshot, deriving one value per sort key in order:
     /// each orderBy field's value from the document, then the implicit __name__ tiebreaker as
-    /// ReferenceValue(doc.Path). Matches the reference startAt/After(doc) resolution behaviour.
+    /// DocumentReferenceValue(doc.Path). Matches the reference startAt/After(doc) resolution behaviour.
     /// A null/empty orderBy yields a __name__-only cursor. Throws ArgumentException if the
     /// document is missing an orderBy field.
     /// </summary>
@@ -35,9 +35,9 @@ public sealed record Cursor(IReadOnlyList<Value> Values, bool Before)
 
         var values = new List<Value>(ordering.Count + (sawName ? 0 : 1));
         foreach (var o in ordering)
-            values.Add(o.Field.Equals(NamePath) ? new ReferenceValue(doc.Path) : ExtractValue(doc, o.Field));
+            values.Add(o.Field.Equals(NamePath) ? new DocumentReferenceValue(doc.Path) : ExtractValue(doc, o.Field));
         if (!sawName)
-            values.Add(new ReferenceValue(doc.Path));
+            values.Add(new DocumentReferenceValue(doc.Path));
 
         return new Cursor(values, before);
     }

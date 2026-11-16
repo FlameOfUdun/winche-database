@@ -26,7 +26,7 @@ public class CursorFromDocumentTests
         Assert.False(cursor.Before);
         Assert.Equal(2, cursor.Values.Count);
         Assert.Equal(new IntegerValue(30), cursor.Values[0]);
-        Assert.Equal(new ReferenceValue("c/a"), cursor.Values[1]); // appended __name__
+        Assert.Equal(new DocumentReferenceValue("c/a"), cursor.Values[1]); // appended __name__
     }
 
     [Fact]
@@ -35,7 +35,7 @@ public class CursorFromDocumentTests
         var doc = Doc("c/a", ("address", new MapValue(new Dictionary<string, Value> { ["city"] = new StringValue("paris") })));
         var cursor = Cursor.FromDocument(doc, [new Ordering(FieldPath.Parse("address.city"))], before: true);
         Assert.Equal(new StringValue("paris"), cursor.Values[0]);
-        Assert.Equal(new ReferenceValue("c/a"), cursor.Values[1]);
+        Assert.Equal(new DocumentReferenceValue("c/a"), cursor.Values[1]);
     }
 
     [Fact]
@@ -46,7 +46,7 @@ public class CursorFromDocumentTests
             [new Ordering(FieldPath.Parse("age")), new Ordering(FieldPath.Parse("__name__"))], before: false);
         Assert.Equal(2, cursor.Values.Count);
         Assert.Equal(new IntegerValue(30), cursor.Values[0]);
-        Assert.Equal(new ReferenceValue("c/a"), cursor.Values[1]);
+        Assert.Equal(new DocumentReferenceValue("c/a"), cursor.Values[1]);
     }
 
     [Fact]
@@ -72,6 +72,6 @@ public class CursorFromDocumentTests
         var doc = Doc("c/a", ("name", new StringValue("ada")));
         var cursor = Cursor.FromDocument(doc, [], before: true);
         Assert.True(cursor.Before);
-        Assert.Equal(new ReferenceValue("c/a"), Assert.Single(cursor.Values));
+        Assert.Equal(new DocumentReferenceValue("c/a"), Assert.Single(cursor.Values));
     }
 }

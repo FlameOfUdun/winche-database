@@ -16,7 +16,7 @@ public class ValueComparerTests
             new DoubleValue(double.NaN), new DoubleValue(double.NegativeInfinity),
             new IntegerValue(-1), new DoubleValue(1.5), new IntegerValue(2),
             new TimestampValue(DateTimeOffset.UnixEpoch),
-            new StringValue("a"), new BytesValue([1]), new ReferenceValue("c/a"),
+            new StringValue("a"), new BytesValue([1]), new DocumentReferenceValue("c/a"),
             new GeoPointValue(0, 0), new ArrayValue([]),
             new MapValue(new Dictionary<string, Value>()),
         ];

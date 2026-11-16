@@ -25,7 +25,7 @@ internal static class DocumentToResource
         var map = new Dictionary<string, Value>(document.Fields, StringComparer.Ordinal)
         {
             ["id"] = new StringValue(document.Id),
-            ["path"] = new ReferenceValue(document.Path),
+            ["path"] = new DocumentReferenceValue(document.Path),
             ["collection"] = new StringValue(document.Collection),
             ["createdAt"] = new TimestampValue(document.CreateTime),
             ["updatedAt"] = new TimestampValue(document.UpdateTime),

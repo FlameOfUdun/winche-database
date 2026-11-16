@@ -19,7 +19,7 @@ public class ComparerSqlConsistencyTests(PostgresFixture fx) : QueryTestBase(fx)
         new TimestampValue(new DateTimeOffset(2026, 6, 6, 0, 0, 0, TimeSpan.Zero)),
         new StringValue(""), new StringValue("B"), new StringValue("a"), new StringValue("aa"), new StringValue("á"),
         new BytesValue([]), new BytesValue([0]), new BytesValue([1, 2]),
-        new ReferenceValue("a/b"), new ReferenceValue("a/b/c/d"),
+        new DocumentReferenceValue("a/b"), new DocumentReferenceValue("a/b/c/d"),
         new GeoPointValue(-10, 50), new GeoPointValue(10, -50), new GeoPointValue(10, 50),
         new ArrayValue([]), new ArrayValue([new IntegerValue(1)]),
         new ArrayValue([new IntegerValue(1), new StringValue("x")]), new ArrayValue([new IntegerValue(2)]),

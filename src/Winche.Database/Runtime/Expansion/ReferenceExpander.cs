@@ -11,7 +11,7 @@ public sealed record ExpandPath(string[] Segments);
 /// Which references to follow: dotted paths (<c>patient</c>, <c>patient.doctor</c>, <c>team</c>, <c>visits.doctor</c>).
 /// Each segment names a field; maps are walked into, lists apply the rest to every item, and a reference applies the rest
 /// to the document it points to. So <c>patient.doctor</c> follows <c>patient</c>, then <c>doctor</c> in that document.
-/// A file or user reference (<c>fileRefValue</c>, <c>userRefValue</c>) at the end of a path is resolved by the
+/// A file or user reference (<c>fileReferenceValue</c>, <c>userReferenceValue</c>) at the end of a path is resolved by the
 /// <c>file</c> / <c>user</c> resolver (Winche.Storage, Winche Auth): the file's record, the user's profile.
 /// </summary>
 public sealed record ExpandRequest
@@ -153,13 +153,13 @@ public static class ReferenceExpander
     {
         switch (value)
         {
-            case ReferenceValue r:
+            case DocumentReferenceValue r:
                 if (Target(r) is { } p) found.Add((p, segments[i..]));
                 break;
-            case FileRefValue f when i == segments.Length:
+            case FileReferenceValue f when i == segments.Length:
                 Key(keys, "file", f.Path);
                 break;
-            case UserRefValue u when i == segments.Length:
+            case UserReferenceValue u when i == segments.Length:
                 Key(keys, "user", u.Uid);
                 break;
             case ArrayValue a:
@@ -178,7 +178,7 @@ public static class ReferenceExpander
         set.Add(value);
     }
 
-    private static string? Target(ReferenceValue r)
+    private static string? Target(DocumentReferenceValue r)
     {
         var path = r.Path.Trim('/');
         return DocumentPathParser.IsValidDocumentPath(path, out _) ? path : null;

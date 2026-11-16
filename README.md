@@ -114,7 +114,7 @@ The built-in claims/exception filters are always applied internally and run oute
 
 ## Features
 
-- **typed engine** — 13 tagged value types (`null`, `bool`, `int64`, `double`, `timestamp`, `string`, `bytes`, `docRef`, `fileRef`, `userRef`, `geopoint`, `array`, `map`); cross-type total order; same-type-class inequality semantics; `__name__` tiebreaker; int/double numeric equality
+- **typed engine** — 13 tagged value types (Winche.Core's: `null`, `boolean`, `integer`, `double`, `timestamp`, `string`, `bytes`, `documentReference`, `fileReference`, `userReference`, `geoPoint`, `array`, `map`); cross-type total order; same-type-class inequality semantics; `__name__` tiebreaker; int/double numeric equality
 - **Document storage** — Store documents as typed field maps; each document carries `path`, `id`, `collection`, `createTime`, `updateTime`, and `version` metadata
 - **Querying** — 15 filter operators (including Winche extensions: `arrayContainsAll`, `contains`, `startsWith`, `endsWith`, `regex`, field-compare); `and`/`or`/`not` composites; `orderBy` with `__name__` tiebreaker; cursor-based pagination (`startAt`/`startAfter`/`endAt`/`endBefore`); field projection via `select`; `offset` (skip first N results) and `limitToLast` (last N results in ascending order)
 - **Live queries with delta listeners** — changes are applied to a live result in memory (filters, order, cursors, limits, select; re-queried for offsets, when held spares run out, and every 5 minutes), listeners updated in parallel; Subscribe to a query and receive an initial full snapshot, then indexed `added`/`modified`/`removed`/`deleted` deltas with a `count` checksum; `listen.snapshot` REPLACES client state, `listen.delta` MUTATES it. `removed` means the document left this query's window/filter (it still exists); `deleted` means it no longer exists at all (clients tombstone it). The `deleted` kind is sent only to clients that advertise `"protocol": >= 2` on the subscribe frame; older clients keep getting `removed`. Resuming with a still-current token sends a lightweight `listen.current` marker (live and up to date — no re-download) instead of a fresh snapshot; a stale/expired token resets via a full snapshot
@@ -718,7 +718,7 @@ var nextPage = new Query("users", OrderBy: [...], Limit: 25, Start: cursor);
 
 #### `Cursor.FromDocument` — snapshot cursors
 
-`Cursor.FromDocument(Document doc, IReadOnlyList<Ordering>? orderBy, bool before)` builds a cursor from a document snapshot — the snapshot-based form of `startAt`/`startAfter`/`endAt`/`endBefore`. For each field in `orderBy` the cursor picks that field's value from `doc`; a `__name__` tiebreaker is always appended as `ReferenceValue(doc.Path)`. A null or empty `orderBy` yields a `__name__`-only cursor. Throws `ArgumentException` if a required `orderBy` field is absent from the document.
+`Cursor.FromDocument(Document doc, IReadOnlyList<Ordering>? orderBy, bool before)` builds a cursor from a document snapshot — the snapshot-based form of `startAt`/`startAfter`/`endAt`/`endBefore`. For each field in `orderBy` the cursor picks that field's value from `doc`; a `__name__` tiebreaker is always appended as `DocumentReferenceValue(doc.Path)`. A null or empty `orderBy` yields a `__name__`-only cursor. Throws `ArgumentException` if a required `orderBy` field is absent from the document.
 
 ```csharp
 var orderBy = new List<Ordering> { new(FieldPath.Parse("score"), SortDirection.Desc) };
@@ -848,8 +848,8 @@ An explicit `Limit` on the query **caps** all aggregations (consistent with `Cou
 
 ## Expanding references
 
-A reference field points at something: `docRefValue` (a document), `fileRefValue` (a file in Winche Storage) or
-`userRefValue` (a Winche Auth user). Ask for references to be followed, and what they point at comes back with the
+A reference field points at something: `documentReferenceValue` (a document), `fileReferenceValue` (a file in Winche Storage) or
+`userReferenceValue` (a Winche Auth user). Ask for references to be followed, and what they point at comes back with the
 results, while the fields themselves stay references:
 
 ```csharp
