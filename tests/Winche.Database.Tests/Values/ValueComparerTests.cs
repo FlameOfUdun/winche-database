@@ -99,7 +99,7 @@ public class ValueComparerTests
     public void TinyDouble_FlushesToZero_StillOrdered()
     {
         // 1e-300 is a subnormal-ish tiny positive that decimal casts to 0m
-        // 0 (int) < 1e-300 (double) in SQL numeric; our comparer must agree
+        // 0 (integer) < 1e-300 (double) in SQL numeric; our comparer must agree
         Assert.True(C(new IntegerValue(0), new DoubleValue(1e-300)) < 0);
         Assert.True(C(new IntegerValue(0), new DoubleValue(-1e-300)) > 0);
     }
