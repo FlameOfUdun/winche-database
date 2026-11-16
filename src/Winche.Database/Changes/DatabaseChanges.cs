@@ -44,6 +44,17 @@ internal sealed class ChangePublisher(IEnumerable<IWincheChangeSink> sinks, Time
             ["path"] = change.Path, ["id"] = segments[^1], ["collection"] = segments.Length > 1 ? segments[^2] : "",
         };
         return WincheChanges.PublishAsync(sinks,
-            new WincheChange("database", type, change.Path, time.GetUtcNow(), Plain.Of(change.After), Plain.Of(change.Before), vars), ct);
+            new WincheChange("database", type, change.Path, time.GetUtcNow(), WithTyped(change.After), WithTyped(change.Before), vars), ct);
+    }
+
+    /// <summary>
+    /// The document as plain JSON, with its fields also as typed values (<c>typedFields</c>, the wire format), so
+    /// receivers that care (functions' snapshots) can tell a timestamp or a reference from text.
+    /// </summary>
+    private static JsonObject? WithTyped(Document? doc)
+    {
+        var plain = Plain.Of(doc);
+        if (plain is not null && doc is not null) plain["typedFields"] = ValueSerializer.WriteFields(doc.Fields);
+        return plain;
     }
 }
