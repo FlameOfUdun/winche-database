@@ -112,9 +112,14 @@ public sealed class TestAuthHandler(
         if (string.IsNullOrEmpty(token))
             return Task.FromResult(AuthenticateResult.NoResult());
 
-        var claims = new List<Claim> { new(ClaimTypes.Name, token) };
-        if (token.StartsWith("uid:", StringComparison.Ordinal))
-            claims.Add(new Claim("uid", token[4..]));
+        // "uid:alice" or "uid:alice;exp:1700000000".
+        var parts = token.Split(';');
+        var claims = new List<Claim> { new(ClaimTypes.Name, parts[0]) };
+        foreach (var part in parts)
+        {
+            if (part.StartsWith("uid:", StringComparison.Ordinal)) claims.Add(new Claim("uid", part[4..]));
+            if (part.StartsWith("exp:", StringComparison.Ordinal)) claims.Add(new Claim("exp", part[4..]));
+        }
 
         var identity = new ClaimsIdentity(claims, SchemeName);
         var principal = new ClaimsPrincipal(identity);

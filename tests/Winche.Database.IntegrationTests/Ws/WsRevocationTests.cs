@@ -64,4 +64,18 @@ public class WsRevocationTests(PostgresFixture fx) : QueryTestBase(fx)
         await alice.WaitForCloseAsync();
         Assert.Equal((WebSocketCloseStatus)WsConnectionRegistry.RevokedCloseCode, alice.CloseStatus);
     }
+
+    [Fact]
+    public async Task A_connection_closes_with_4401_when_its_token_expires_and_one_without_expiry_stays()
+    {
+        await using var host = await Host();
+        var exp = DateTimeOffset.UtcNow.AddSeconds(2).ToUnixTimeSeconds();
+        await using var expiring = await WsTestClient.ConnectAndWelcomeAsync(host.Server, $"uid:alice;exp:{exp}");
+        await using var lasting = await WsTestClient.ConnectAndWelcomeAsync(host.Server, "uid:bob");
+
+        Assert.Equal("response", (string?)(await expiring.RequestAsync(new JsonObject { ["type"] = "ping" }))["type"]);   // fine until then
+        await expiring.WaitForCloseAsync();
+        Assert.Equal((WebSocketCloseStatus)WsConnectionRegistry.RevokedCloseCode, expiring.CloseStatus);
+        Assert.Equal("response", (string?)(await lasting.RequestAsync(new JsonObject { ["type"] = "ping" }))["type"]);
+    }
 }

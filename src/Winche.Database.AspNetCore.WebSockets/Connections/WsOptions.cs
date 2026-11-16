@@ -18,6 +18,14 @@ public sealed class WsOptions
     public int MaxSubscriptionsPerConnection { get; set; } = 100;
 
     /// <summary>
+    /// Closes a connection (code 4401) when the token it was opened with expires (its <c>exp</c> claim), default on.
+    /// A connection is signed in once, when it opens: without this it would keep the person's access for as long as
+    /// it stayed open, even after their account was turned off where it's kept. Clients reconnect at once with a
+    /// fresh token, which they only get while they're still allowed in.
+    /// </summary>
+    public bool CloseWhenTokenExpires { get; set; } = true;
+
+    /// <summary>
     /// Connections one user may hold on this node (default 10; 0 = unlimited). A new one past it closes the
     /// user's oldest connection (close code 4429) rather than being refused, so an app that reconnects
     /// while its stale sockets linger keeps working.

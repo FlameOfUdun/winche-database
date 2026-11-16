@@ -65,6 +65,12 @@ public static class WebApplicationExtensions
     // The metric tag takes only these (a client-chosen string would let one client create unbounded series).
     private static readonly HashSet<string> KnownTypes = new(StringComparer.Ordinal) { "ping", "doc.get", "doc.getAll", "query", "count", "aggregate", "add", "write", "tx.begin", "tx.get", "tx.query", "tx.commit", "tx.rollback", "listen", "doc.listen", "unlisten" };
 
+    /// <summary>When the request's token expires (its <c>exp</c> claim, seconds since 1970), or null without one.</summary>
+    internal static DateTimeOffset? TokenExpiry(ClaimsPrincipal user) =>
+        long.TryParse(user.FindFirst("exp")?.Value, out var seconds) ? DateTimeOffset.FromUnixTimeSeconds(seconds) : null;
+
+    private static TimeSpan Max(TimeSpan a, TimeSpan b) => a > b ? a : b;
+
     private static async Task HandleAsync(HttpContext context)
     {
         if (!context.WebSockets.IsWebSocketRequest)
@@ -96,6 +102,12 @@ public static class WebApplicationExtensions
             : context.RequestServices.GetService<WsConnectionRegistry>()?.Register(userId,
                 (code, reason) => conn.RevokeAsync(sendLoop, (WebSocketCloseStatus)code, reason, TimeSpan.FromSeconds(5)),
                 options.MaxConnectionsPerUser);
+
+        // The connection lasts no longer than the token it was opened with.
+        using var expiry = options.CloseWhenTokenExpires && TokenExpiry(context.User) is { } expiresAt
+            ? new Timer(_ => _ = conn.RevokeAsync(sendLoop, (WebSocketCloseStatus)WsConnectionRegistry.RevokedCloseCode, "token expired", TimeSpan.FromSeconds(5)),
+                null, Max(expiresAt - DateTimeOffset.UtcNow, TimeSpan.Zero), Timeout.InfiniteTimeSpan)
+            : null;
 
         var scope = new ConnectionScope(Guid.NewGuid().ToString("N"), db)
         {
