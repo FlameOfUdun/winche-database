@@ -163,12 +163,17 @@ public class IndexManagementTests(PostgresFixture fx) : QueryTestBase(fx)
         foreach (var query in ArrayQueries())
             Assert.Equal(await PathsAsync(query, scopes: null), await PathsAsync(query, indexed));
 
-        // The plan uses the GIN index (sequential scans priced out so a small table doesn't hide it).
+        // The plan uses the GIN index: with fresh statistics and plain scans priced out (sequential and per-row index
+        // scans), a small table can't hide it and the collection's btree index can't stand in for it.
         var contains = new Query("arr", Where: new FieldFilter(Tags, FilterOperator.ArrayContains, new StringValue("a")), Limit: 500);
         var plan = indexed.WithArrayIndexConditions("arr", Normalizer.Normalize(contains));
         var compiled = SqlCompiler.Compile(plan, indexed.ScopeFor("arr"), null);
         await using var conn = await Fx.DataSource.OpenConnectionAsync();
-        await using (var off = conn.CreateCommand()) { off.CommandText = "SET enable_seqscan = off"; await off.ExecuteNonQueryAsync(); }
+        await using (var off = conn.CreateCommand())
+        {
+            off.CommandText = "ANALYZE winche_documents; SET enable_seqscan = off; SET enable_indexscan = off";
+            await off.ExecuteNonQueryAsync();
+        }
         await using var explain = conn.CreateCommand();
         explain.CommandText = "EXPLAIN " + compiled.Sql;
         explain.Parameters.AddRange(compiled.Parameters);
