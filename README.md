@@ -1069,6 +1069,13 @@ with their error id. Requests made without the rules (the console's own browsing
 logged. With `o.UseSettings()` the console can change these settings too. The Winche console's Logs Explorer filters on
 these values; elsewhere, set the category's level to keep them out of other outputs.
 
+## Upgrading to 12.1.0
+
+- **A live connection is closed when the token it opened with expires** (code `4401`, "token expired"), so it never
+  keeps access longer than the token would. The SDKs reconnect with a fresh token. `WsOptions.CloseWhenTokenExpires`
+  (default on) turns it off.
+- Change events carry the document's fields as typed values too (`typedFields`), beside the plain ones.
+
 ## Upgrading to 12.0.0
 
 **Breaking:**
